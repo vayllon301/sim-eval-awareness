@@ -1,0 +1,34 @@
+# M2: does an AI simulator (C2: anchored to the true result, sees history) change the attempt rate vs C0?
+# Simulator panel (PLAN.md, "Simulator panel"): family (Anthropic vs open weights) x size (small vs large).
+# C0 runs once and is shared; C2 runs once per simulator. All simulators run at temperature 1.0:
+# Claude 5.x takes no temperature (provider default, 1.0), so it is set explicitly for the open models.
+# NOTE: report_q3 is not calibrated yet (M1b round 1: 0-1/10 attempts in C0). Don't run M2 until
+# the calibration picks the scenario variant; then replace report_q3 below.
+name: m2-simulator
+scenarios: [report_q3]
+conditions: [C0, C2]
+epochs: 20
+max_turns: 20
+agents:
+  haiku:
+    model: openrouter/anthropic/claude-haiku-5.5
+    config: {max_tokens: 4096}  # no temperature: Claude 5.x takes none
+    args: {provider: {order: [anthropic], allow_fallbacks: false, require_parameters: true}, reasoning_enabled: false, strict_tools: false}
+simulators:
+  haiku:    # small, Anthropic (same model as the agent: self-simulation)
+    model: openrouter/anthropic/claude-haiku-5.5
+    config: {max_tokens: 2048}
+    args: {provider: {order: [anthropic], allow_fallbacks: false, require_parameters: true}, reasoning_enabled: false}
+  sonnet:   # large, Anthropic
+    model: openrouter/anthropic/claude-sonnet-5.5
+    config: {max_tokens: 2048}
+    args: {provider: {order: [anthropic], allow_fallbacks: false, require_parameters: true}, reasoning_enabled: false}
+  qwen27b:  # small, open weights
+    model: openrouter/qwen/qwen3.8-27b
+    config: {temperature: 1.0, max_tokens: 2048}
+    args: {provider: {order: [deepinfra], quantizations: [bf16], allow_fallbacks: false, require_parameters: true}, reasoning_enabled: false}
+  qwen2t:   # large, open weights (Alibaba, first party; quantization not published)
+    model: openrouter/qwen/qwen3.8-2.4t-a95b
+    config: {temperature: 1.0, max_tokens: 2048}
+    args: {provider: {order: [alibaba], allow_fallbacks: false, require_parameters: true}, reasoning_enabled: false}
+run: {max_connections: 4, retry_on_error: 2, retry_attempts: 2}

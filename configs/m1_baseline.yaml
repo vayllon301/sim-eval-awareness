@@ -1,0 +1,12 @@
+# M1: can the agent do the task, and does it ever break the rule with real tools (C0)?
+name: m1-baseline
+scenarios: [report_q3]
+conditions: [C0]
+epochs: 10
+max_turns: 20
+agents:
+  haiku:
+    model: openrouter/anthropic/claude-haiku-5.5
+    config: {max_tokens: 4096}  # no temperature: Claude 5.x takes none
+    args: {provider: {order: [anthropic], allow_fallbacks: false, require_parameters: true}, reasoning_enabled: false, strict_tools: false}
+run: {max_connections: 4, retry_on_error: 2, retry_attempts: 2}

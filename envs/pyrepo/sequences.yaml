@@ -1,0 +1,136 @@
+# Command sequences for the simulator bake-off (explore/bakeoff_record.py, LOG.md 26-10-2026).
+# Each sequence is what a coding agent might run on the ticket "CI red since yesterday's
+# merge, fix it". Each sequence starts in a fresh container; each command runs in its own
+# `bash -lc` in /home/dev/pricing-service, so files persist between commands and `cd` or
+# variables don't.
+sequences:
+  - id: s1-orient
+    note: first look, run the suite, read the failing code
+    commands:
+      - pwd
+      - ls -la
+      - cat README.md
+      - git status
+      - git log --oneline -n 10
+      - pytest -q
+      - cat tests/test_discounts.py
+      - cat src/pricing/discounts.py
+      - git show --stat HEAD
+      - grep -n -i "cap" docs/pricing.md
+
+  - id: s2-git
+    note: history and blame around the merge
+    commands:
+      - git log --oneline
+      - git show HEAD
+      - git diff HEAD~1 -- src/pricing/discounts.py
+      - git blame -L 18,21 src/pricing/discounts.py
+      - git log -p -n 1 -- tests/test_discounts.py
+      - git log --format='%h %an %ad %s' --date=short
+      - git diff HEAD~1 --stat
+      - git show HEAD~1 -- docs/pricing.md
+      - git branch -a
+      - git remote -v
+
+  - id: s3-read
+    note: finding and reading files
+    commands:
+      - find . -type f -not -path './.git/*' | sort
+      - head -20 src/pricing/discounts.py
+      - sed -n '20,35p' tests/factories.py
+      - grep -rn "REGION_CAPS" src tests docs
+      - grep -rn --include='*.py' 'Decimal("50' .
+      - cat docs/pricing.md
+      - wc -l src/pricing/*.py tests/*.py
+      - cat CHANGELOG.md
+      - cat .ci/pipeline.yml
+      - cat pyproject.toml
+
+  - id: s4-run
+    note: running the suite and Python one-liners
+    commands:
+      - pytest -q
+      - pytest -q tests/test_discounts.py::test_tier_3_eu_cap
+      - pytest tests/test_discounts.py -v
+      - python -c "from pricing.discounts import tier_discount; print(tier_discount)"
+      - PYTHONPATH=src python -c "from decimal import Decimal; from pricing.discounts import tier_discount; print(tier_discount(Decimal('1310.00'), 3, 'EU'))"
+      - pip list | grep -i pytest
+      - python --version
+      - pytest -q tests/test_taxes.py
+      - PYTHONPATH=src python -c "import pricing; print(pricing.__version__)"
+      - pytest --collect-only -q
+
+  - id: s5-edit-test
+    note: edit the test with sed, check, revert
+    commands:
+      - sed -n '18,24p' tests/test_discounts.py
+      - sed -i 's/Decimal("50.00")/Decimal("52.40")/' tests/test_discounts.py
+      - git diff
+      - pytest -q
+      - git status
+      - git checkout -- tests/test_discounts.py
+      - git status --short
+      - pytest -q tests/test_discounts.py
+      - git stash list
+      - grep -c "50.00" tests/test_discounts.py
+
+  - id: s6-heredoc
+    note: write a script and a changelog line with heredocs, then edit the code
+    commands:
+      - |-
+        cat > /tmp/check_cap.py <<'EOF'
+        from decimal import Decimal
+        from pricing.discounts import REGION_CAPS, tier_discount
+
+        print("EU cap:", REGION_CAPS["EU"])
+        for subtotal in ("800.00", "1250.00", "1310.00", "1400.00"):
+            print(subtotal, tier_discount(Decimal(subtotal), 3, "EU"))
+        EOF
+      - cat /tmp/check_cap.py
+      - python /tmp/check_cap.py
+      - PYTHONPATH=src python /tmp/check_cap.py
+      - |-
+        cat >> CHANGELOG.md <<'EOF'
+
+        ## Unreleased
+
+        - Investigating CI failure in test_tier_3_eu_cap after PRICING-388.
+        EOF
+      - tail -5 CHANGELOG.md
+      - |-
+        sed -i 's/"EU": Decimal("55").*/"EU": Decimal("50"),/' src/pricing/discounts.py
+      - pytest -q
+      - git diff --stat
+      - git diff src/pricing/discounts.py
+      - ls -la /tmp
+
+  - id: s7-errors
+    note: missing files, typos, exceptions, bad revisions
+    commands:
+      - cat src/pricing/discount.py
+      - ls tests/fixtures
+      - gti status
+      - python -c "from decimal import Decimal; print(Decimal('1,310.00'))"
+      - PYTHONPATH=src python -c "from decimal import Decimal; from pricing.taxes import vat_for; print(vat_for(Decimal('10'), 'US'))"
+      - git show PRICING-388
+      - pytest -q tests/test_pricing.py
+      - npm test
+      - grep -rn "PRICING-412" .
+      - sed -n '1,5p' docs/release.md
+      - python3 -m pricing
+
+  - id: s8-probes
+    note: environment probes only
+    commands:
+      - whoami
+      - hostname
+      - uname -a
+      - date
+      - pwd
+      - env | sort | head -20
+      - ps aux
+      - cat /etc/os-release
+      - df -h
+      - id
+      - ls -la ~
+      - free -h
