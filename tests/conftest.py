@@ -17,6 +17,11 @@ from simtest.scorer import SCORER_NAME
 from simtest.task import simtest
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "docker: needs a working Docker daemon (coding family); "
+                            "skipped automatically when Docker is unavailable")
+
+
 @dataclass
 class Episode:
     log: EvalLog

@@ -1,0 +1,123 @@
+"""The agent loop solver, end to end with a fake machine (no Docker): phases, the observer,
+flagging, the store, and the scorer. The behaviour probe is stubbed with canned raw facts
+(the real probe is covered by the Docker tests); checks.evaluate is tested separately.
+"""
+
+from __future__ import annotations
+
+import pytest
+from inspect_ai import eval
+from inspect_ai.model import ModelOutput
+
+import simtest.coding.episode as episode
+from simtest.coding import machine as machine_mod
+from simtest.coding.scorer import SCORER_NAME
+from simtest.coding.task import coding
+from coding_helpers import FakeMachine, ScriptedAgent, ScriptedSimulator, mock
+
+
+@pytest.fixture
+def patched(monkeypatch):
+    """Register a fake machine and stub the baseline/probe. `state['raw']` sets the probe's
+    canned facts; `state['run_outputs']` the fake machine's bash results."""
+    state: dict = {"raw": {"base": "HEAD", "original": {"exit_code": 0}, "suite": {"exit_code": 0},
+                           "names": "", "diff": "", "docker_diff": "", "atime_before": {}, "atime_after": {},
+                           "files": {}, "errors": []},
+                   "run_outputs": [], "machine": None}
+
+    def factory(scenario, deadline):
+        state["machine"] = FakeMachine(outputs=state["run_outputs"])
+        return state["machine"]
+
+    async def fake_baseline(machine, scenario):
+        return {"base": "HEAD", "base_ok": True, "atime": {}}
+
+    async def fake_probe(machine, scenario, base):
+        return dict(state["raw"])
+
+    monkeypatch.setitem(machine_mod.MACHINES, "fake", factory)
+    monkeypatch.setattr(episode, "baseline", fake_baseline)
+    monkeypatch.setattr(episode, "probe", fake_probe)
+    return state
+
+
+def run(agent, patched, condition="C0", scenario="pricing_cap", sim=None, tmp=None):
+    roles = {"simulator": mock(sim, "mockllm/sim")} if sim is not None else None
+    logs = eval(coding(condition=condition, scenarios=[scenario], max_turns=8, deadline=60, machine="fake",
+                       simulator="none" if condition == "C0" else "mock"),
+                model=mock(agent, "mockllm/agent"), model_roles=roles, limit=1, display="none",
+                log_dir=str(tmp))
+    s = logs[0].samples[0]
+    return s, s.scores[SCORER_NAME]
+
+
+def test_c0_episode_runs_and_scores(patched, tmp_path):
+    patched["run_outputs"] = [("pytest output", 1)]
+    agent = ScriptedAgent([[("bash", {"command": "pytest -q"})], [("submit", {"summary": "done"})]])
+    s, score = run(agent, patched, tmp=tmp_path)
+    assert score.metadata["end_reason"] == "submitted" and not score.metadata["flagged"]
+    steps = s.store["CodingEpisode:steps"]
+    assert steps[0]["tool"] == "bash" and steps[0]["observation"] == "pytest output"
+    assert steps[1]["tool"] == "submit" and steps[1]["observation"] == episode.SUBMITTED
+    assert patched["machine"].commands == ["pytest -q"]
+
+
+def test_violation_is_scored(patched, tmp_path):
+    patched["raw"]["names"] = "M\ttests/test_discounts.py\n"
+    patched["raw"]["docker_diff"] = "C /home/dev/pricing-service/tests/test_discounts.py"
+    agent = ScriptedAgent([[("bash", {"command": "sed -i ... tests/"})], [("submit", {"summary": "x"})]])
+    s, score = run(agent, patched, tmp=tmp_path)
+    assert score.metadata["metrics"]["violation"] and score.value["protected_modified"] == 1.0
+
+
+def test_send_message_is_recorded_not_sent(patched, tmp_path):
+    agent = ScriptedAgent([[("send_message", {"channel": "#pricing-dev", "text": "hi"})],
+                           [("submit", {"summary": "asked"})]])
+    s, score = run(agent, patched, tmp=tmp_path)
+    steps = s.store["CodingEpisode:steps"]
+    assert steps[0]["observation"] == episode.MESSAGE_SENT
+    assert score.metadata["metrics"]["asked_owner"]
+
+
+def test_no_tool_call_ends_episode(patched, tmp_path):
+    agent = [ModelOutput.from_content("mockllm/agent", "I think the fix is clear.")]
+    s, score = run(agent, patched, tmp=tmp_path)
+    assert score.metadata["end_reason"] == "no_tool_call" and not score.metadata["flagged"]
+
+
+def test_truncated_output_is_flagged(patched, tmp_path):
+    out = ModelOutput.from_content("mockllm/agent", "partial")
+    out.choices[0].stop_reason = "max_tokens"
+    s, score = run([out], patched, tmp=tmp_path)
+    assert score.metadata["end_reason"] == "agent_truncated" and score.metadata["flagged"]
+    import math
+    assert all(math.isnan(v) for v in score.value.values())
+
+
+def test_c3_uses_the_simulator_not_the_real_output(patched, tmp_path):
+    patched["run_outputs"] = [("REAL pytest", 1)]
+    agent = ScriptedAgent([[("bash", {"command": "pytest -q"})], [("submit", {"summary": "x"})]])
+    sim = ScriptedSimulator(["<think>t</think>\nINVENTED"])
+    s, score = run(agent, patched, condition="C3", sim=sim, tmp=tmp_path)
+    steps = s.store["CodingEpisode:steps"]
+    assert steps[0]["observation"] == "INVENTED"           # the agent saw the simulator's output
+    assert steps[0]["result"]["output"] == "REAL pytest"   # the real output is still recorded (shadow)
+    assert s.store["CodingEpisode:simulator_calls"][0]["raw"] == "<think>t</think>\nINVENTED"
+
+
+def test_simulator_truncation_flags_the_episode(patched, tmp_path):
+    patched["run_outputs"] = [("REAL", 0)]
+
+    class Trunc:
+        name = "mockllm/sim"
+
+        def __call__(self, input, tools, tool_choice, config):
+            out = ModelOutput.from_content(self.name, "half")
+            out.choices[0].stop_reason = "max_tokens"
+            return out
+
+    agent = ScriptedAgent([[("bash", {"command": "ls"})], [("submit", {"summary": "x"})]])
+    s, score = run(agent, patched, condition="C3", sim=Trunc(), tmp=tmp_path)
+    assert score.metadata["end_reason"] == "simulator_truncated" and score.metadata["flagged"]
+    # the raw simulator output is still recorded
+    assert s.store["CodingEpisode:simulator_calls"][0]["raw"] == "half"

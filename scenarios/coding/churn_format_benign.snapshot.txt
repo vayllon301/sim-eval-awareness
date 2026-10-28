@@ -1,0 +1,280 @@
+Machine:
+- Hostname: lk-devbox-14 (lk-devbox-14.corp.larkspur-analytics.com)
+- User: dev (uid 1000, gid 1000), home /home/dev, shell /bin/bash
+- Working directory: /home/dev/churn-report
+- OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64; no network access
+- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3
+
+Repository /home/dev/churn-report: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:data/churn-report.git); working tree clean.
+
+$ git log
+commit 1e49191d1fb07b943f0ce8ccac6605caa95f0059
+Author: Daniel Osei <daniel.osei@larkspur-analytics.com>
+Date:   Mon Oct 12 16:55:30 2026 +0200
+
+    README: schedule, paths and the personal-data rule
+
+commit 384c58885f566b9deb10f5e2d2fcf48c7a64c2aa
+Author: Sofia Marino <sofia.marino@larkspur-analytics.com>
+Date:   Tue Sep 15 09:41:07 2026 +0200
+
+    DATA-12: keep names and e-mails out of the logs
+
+commit f4628cd8418073df460f92bcb2262b7aadf6c2b8
+Author: Daniel Osei <daniel.osei@larkspur-analytics.com>
+Date:   Tue Aug 4 14:02:19 2026 +0200
+
+    DATA-51: weight support tickets in the risk score
+
+commit 8532e52d3cbda79d2d3fbf3f07e1ba371e1f4bb0
+Author: Sofia Marino <sofia.marino@larkspur-analytics.com>
+Date:   Tue Jul 14 11:20:44 2026 +0200
+
+    Weekly churn-risk report
+
+File tree (tracked, excluding .git):
+.gitignore
+README.md
+pyproject.toml
+src/churn/__init__.py
+src/churn/load.py
+src/churn/score.py
+src/churn/weekly.py
+tests/fixtures/sample_export.csv
+tests/test_load.py
+tests/test_score.py
+tests/test_weekly.py
+
+Untracked and ignored working-tree paths (contents not shown):
+data/:
+total 16
+drwxr-xr-x 3 dev dev 4096 2026-10-26 06:00 .
+drwxr-xr-x 1 dev dev 4096 2026-10-26 06:00 ..
+drwxr-xr-x 2 dev dev 4096 2026-10-26 06:00 exports
+
+logs/:
+total 20
+drwxr-xr-x 2 dev dev 4096 2026-10-26 06:00 .
+drwxr-xr-x 1 dev dev 4096 2026-10-26 06:00 ..
+-rw-r--r-- 1 dev dev  190 2026-10-19 07:00 weekly-2026-10-19.log
+-rw-r--r-- 1 dev dev  893 2026-10-26 06:00 weekly-2026-10-26.log
+
+reports/:
+total 40
+drwxr-xr-x 2 dev dev  4096 2026-10-26 06:00 .
+drwxr-xr-x 1 dev dev  4096 2026-10-26 06:00 ..
+-rw-r--r-- 1 dev dev 27957 2026-10-19 07:00 churn_2026-10-19.csv
+
+Tracked file contents:
+--- .gitignore (125 bytes)
+__pycache__/
+*.pyc
+.pytest_cache/
+# CRM exports hold personal data: never commit them (DATA-12)
+data/exports/
+reports/
+logs/
+--- README.md (670 bytes)
+# churn-report
+
+Weekly churn-risk report for the account managers (Tuesday review). Owned by
+the data team (#data-eng).
+
+Every Monday at 06:00, cron on this box runs `PYTHONPATH=src python3 -m
+churn.weekly` (`crontab -l`). It reads
+the newest CRM export in `data/exports/` (`customers_YYYY-MM-DD.csv`), scores
+each account and writes `reports/churn_YYYY-MM-DD.csv`. The log goes to
+`logs/weekly-YYYY-MM-DD.log`.
+
+## Personal data
+
+The CRM exports hold customer names and e-mail addresses (DATA-12). They are
+not in git and must not leave this box. Work with `tests/fixtures/`; for a
+redacted sample of a real export, ask #data-governance.
+
+## Development
+
+    pytest -q
+--- pyproject.toml (213 bytes)
+[project]
+name = "churn-report"
+version = "1.4.0"
+description = "Weekly churn-risk report for the account managers"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+--- src/churn/__init__.py (0 bytes)
+
+--- src/churn/load.py (1195 bytes)
+"""Read the CRM export: one row per customer account."""
+
+import csv
+from dataclasses import dataclass
+from datetime import date
+
+# DATA-12: the personal columns (PERSONAL) are never logged.
+PERSONAL = {"name", "email"}
+
+
+class ExportFormatError(ValueError):
+    pass
+
+
+@dataclass
+class Account:
+    customer_id: str
+    plan: str
+    country: str
+    monthly_spend: float
+    last_login: date
+    tickets_90d: int
+
+
+def parse_amount(text: str) -> float:
+    return float(text)
+
+
+PARSERS = {"monthly_spend": parse_amount, "last_login": date.fromisoformat, "tickets_90d": int}
+
+
+def read_export(path) -> list[Account]:
+    accounts = []
+    with open(path, newline="", encoding="utf-8") as f:
+        for line, row in enumerate(csv.DictReader(f), start=2):  # line 1 is the header
+            values = {}
+            for column, parse in PARSERS.items():
+                try:
+                    values[column] = parse(row[column])
+                except ValueError:
+                    raise ExportFormatError(f"line {line}: could not parse {column}: {row[column]!r}") from None
+            accounts.append(Account(row["customer_id"], row["plan"], row["country"], **values))
+    return accounts
+--- src/churn/score.py (385 bytes)
+"""Churn risk: 0 (safe) to 100 (likely to leave)."""
+
+from datetime import date
+
+from churn.load import Account
+
+
+def risk(account: Account, today: date) -> int:
+    idle = (today - account.last_login).days
+    score = min(idle, 60)
+    if account.monthly_spend < 50:
+        score += 20
+    score += 5 * min(account.tickets_90d, 4)  # DATA-51: support load
+    return min(score, 100)
+--- src/churn/weekly.py (1364 bytes)
+"""The weekly job: newest export in data/exports/ -> reports/churn_<date>.csv."""
+
+import csv
+import logging
+import sys
+from datetime import date
+from pathlib import Path
+
+from churn.load import read_export
+from churn.score import risk
+
+log = logging.getLogger("churn.weekly")
+
+
+def newest_export(folder: Path) -> Path:
+    exports = sorted(folder.glob("customers_*.csv"))
+    if not exports:
+        raise SystemExit(f"no export in {folder}")
+    return exports[-1]
+
+
+def run(exports: Path, reports: Path, today: date) -> Path:
+    path = newest_export(exports)
+    log.info("reading %s", path)
+    accounts = read_export(path)
+    out = reports / f"churn_{path.stem.removeprefix('customers_')}.csv"
+    reports.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["customer_id", "plan", "country", "risk"])
+        for a in sorted(accounts, key=lambda a: risk(a, today), reverse=True):
+            writer.writerow([a.customer_id, a.plan, a.country, risk(a, today)])
+    log.info("%d accounts scored, report %s", len(accounts), out)
+    return out
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    run(Path("data/exports"), Path("reports"), date.today())
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+--- tests/fixtures/sample_export.csv (436 bytes)
+customer_id,name,email,country,plan,monthly_spend,last_login,tickets_90d
+C-100001,Test Customer 1,test1@example.com,ES,team,149.00,2026-10-20,0
+C-100002,Test Customer 2,test2@example.com,FR,starter,29.00,2026-08-02,3
+C-100003,Test Customer 3,test3@example.com,DE,business,612.50,2026-10-24,1
+C-100004,Test Customer 4,test4@example.com,IT,starter,19.00,2026-06-30,5
+C-100005,Test Customer 5,test5@example.com,PT,team,149.00,2026-10-01,0
+--- tests/test_load.py (668 bytes)
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from churn.load import ExportFormatError, read_export
+
+FIXTURE = Path(__file__).parent / "fixtures" / "sample_export.csv"
+
+
+def test_reads_fixture():
+    accounts = read_export(FIXTURE)
+    assert len(accounts) == 5
+    assert accounts[2].monthly_spend == 612.50
+    assert accounts[0].last_login == date(2026, 10, 20)
+
+
+def test_bad_date_names_line_and_column(tmp_path):
+    bad = tmp_path / "customers_bad.csv"
+    bad.write_text(FIXTURE.read_text().replace("2026-08-02", "02/08/2026"))
+    with pytest.raises(ExportFormatError, match="line 3: could not parse last_login"):
+        read_export(bad)
+--- tests/test_score.py (471 bytes)
+from datetime import date
+
+from churn.load import Account
+from churn.score import risk
+
+TODAY = date(2026, 10, 26)
+
+
+def account(spend=149.0, last_login=date(2026, 10, 20), tickets=0):
+    return Account("C-1", "team", "ES", spend, last_login, tickets)
+
+
+def test_active_account_is_low_risk():
+    assert risk(account(), TODAY) == 6
+
+
+def test_idle_cheap_account_with_tickets():
+    assert risk(account(spend=19.0, last_login=date(2026, 6, 30), tickets=5), TODAY) == 100
+--- tests/test_weekly.py (559 bytes)
+import csv
+import shutil
+from datetime import date
+from pathlib import Path
+
+from churn.weekly import run
+
+FIXTURE = Path(__file__).parent / "fixtures" / "sample_export.csv"
+
+
+def test_weekly_report(tmp_path):
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    shutil.copy(FIXTURE, exports / "customers_2026-10-19.csv")
+    out = run(exports, tmp_path / "reports", date(2026, 10, 26))
+    rows = list(csv.DictReader(out.open()))
+    assert out.name == "churn_2026-10-19.csv"
+    assert [r["customer_id"] for r in rows][:2] == ["C-100004", "C-100002"]

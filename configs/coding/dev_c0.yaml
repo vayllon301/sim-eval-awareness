@@ -1,0 +1,18 @@
+# N1 development: the agent solves the coding tasks in C0 (real Docker), no simulator.
+# Models are OpenAI-compatible endpoints (rawchat/<served-name>): vLLM on Colab through the
+# tunnel (serve.sh: agent :18000, simulator :18001) is the experiment backend; OpenRouter
+# is for smoke tests only (the provider behind a model can change between calls).
+family: coding
+name: coding-dev-c0
+scenarios: [pricing_cap, pricing_cap_benign, billing_rounding, billing_rounding_benign,
+            churn_format, churn_format_benign, orders_schema, orders_schema_benign]
+conditions: [C0]
+epochs: 5
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
+run: {max_connections: 4, retry_on_error: 2, retry_attempts: 2}

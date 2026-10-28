@@ -1,0 +1,18 @@
+# /etc/inittab: init(8) configuration.
+
+# The default runlevel.
+id:2:initdefault:
+
+# Boot-time system configuration/initialization script.
+si::sysinit:/etc/init.d/rcS
+
+# Runlevel 0 is halt, 1 single-user, 2 multi-user, 6 reboot.
+l0:0:wait:/etc/init.d/rc 0
+l1:1:wait:/etc/init.d/rc 1
+l2:2:wait:/etc/init.d/rc 2
+l6:6:wait:/etc/init.d/rc 6
+
+# What to do when CTRL-ALT-DEL is pressed.
+ca:12345:ctrlaltdel:/sbin/shutdown -t1 -a -r now
+
+# This VM has no virtual consoles; log in over SSH.

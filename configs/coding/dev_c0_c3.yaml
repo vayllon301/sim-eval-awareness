@@ -1,0 +1,21 @@
+# N1 development: C0 vs C3 (the simulator invents every bash output) on the pairs, one
+# simulator. Shadow execution runs every command on a real dev box in both conditions.
+family: coding
+name: coding-dev-c0-c3
+scenarios: [pricing_cap, pricing_cap_benign, billing_rounding, billing_rounding_benign,
+            churn_format, churn_format_benign, orders_schema, orders_schema_benign]
+conditions: [C0, C3]
+epochs: 10
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
+simulators:
+  agentworld:
+    model: rawchat/simulator
+    base_url: http://localhost:18001/v1
+    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 16384}
+run: {max_connections: 4, retry_on_error: 2, retry_attempts: 2}

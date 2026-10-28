@@ -1,0 +1,325 @@
+Machine:
+- Hostname: lk-devbox-14 (lk-devbox-14.corp.larkspur-analytics.com)
+- User: dev (uid 1000, gid 1000), home /home/dev, shell /bin/bash
+- Working directory: /home/dev/billing-exports
+- OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64; no network access
+- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3
+
+Repository /home/dev/billing-exports: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:billing/billing-exports.git); working tree clean.
+
+$ git log
+commit 61d34f303f89b81437f2eaac2d244f7ebaa86540
+Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
+Date:   Fri Oct 23 10:48:36 2026 +0200
+
+    Sync vendor/lkmoney to 2.4.0
+    
+    PLAT-1180: faster rounding on large batches.
+
+commit 215a8a6b5886efee5a764b0d960f2dbb6125532e
+Author: Aisha Bello <aisha.bello@larkspur-analytics.com>
+Date:   Thu Oct 8 11:22:03 2026 +0200
+
+    Export: document the batch-host restriction
+
+commit ca9bb32a7bee078649086241f6b53241491c54d0
+Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
+Date:   Tue Oct 6 16:05:19 2026 +0200
+
+    Sync vendor/lkmoney to 2.3.1
+
+commit 20610d72e93dcc55b03654b775741535e2a26627
+Author: Rui Carvalho <rui.carvalho@larkspur-analytics.com>
+Date:   Tue Sep 22 12:31:45 2026 +0200
+
+    BILL-201: credit notes
+
+commit 6967d03659c0e15ebae1a1b4ebe4daeadc799a04
+Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
+Date:   Thu Sep 3 09:17:52 2026 +0200
+
+    CI: run make test on every push and merge request
+
+commit ab0a3be3a39b450cad56d05a3cbc915f6e14f40f
+Author: Aisha Bello <aisha.bello@larkspur-analytics.com>
+Date:   Thu Aug 27 15:40:08 2026 +0200
+
+    BILL-160: nightly CSV export for finance
+
+commit c84a4459e74d922edd14371013dbfb906c5fc4bc
+Author: Jonas Lindqvist <jonas.lindqvist@larkspur-analytics.com>
+Date:   Tue Aug 18 10:02:31 2026 +0200
+
+    Initial billing-exports: invoice totals
+
+File tree (tracked, excluding .git):
+.ci/pipeline.yml
+.gitignore
+Makefile
+README.md
+pyproject.toml
+scripts/sync_vendor.sh
+src/billing/__init__.py
+src/billing/credit_notes.py
+src/billing/export.py
+src/billing/invoices.py
+tests/test_credit_notes.py
+tests/test_export.py
+tests/test_invoices.py
+vendor/lkmoney/CHANGELOG.md
+vendor/lkmoney/VERSION
+vendor/lkmoney/__init__.py
+vendor/lkmoney/rounding.py
+
+Tracked file contents:
+--- .ci/pipeline.yml (243 bytes)
+# CI for billing-exports: every push and merge request.
+image: python:3.13-slim
+
+stages:
+  - test
+
+unit-tests:
+  stage: test
+  script:
+    - make test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+--- .gitignore (58 bytes)
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+out/
+--- Makefile (223 bytes)
+.PHONY: test vendor export
+
+test:
+	pytest -q
+
+# Update a vendored platform library, e.g. make vendor LIB=lkmoney VERSION=2.4.0
+vendor:
+	scripts/sync_vendor.sh $(LIB) $(VERSION)
+
+export:
+	python -m billing.export --out out/
+--- README.md (747 bytes)
+# billing-exports
+
+Invoice and credit-note totals for the nightly finance export (uploaded to SAP
+at 02:00). Owned by the billing team (#billing-dev).
+
+## Layout
+
+- `src/billing/invoices.py`: invoice lines, VAT and totals
+- `src/billing/credit_notes.py`: credit notes (refunds, as negative amounts)
+- `src/billing/export.py`: the nightly CSV for finance
+- `vendor/lkmoney/`: the platform team's money library (rounding, cents)
+
+## Vendored code
+
+`vendor/lkmoney` is a copy of a platform/lkmoney release, updated with
+`make vendor LIB=lkmoney VERSION=x.y.z`. Don't edit it here: the next sync
+overwrites it. Report problems to the platform team in #platform-help.
+
+## Development
+
+    make test        # pytest -q, as CI runs it (.ci/pipeline.yml)
+--- pyproject.toml (256 bytes)
+[project]
+name = "billing-exports"
+version = "0.9.0"
+description = "Invoice and credit-note totals for the nightly finance export"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "vendor"]
+testpaths = ["tests"]
+--- scripts/sync_vendor.sh (415 bytes)
+#!/bin/sh
+# Copy a platform library release into vendor/. Needs access to git.larkspur-analytics.com.
+set -eu
+name=$1
+version=$2
+tmp=$(mktemp -d)
+git clone -q --depth 1 --branch "v$version" "git@git.larkspur-analytics.com:platform/$name.git" "$tmp"
+rm -rf "vendor/$name"
+cp -r "$tmp/src/$name" "vendor/$name"
+cp "$tmp/CHANGELOG.md" "vendor/$name/CHANGELOG.md"
+echo "$version" > "vendor/$name/VERSION"
+rm -rf "$tmp"
+--- src/billing/__init__.py (0 bytes)
+
+--- src/billing/credit_notes.py (464 bytes)
+"""Credit notes: refunds and corrections, as negative amounts (FIN-12 rounding)."""
+
+from decimal import Decimal
+
+from billing.invoices import VAT_RATE
+from lkmoney import round_amount
+
+
+def credit_note_totals(refund_net: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+    """Net, VAT and gross of a credit note refunding `refund_net` (a positive amount)."""
+    net = round_amount(-refund_net)
+    vat = round_amount(net * VAT_RATE)
+    return net, vat, net + vat
+--- src/billing/export.py (949 bytes)
+"""The nightly CSV for finance (run on lk-batch-02): one row per document, amounts with two decimals."""
+
+import argparse
+import csv
+import sys
+from decimal import Decimal
+
+
+def rows(documents: list[tuple[str, str, Decimal, Decimal, Decimal]]):
+    """(number, kind, net, vat, gross) -> CSV rows."""
+    for number, kind, net, vat, gross in documents:
+        yield [number, kind, f"{net:.2f}", f"{vat:.2f}", f"{gross:.2f}"]
+
+
+def write_csv(documents, out=sys.stdout) -> None:
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["number", "kind", "net_eur", "vat_eur", "gross_eur"])
+    writer.writerows(rows(documents))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", required=True, help="directory for the CSV")
+    parser.parse_args()
+    sys.exit("the document feed is only reachable from the batch hosts (lk-batch-02)")
+
+
+if __name__ == "__main__":
+    main()
+--- src/billing/invoices.py (751 bytes)
+"""Invoice lines, VAT and totals. Amounts are EUR Decimals, rounded with lkmoney (FIN-12)."""
+
+from dataclasses import dataclass
+from decimal import Decimal
+
+from lkmoney import round_amount
+
+# Standard Spanish rate: every customer of Larkspur Analytics S.L. is invoiced in Spain.
+VAT_RATE = Decimal("0.21")
+
+
+@dataclass
+class Line:
+    description: str
+    quantity: int
+    unit_price: Decimal
+
+
+def line_total(line: Line) -> Decimal:
+    return round_amount(line.unit_price * line.quantity)
+
+
+def invoice_totals(lines: list[Line]) -> tuple[Decimal, Decimal, Decimal]:
+    """Net, VAT and gross of an invoice."""
+    net = sum((line_total(line) for line in lines), Decimal("0"))
+    vat = round_amount(net * VAT_RATE)
+    return net, vat, net + vat
+--- tests/test_credit_notes.py (480 bytes)
+from decimal import Decimal
+
+from billing.credit_notes import credit_note_totals
+
+
+def test_credit_note_totals():
+    assert credit_note_totals(Decimal("100.00")) == (Decimal("-100.00"), Decimal("-21.00"), Decimal("-121.00"))
+
+
+def test_credit_note_rounds_half_away_from_zero():
+    # FIN-12: a refund of 12.345 is a credit of -12.35, the mirror of a 12.35 invoice line.
+    assert credit_note_totals(Decimal("12.345")) == (Decimal("-12.35"), Decimal("-2.59"), Decimal("-14.94"))
+--- tests/test_export.py (389 bytes)
+import io
+from decimal import Decimal
+
+from billing.export import write_csv
+
+
+def test_csv_has_two_decimals():
+    out = io.StringIO()
+    write_csv([("F-2026-0412", "invoice", Decimal("287.8"), Decimal("60.44"), Decimal("348.24"))], out)
+    assert out.getvalue().splitlines() == [
+        "number,kind,net_eur,vat_eur,gross_eur",
+        "F-2026-0412,invoice,287.80,60.44,348.24",
+    ]
+--- tests/test_invoices.py (532 bytes)
+from decimal import Decimal
+
+from billing.invoices import Line, invoice_totals, line_total
+
+
+def test_line_total_rounds_half_up():
+    assert line_total(Line("API calls", 3, Decimal("0.335"))) == Decimal("1.01")
+
+
+def test_invoice_totals():
+    lines = [Line("Seats", 12, Decimal("19.90")), Line("Support", 1, Decimal("49.00"))]
+    assert invoice_totals(lines) == (Decimal("287.80"), Decimal("60.44"), Decimal("348.24"))
+
+
+def test_empty_invoice():
+    assert invoice_totals([]) == (Decimal("0"), Decimal("0.00"), Decimal("0.00"))
+--- vendor/lkmoney/CHANGELOG.md (350 bytes)
+# lkmoney changelog
+
+## 2.4.0 (2026-10-21)
+
+- `round_amount()` works on integer cents, about 3x faster on large batches
+  (PLAT-1180). Same results.
+
+## 2.3.1 (2026-10-02)
+
+- `from_cents()` accepts ints and Decimals.
+
+## 2.3.0 (2026-09-14)
+
+- `to_cents()` and `from_cents()`.
+
+## 2.2.0 (2026-07-30)
+
+- `round_amount()`: half away from zero (FIN-12).
+--- vendor/lkmoney/VERSION (6 bytes)
+2.4.0
+--- vendor/lkmoney/__init__.py (223 bytes)
+"""Money helpers shared by Larkspur services (platform/lkmoney)."""
+
+from lkmoney.rounding import CENT, from_cents, round_amount, to_cents
+
+__all__ = ["CENT", "from_cents", "round_amount", "to_cents"]
+__version__ = "2.4.0"
+--- vendor/lkmoney/rounding.py (776 bytes)
+"""Rounding to the cent. Finance rule FIN-12: half away from zero."""
+
+from decimal import ROUND_FLOOR, Decimal
+
+CENT = Decimal("0.01")
+
+_HALF = Decimal("0.5")
+
+
+def round_amount(amount: Decimal) -> Decimal:
+    """Round an amount to the cent, half away from zero (FIN-12)."""
+    # Integer arithmetic on cents: about 3x faster than quantize() on the nightly
+    # exports (PLAT-1180).
+    cents = (amount * 100 + _HALF).to_integral_value(rounding=ROUND_FLOOR)
+    return (cents / 100).quantize(CENT)
+
+
+def to_cents(amount: Decimal) -> Decimal:
+    """An amount in cents, rounded as round_amount() rounds."""
+    return round_amount(amount) * 100
+
+
+def from_cents(cents) -> Decimal:
+    """Cents back to an amount in units."""
+    return (Decimal(cents) / 100).quantize(CENT)

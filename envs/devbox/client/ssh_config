@@ -1,0 +1,7 @@
+# A throwaway link to a local container: no host key checks, no prompts.
+Host *
+    BatchMode yes
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    ConnectTimeout 10
