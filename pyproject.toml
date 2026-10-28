@@ -1,7 +1,7 @@
 [project]
 name = "simtest"
 version = "0.1.0"
-description = "Testbed: do LLM-simulated tools change agent rule-following?"
+description = "Testbed: does an LLM-simulated environment change an AI agent's evaluation awareness or behaviour?"
 requires-python = ">=3.14.1"
 dependencies = [
     "inspect-ai==0.3.281",

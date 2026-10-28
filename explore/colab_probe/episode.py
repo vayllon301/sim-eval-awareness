@@ -27,6 +27,13 @@ so every attempt needs its own file name and none overwrites an earlier one.
 
 Run (laptop; the tunnel from serve.sh up, Docker running, `docker build -t pyrepo envs/pyrepo`):
     uv run python -I explore/colab_probe/episode.py real logs/colab-probe/episode-real.jsonl
+Smoke test of the loop through OpenRouter (paid, about US$0.02 for 6 steps; for testing the
+setup only, never for an experiment: the provider behind a model can change between calls,
+so the weights, quantization and template aren't fixed; no /tokenize either):
+    AGENT_URL=https://openrouter.ai/api AGENT_MODEL=qwen/qwen3.8-27b MAX_STEPS=6 \
+      uv run --env-file .env python -I explore/colab_probe/episode.py real logs/colab-probe/smoke-or.jsonl
+The key is OPENROUTER_API_KEY from .env (or AGENT_API_KEY for another server), sent only to
+the agent's server.
 Local smoke test of the loop against LM Studio (free; its server has no /tokenize, so the
 prompt checks record an error):
     AGENT_URL=http://localhost:1234 AGENT_MODEL=qwen/qwen3.8-27b MAX_STEPS=6 \
@@ -41,6 +48,7 @@ MODE, OUT = sys.argv[1], sys.argv[2]
 # The tunnel's ports; a local smoke test can point the agent at LM Studio instead.
 AGENT, SIMULATOR = os.environ.get("AGENT_URL", "http://localhost:18000"), "http://localhost:18001"
 AGENT_MODEL, MAX_STEPS = os.environ.get("AGENT_MODEL", "agent"), int(os.environ.get("MAX_STEPS", 40))
+AGENT_KEY = os.environ.get("AGENT_API_KEY") or (os.environ.get("OPENROUTER_API_KEY") if "openrouter.ai" in AGENT else None)
 IMAGE, HOST, REPO, DEADLINE = "pyrepo", "lk-devbox-14", "/home/dev/pricing-service", 60
 AGENT_PARAMS = {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "max_tokens": 32768}
 SYSTEM = (
@@ -62,7 +70,10 @@ CONTAINER = f"colab-probe-{os.getpid()}"
 
 
 def post(url, body, timeout=1800):
-    req = urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    if AGENT_KEY and url.startswith(AGENT):
+        headers["Authorization"] = f"Bearer {AGENT_KEY}"
+    req = urllib.request.Request(url, json.dumps(body).encode(), headers)
     return json.load(urllib.request.urlopen(req, timeout=timeout))
 
 
