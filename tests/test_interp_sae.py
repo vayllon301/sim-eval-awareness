@@ -98,6 +98,27 @@ def test_fvu():
     assert np.isclose(fvu(x, np.broadcast_to(x.mean(0), x.shape)), 1)
 
 
+def test_sae_prose_sample_is_mixed_and_records_its_rows():
+    """Review B4: every held-out group contributes before truncation, and the rows are saved."""
+    import importlib.util
+    import json
+
+    from simtest.interp.fake import FakeTokenizer
+
+    root = FIX.parents[1]
+    spec = importlib.util.spec_from_file_location("sae_transfer", root / "explore" / "interp" / "sae_transfer.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    rows = [json.loads(x) for x in (root / "explore" / "interp" / "data" / "texts-qwen3.8-27b.jsonl").read_text().splitlines()]
+    ids, used = mod.prose_sample(rows, FakeTokenizer(), 12000)
+    assert len(ids) == 12000
+    by_id = {r["id"]: r for r in rows}
+    assert all(by_id[i]["split"] == "test" for i in used)
+    groups = [by_id[i]["emotion"] or "neutral" for i in used]
+    assert set(groups[:7]) == {"desperate", "calm", "frustrated", "afraid", "angry", "happy", "neutral"}
+    assert mod.prose_sample(rows, FakeTokenizer(), 12000) == (ids, used)  # fixed
+
+
 def test_splicing_into_the_fake_model():
     b = FakeBackend()
     ids = b.tokenizer("A short text to splice a reconstruction into.")["input_ids"]

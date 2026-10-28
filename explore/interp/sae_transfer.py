@@ -2,8 +2,9 @@
 Reference: docs/INTERP.md, "SAEs".
 
 On a fixed sample (one smoke episode rendered with the model's chat template, about 7K
-tokens, and 2,048 tokens of held-out stories and neutral dialogues as raw text), for each
-layer:
+tokens, and 2,048 tokens of held-out stories and neutral dialogues as raw text, taken in
+turn from each emotion and the neutral dialogues so every group contributes; the
+contributing row IDs are saved), for each layer:
 - FVU: fraction of variance unexplained by the SAE reconstruction, overall and by token
   group (the agent's own tokens, tool outputs, the prompt, prose); also without b_dec, to
   check the decoder convention, and the mean cosine between x and x_hat;
@@ -51,15 +52,33 @@ GROUPS = {"agent": [R[r] for r in AGENT_ROLES], "tool_output": [R["tool_output"]
           "prompt": [R["system"], R["user"], R["template"]], "prose": [PROSE]}
 
 
+def prose_sample(rows, tok, n=SEQ):
+    """n tokens of held-out prose, mixed before truncation: one held-out row from each group
+    (each emotion's stories, the neutral dialogues) in turn, in file order within a group,
+    joined by blank lines. Returns (token IDs, IDs of the rows that contribute)."""
+    groups = {}
+    for r in rows:
+        if r["split"] == "test":
+            groups.setdefault(r["emotion"] or "neutral", []).append(r)
+    order = [g[i] for i in range(max(map(len, groups.values()))) for g in groups.values() if i < len(g)]
+    text, starts = "", []
+    for r in order:
+        text += "\n\n" if text else ""
+        starts.append(len(text))
+        text += r["text"]
+    enc = tok(text, add_special_tokens=False, return_offsets_mapping=True)
+    if len(enc["input_ids"]) < n:
+        sys.exit("sample too short")
+    cut = enc["offset_mapping"][n - 1][1]
+    return list(enc["input_ids"][:n]), [r["id"] for r, s in zip(order, starts) if s < cut]
+
+
 def sample(tok):
     """The whole agent transcript with its token roles, then SEQ tokens of held-out prose."""
     ep = load_colab_probe(EPISODE, **colab_probe_prompts("explore"))
     rd = render(ep, tok)
-    prose = [r["text"] for r in load_rows(TEXTS) if r["split"] == "test"]
-    b = encode(tok, "\n\n".join(prose))[:SEQ]
-    if len(b) < SEQ:
-        sys.exit("sample too short")
-    return {"episode": rd.ids.tolist(), "prose": b}, {"episode": rd.role.tolist(), "prose": [PROSE] * len(b)}
+    b, used = prose_sample(load_rows(TEXTS), tok)
+    return {"episode": rd.ids.tolist(), "prose": b}, {"episode": rd.role.tolist(), "prose": [PROSE] * len(b)}, used
 
 
 def main():
@@ -78,13 +97,15 @@ def main():
     tok_sha = file_sha256(Path(a.model).expanduser() / "tokenizer.json")
     if Path(a.sample).exists():
         saved = json.loads(Path(a.sample).read_text())
+        if "prose_rows" not in saved:
+            sys.exit(f"{a.sample} predates the mixed prose sample; move it aside to build a new one")
         seqs, roles = saved["ids"], saved["roles"]
         if max(max(v) for v in seqs.values()) >= len(b.tokenizer):
             sys.exit("the saved sample has token IDs outside this model's vocabulary")
     else:
-        seqs, roles = sample(b.tokenizer)
+        seqs, roles, used = sample(b.tokenizer)
         saved = {"tokenizer_sha256": tok_sha, "tokenizer_model": str(a.model), "ids": seqs, "roles": roles,
-                 "episode": EPISODE, "texts": TEXTS}
+                 "prose_rows": used, "episode": EPISODE, "texts": TEXTS}
         Path(a.sample).parent.mkdir(parents=True, exist_ok=True)
         Path(a.sample).write_text(json.dumps(saved))
     acts = {name: b.activations(ids, layers) for name, ids in seqs.items()}
@@ -92,7 +113,7 @@ def main():
     print(f"activations{'' if a.fvu_only else ' and clean losses'} in {time.time() - t0:.0f}s", flush=True)
     roles = {k: np.asarray(v) for k, v in roles.items()}
     names = list(seqs)
-    res = {"model": b.info, "layers": {}, "sample": {k: len(v) for k, v in seqs.items()}, "sample_file": a.sample,
+    res = {"model": b.info, "layers": {}, "sample": {k: len(v) for k, v in seqs.items()}, "sample_file": a.sample, "prose_rows": saved["prose_rows"],
            "sample_tokenizer_sha256": saved["tokenizer_sha256"], "model_tokenizer_sha256": tok_sha,
            "tokens_by_group": {g: int(sum(np.isin(roles[n][1:], c).sum() for n in names)) for g, c in GROUPS.items()},
            "episode": EPISODE, "texts": TEXTS, "created": now(), "git_commit": git_commit()}
