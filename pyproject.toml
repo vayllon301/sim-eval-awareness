@@ -11,11 +11,25 @@ dependencies = [
     "pyyaml>=6",
 ]
 
+[project.optional-dependencies]
+# Interpretability tooling (src/simtest/interp, docs/INTERP.md): `uv sync --extra interp`.
+# MLX runs on Apple Silicon only; the GPU backends come later (docs/INTERP.md).
+interp = [
+    "mlx==0.32.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm==0.32.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "numpy>=2",
+    "safetensors>=0.6",
+    "transformers>=5",
+]
+
 [project.scripts]
 simtest = "simtest.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "safetensors>=0.6",  # the interp tests read and write vector files offline
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -27,3 +41,4 @@ packages = ["src/simtest"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore:The 'initial' parameter is deprecated:DeprecationWarning"]
+markers = ["interp_model: needs local model weights (set SIMTEST_INTERP_MODEL); skipped by default"]
