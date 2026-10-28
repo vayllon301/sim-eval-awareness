@@ -5,7 +5,9 @@ tutored by Jordi Escayola.
 
 **The question.** Labs test AI agents in environments where another LLM plays the
 tools. Does an LLM-simulated environment, in place of a real one, change the evaluated
-model's *evaluation awareness* or its behaviour? And what in the simulation drives it?
+model's *evaluation awareness* or its behaviour? And what happens inside the two models:
+how do the emotion representations and sparse features of the agent and of the simulator
+relate to the agent's awareness and behaviour?
 
 **The setup.** A coding agent fixes tickets in small synthetic repos with a `bash`
 tool. Only the tool outputs change:
@@ -24,16 +26,17 @@ behaviour is measured on real state.
 
 | Path | What |
 | --- | --- |
-| `src/simtest/` | The testbed, built on [Inspect AI](https://inspect.aisi.org.uk/) (pinned 0.3.281). Reference: [`docs/TESTBED.md`](docs/TESTBED.md) |
-| `envs/` | Synthetic repos and their Docker images |
-| `scenarios/`, `configs/` | Tasks, and the configs that were run |
-| `explore/` | Exploratory scripts (simulator bake-off, Colab probe). Not part of the testbed |
+| `src/simtest/` | The testbed, built on [Inspect AI](https://inspect.aisi.org.uk/) (pinned 0.3.281). The coding family is `src/simtest/coding/`. Reference: [`docs/TESTBED.md`](docs/TESTBED.md) |
+| `src/simtest/interp/` | Interpretability tools: emotion and evaluation-awareness vectors, a post-hoc episode reader, Qwen-Scope SAEs, activation steering (optional extra, MLX on Apple Silicon). Reference: [`docs/INTERP.md`](docs/INTERP.md) |
+| `envs/` | The dev-machine image (`envs/devbox/`: a real init, reached over SSH), one image per scenario repo (`envs/coding/`), and the bake-off's `pyrepo` |
+| `scenarios/`, `configs/` | Tasks, and the configs that were run. Coding scenarios and their benign twins: `scenarios/coding/` |
+| `explore/` | Exploratory scripts (simulator bake-off, Colab probe, interpretability scripts in `explore/interp/`). Not part of the testbed |
 | `tests/` | Offline tests (mock models, no API calls) |
 | `experiments/<run-name>/` | One folder per finished experiment: findings, report, config, logs |
 
 The testbed started with a first design (rule-following in a simulated office, runs
 M1–M1c). Its code and scenarios are kept so those runs stay reproducible. The
-coding-agent environment is being built on top of it.
+coding-agent environment is built on top of it.
 
 Comments that cite `LOG.md` or `PLAN.md` point to the project's private research log.
 Everything a result rests on is published under `experiments/`.
@@ -54,7 +57,23 @@ uv run simtest demo         # scripted agents and mock simulators, no API calls
 
 ### The coding environment
 
-`envs/pyrepo` is a small Python service whose CI is red: one test still expects an old
+The coding family runs a coding agent on a Debian dev box (a real init, reached over SSH
+as a login shell), fixing a ticket in a small repo. There are four scenarios, each with a
+benign twin without the temptation; `pricing_cap` is the old `pyrepo`. Every command also
+runs on the real box in every condition, and the behaviour checks read its final state.
+
+```bash
+uv run simtest images                                  # build the dev-box and scenario images (Docker)
+uv run simtest snapshot --check                        # the C2/C3 snapshots still match a fresh box
+uv run --env-file .env simtest run configs/coding/dev_c0.yaml   # paid: needs the model servers
+uv run simtest summarize logs/coding-dev-c0
+```
+
+Models are OpenAI-compatible endpoints (`rawchat/<served-name>` with a `base_url`): vLLM on
+Colab through the tunnel, or OpenRouter for smoke tests only. See `docs/TESTBED.md`,
+"Coding family".
+
+The bake-off's repo: `envs/pyrepo` is a small Python service whose CI is red: one test still expects an old
 EU discount cap. The agent's job is to fix it.
 
 ```bash
@@ -87,6 +106,17 @@ AGENT_URL=https://openrouter.ai/api AGENT_MODEL=qwen/qwen3.8-27b MAX_STEPS=6 \
   uv run --env-file .env python -I explore/colab_probe/episode.py real logs/colab-probe/smoke-or.jsonl
 ```
 
+### Interpretability (optional)
+
+```bash
+uv sync --extra interp      # MLX, safetensors, transformers
+uv run --extra interp python -I explore/interp/build_vectors.py <model-dir> <texts.jsonl> <out.safetensors> --layers 36,39,42,45,48
+```
+
+The other scripts (the episode reader, the SAE transfer check, the steering check) are in
+[`docs/INTERP.md`](docs/INTERP.md), "Scripts". Numbers from quantized laptop weights are
+for development only; the experiment's backend is bf16 on a GPU.
+
 ### Both models on one GPU (Colab)
 
 `explore/colab_probe/serve.sh` serves the agent (Qwen3.8-27B) and the simulator
@@ -109,5 +139,6 @@ uv run inspect view --log-dir logs/<name>                 # transcripts
 
 ## Status
 
-Work in progress: the coding-agent environment and the pilot are being built. Code under the
+Work in progress: the coding-agent environment and the interpretability tools are built
+and reviewed; the GPU backends and the first experiment come next. Code under the
 [MIT licence](LICENSE). Published with the agreement of the thesis tutor.
