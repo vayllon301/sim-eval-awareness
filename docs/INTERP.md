@@ -40,9 +40,11 @@ Nothing in the testbed imports `simtest.interp`, and importing it doesn't import
 ## Backend interface
 
 A backend wraps one model: weights, quantization, engine, chat template. Its `info` (engine,
-model path, weights fingerprint, revision, quantization, versions) goes into the metadata
-of every vector file and reading. A vector file only reads the model it was built on: the
-reader refuses vectors whose fingerprint differs from the backend's.
+model path, weights fingerprint, revision, quantization, the sha256 of the tokenizer files
+and of the chat template in effect, and the versions of the engine, transformers and
+tokenizers) goes into the metadata of every vector file and reading. A vector file only
+reads and steers the model it was built on: the reader and `steering.resolve` refuse
+vectors whose weights fingerprint differs from the backend's.
 
 ```python
 class Backend(Protocol):
@@ -84,10 +86,10 @@ header metadata has one key, `simtest_interp`, holding a JSON object:
 | Field | What |
 | --- | --- |
 | `format`, `format_version` | `simtest-interp-vectors`, 1 |
-| `model` | The backend's `info`: engine, path, fingerprint, revision, quantization, versions |
+| `model` | The backend's `info`: engine, path, weights fingerprint, revision, quantization, tokenizer and chat-template sha256, versions |
 | `layers`, `d_model`, `names` | What the file holds |
-| `resid_norm_mean` | `{layer: mean L2 norm of the residual stream}` on `norm_reference` (all texts, tokens from 50 on). Steering strengths are fractions of it |
-| `offset` | `{name: {layer: mean projection of the neutral texts}}`, to centre readings |
+| `resid_norm_mean` | `{layer: mean L2 norm of the residual stream}` on `norm_reference` (training texts, tokens from 50 on). Steering strengths are fractions of it |
+| `offset` | `{name: {layer: mean projection of the training neutral texts}}`, to centre readings |
 | `vector_info`, `method`, `params` | How each vector was made |
 | `datasets` | Paths, sha256, counts and generators of the texts and pairs |
 | `eval` | Validation per layer (held-out, leave-one-out, eval-awareness checks) |
@@ -124,6 +126,9 @@ from texts written by the model family itself.
      on). The paper doesn't say whether it used tokens or per-text means; the vllm-lens
      replication uses means, and the build reports that variant too.
   4. Unit length. Readings are dot products with the unit vector.
+  - Everything fitted (vectors, neutral PCs and their per-text variant, offsets, the
+    reference norms) uses training rows only; held-out stories and dialogues are only
+    scored.
 - **Validation.** Held-out accuracy: a held-out story is assigned the emotion whose vector
   has the largest dot product with its mean minus the training grand mean (chance 1/6).
   Leave-one-out over training stories. Variants without the PC projection and with PCs of
@@ -180,7 +185,9 @@ alpha: 0.05                             # strength, a fraction of the mean resid
 sign: 1                                 # 1 or -1
 ```
 
-**Resolution** (`steering.resolve`): at each layer L,
+**Resolution** (`steering.resolve(spec, fingerprint=backend.info["fingerprint"])`, which
+refuses vectors built on another model; same-size models like Qwen3.5-27B and
+Qwen3.8-27B would otherwise accept each other's vectors): at each layer L,
 `delta_L = sign × alpha × resid_norm_mean[L] × u_L`, with `u_L` the unit vector
 `direction@L` (or the seeded random vector) and `resid_norm_mean[L]` from the same vector
 file, measured on the same backend. The engine adds `delta_L` to the residual stream after
@@ -264,7 +271,8 @@ paper's tables count from 1).
   `acts @ W_dec.T + b_dec` (the transfer check reports FVU without `b_dec` too).
 - **Transfer check** (`explore/interp/sae_transfer.py`): on the same token IDs for every
   model (a whole smoke episode rendered with the chat template, about 7K tokens, with its
-  token roles, then 2,048 tokens of held-out stories and dialogues), FVU by token group
+  token roles, then 2,048 tokens of held-out stories and dialogues, taken in turn from
+  each emotion and the neutral dialogues, with the contributing row IDs saved), FVU by token group
   and spliced next-token loss (the layer's output replaced by the reconstruction, against
   clean and zero ablation). Position 0 is left out of FVU and never replaced. Qwen-Scope
   publishes no FVU or loss numbers, so the reference is the same measurement on
