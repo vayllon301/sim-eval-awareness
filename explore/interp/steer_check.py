@@ -68,7 +68,7 @@ def main():
     stock = [r.token for r in stream_generate(b.model, b.tokenizer, prompt, max_tokens=N_NEW, sampler=make_sampler(temp=0.0))]
     ours = b.generate(prompt, max_tokens=N_NEW)
     zero = b.generate(prompt, max_tokens=N_NEW, steer=[Add(L, np.zeros(b.d_model, np.float32)) for L in layers])
-    spec0 = b.generate(prompt, max_tokens=N_NEW, steer=resolve(dose_curve(target, [0.0])[0], vs))
+    spec0 = b.generate(prompt, max_tokens=N_NEW, steer=resolve(dose_curve(target, [0.0])[0], vs, fingerprint=b.info["fingerprint"]))
     stock = [t for t in stock if t not in b.eos_token_ids] + [t for t in stock if t in b.eos_token_ids][:1]
     trim = lambda s: s[: len(stock)]
     res["strength_zero"] = {"n_tokens": len(stock), "ours_equals_stock": trim(ours) == stock,
@@ -88,7 +88,7 @@ def main():
     for name, base in specs.items():
         curve = {str(L): [] for L in read_layers}
         for s in dose_curve(base, ALPHAS):
-            acts = b.activations(ids, read_layers, steer=resolve(s, vs))
+            acts = b.activations(ids, read_layers, steer=resolve(s, vs, fingerprint=b.info["fingerprint"]))
             for L in read_layers:
                 curve[str(L)].append(float((acts[L][1:] @ u[L]).mean()))
         curves[name] = curve
@@ -108,7 +108,7 @@ def main():
     for direction in (a.target, a.second):
         for alpha in (-a.alpha, a.alpha):
             s = dose_curve(SteeringSpec(**{**target.to_dict(), "direction": direction, "layers": tuple(layers)}), [alpha])[0]
-            samples[s.label] = b.tokenizer.decode(b.generate(prompt, max_tokens=N_NEW + 32, steer=resolve(s, vs)))
+            samples[s.label] = b.tokenizer.decode(b.generate(prompt, max_tokens=N_NEW + 32, steer=resolve(s, vs, fingerprint=b.info["fingerprint"])))
     samples["unsteered"] = b.tokenizer.decode(b.generate(prompt, max_tokens=N_NEW + 32))
     res["samples"] = {"prompt": PROMPT, "enable_thinking": False, "texts": samples}
     for k, v in samples.items():

@@ -12,7 +12,7 @@ A spec is a small YAML (or JSON) file:
     alpha: 0.05                             # strength, a fraction of the mean residual norm
     sign: 1                                 # 1 or -1
 
-Resolution (`resolve`): at each layer L, delta_L = sign * alpha * norm_L * u_L, where u_L
+Resolution (`resolve`, for one backend: vectors built on another model are refused): at each layer L, delta_L = sign * alpha * norm_L * u_L, where u_L
 is the unit vector `direction@L` from the file (or `random_unit(d, seed, L)`), and norm_L
 is the file's `resid_norm_mean[L]`, measured on the same backend as the vectors. The
 engine adds delta_L to the residual stream after decoder layer L at every position,
@@ -109,13 +109,19 @@ class SteeringSpec:
         Path(path).write_text("# simtest interp steering spec (docs/INTERP.md)\n" + yaml.safe_dump(self.to_dict(), sort_keys=False))
 
 
-def resolve(spec: SteeringSpec, vectors: VectorSet | None = None) -> list[Add]:
-    """The spec as per-layer additions. Loads the vector file unless given (then the
-    sha256 is only checked if the spec has one and `vectors` came from a file)."""
+def resolve(spec: SteeringSpec, vectors: VectorSet | None = None, *, fingerprint: str) -> list[Add]:
+    """The spec as per-layer additions for the backend whose weights fingerprint is
+    `fingerprint` (backend.info["fingerprint"]); vectors built on another model are refused,
+    since same-size models would accept them silently. Loads the vector file unless given
+    (the sha256 is checked when the spec has one and the file is loaded here)."""
     if vectors is None:
         if spec.vectors_sha256 and file_sha256(spec.vectors) != spec.vectors_sha256:
             raise ValueError(f"{spec.vectors}: sha256 does not match the spec's vectors_sha256")
         vectors = VectorSet.load(spec.vectors)
+    built_on = (vectors.meta.get("model") or {}).get("fingerprint")
+    if built_on != fingerprint:
+        raise ValueError(f"the vectors were built on {built_on}, the backend is {fingerprint}; "
+                         "a spec only steers the model its vectors were built on")
     adds = []
     for L in spec.layers:
         u = random_unit(vectors.d_model, spec.seed, L) if spec.direction == RANDOM else vectors.get(spec.direction, L)
