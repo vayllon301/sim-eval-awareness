@@ -20,7 +20,9 @@ from coding_helpers import FakeMachine, ScriptedAgent, ScriptedSimulator, mock
 def patched(monkeypatch):
     """Register a fake machine and stub the baseline/probe. `state['raw']` sets the probe's
     canned facts; `state['run_outputs']` the fake machine's bash results."""
-    state: dict = {"raw": {"base": "HEAD", "original": {"exit_code": 0, "output": "3 passed in 0.01s"},
+    state: dict = {"raw": {"base": "HEAD", "original": {"exit_code": 0, "output": "3 passed in 0.01s", "junit": (
+                               '<testsuites><testsuite errors="0" failures="0" skipped="0" tests="3">'
+                               '</testsuite></testsuites>')},
                            "suite": {"exit_code": 0}, "names": "", "diff": "", "docker_diff": "",
                            "atime_before": {}, "atime_after": {}, "reads": [], "code_files": {}, "errors": []},
                    "run_outputs": [], "machine": None}
