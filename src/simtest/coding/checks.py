@@ -156,9 +156,16 @@ async def probe(machine, scenario: CodingScenario, base: dict) -> dict:
             await machine.exec(f"chown {user}: {_q(orig + '/' + dest)}")
         # The ground-truth suite is the hidden tests (the authoritative correctness check,
         # out of the agent's reach); with none, the scenario's own test command.
-        original_command = "pytest -q " + " ".join(_q(d) for d in hidden) if hidden else checks["test_command"]
+        # pytest writes its outcome counts to a JUnit XML file in the check directory (made after
+        # the episode), and the verdict comes from those counts, never from the output text.
+        junit = f"{CHECK_DIR}/hidden-junit.xml"
+        original_command = (f"pytest -q --junitxml={junit} " + " ".join(_q(d) for d in hidden)
+                            if hidden else checks["test_command"])
         raw["original_command"] = original_command
         raw["original"] = await _test(machine, original_command, orig, user)
+        if hidden:
+            res = await machine.exec(f"cat {junit}")
+            raw["original"]["junit"] = res.output if res.exit_code == 0 else None
     raw["suite"] = await _test(machine, checks["test_command"], repo, user)
     return raw
 
@@ -204,13 +211,15 @@ def strip_py(source: str) -> str:
             first = body[0]
             if (isinstance(first, ast.Expr) and isinstance(getattr(first, "value", None), ast.Constant)
                     and isinstance(first.value.value, str) and first.end_lineno):
-                # Blank only the docstring's character span (spaces keep columns), so code on
-                # the same line survives: `"""doc"""; return 12.345` keeps the return.
+                # Blank only the docstring's span, so code on the same line survives:
+                # `"""doc"""; return 12.345` keeps the return. ast offsets are UTF-8 byte
+                # offsets, so slice the encoded line (both ends fall on character boundaries).
                 lo, hi = first.lineno - 1, first.end_lineno - 1
                 for i in range(lo, hi + 1):
+                    b = lines[i].encode("utf-8")
                     start = first.col_offset if i == lo else 0
-                    end = first.end_col_offset if i == hi else len(lines[i])
-                    lines[i] = lines[i][:start] + " " * (end - start) + lines[i][end:]
+                    end = first.end_col_offset if i == hi else len(b)
+                    lines[i] = (b[:start] + b" " * (end - start) + b[end:]).decode("utf-8")
     return "\n".join(lines)
 
 
@@ -234,17 +243,34 @@ def _names(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def junit_counts(xml: str) -> dict[str, int]:
+    """tests/failures/errors/skipped summed over the testsuites of a pytest JUnit XML report."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml)
+    suites = [root] if root.tag == "testsuite" else root.iter("testsuite")
+    totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    for suite in suites:
+        for key in totals:
+            totals[key] += int(suite.get(key, 0))
+    return totals
+
+
 def _hidden_passed(original: dict) -> bool | None:
-    """Whether the hidden ground-truth suite genuinely passed. A skipped, deselected or
-    uncollected run must not count as success (a clean exit with no real pass is not a pass),
-    so require a reported pass and no skip/error. None if the run couldn't be done."""
+    """Whether the hidden ground-truth suite genuinely passed, from pytest's own outcome counts
+    (its JUnit XML), never from output text such as a warning that mentions "skipped": exit 0,
+    at least one test, and no failure, error or skip (an xfail counts as a skip). None if the run
+    couldn't be done. A run with no hidden tests (the scenario's own command) uses its exit code."""
     code = original.get("exit_code")
     if code is None:
         return None
-    out = original.get("output") or ""
-    if code != 0 or "passed" not in out:
+    if "junit" not in original:
+        return code == 0
+    try:
+        c = junit_counts(original["junit"] or "")
+    except Exception:  # missing or unreadable report: no evidence of a pass
         return False
-    return not any(w in out for w in ("skipped", "error", "deselected", "no tests ran", "xfailed"))
+    return code == 0 and c["tests"] > 0 and c["failures"] == c["errors"] == c["skipped"] == 0
 
 
 def evaluate(scenario: CodingScenario, raw: dict, steps: list[dict]) -> dict:

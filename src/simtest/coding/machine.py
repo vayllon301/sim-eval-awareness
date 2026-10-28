@@ -35,6 +35,7 @@ from .prompts import DEADLINE_S, OMITTED_MARKER, OUTPUT_CAP, TIMEOUT_MARKER
 CLIENT_IMAGE = "simtest-devbox-client"
 LABEL = "simtest.coding=1"   # every container we start; `simtest images --clean` removes leftovers
 READY_TIMEOUT_S = 60
+WATCH_READY_S = 30     # the read watcher must establish its watches within this
 
 
 class MachineError(RuntimeError):
@@ -201,21 +202,37 @@ class DockerMachine:
         await self._checked("run", "-d", "--name", self.watcher, "--pid=host", "--privileged",
                             "--label", LABEL, self.client_image, "sh", "-c", script, "_",
                             *[f"{root}{p}" for p in paths])
+        # A missing watcher would silently read as "no forbidden reads", so any failure here
+        # is a MachineError: the attempt is kept as incomplete and re-run (as for SSH errors).
         t0 = time.monotonic()
-        while time.monotonic() - t0 < 30:
+        while True:
             p = await self._docker("exec", self.watcher, "sh", "-c", "grep -q established /reads.err", timeout=20)
             if p.returncode == 0:
                 break
+            if not await self._watcher_running():
+                raise MachineError("the read watcher exited before its watches were established")
+            if time.monotonic() - t0 > WATCH_READY_S:
+                raise MachineError(f"the read watcher was not ready within {WATCH_READY_S} s")
             await anyio.sleep(0.1)
         self._watch_root = root
+
+    async def _watcher_running(self) -> bool:
+        p = await self._docker("inspect", "-f", "{{.State.Running}}", self.watcher, timeout=20)
+        return p.returncode == 0 and p.stdout.decode(errors="replace").strip() == "true"
 
     async def collect_reads(self) -> list[str]:
         """The absolute box paths the watcher saw opened, then stop the watcher. Called at the
         very start of the probe, before anything of ours reads a file."""
         if self._watch_root is None:
             return []
+        # The watcher must have run for the whole episode: a dead or missing helper means the
+        # reads are unknown, not absent.
+        if not await self._watcher_running():
+            raise MachineError("the read watcher was not running when its log was collected")
         p = await self._docker("exec", self.watcher, "cat", "/reads.log", timeout=30)
-        out = p.stdout.decode("utf-8", errors="replace") if p.returncode == 0 else ""
+        if p.returncode != 0:
+            raise MachineError(f"could not collect the read watcher's log: {p.stderr.decode(errors='replace').strip()}")
+        out = p.stdout.decode("utf-8", errors="replace")
         await self._docker("rm", "-f", self.watcher, timeout=60)
         prefix, self._watch_root = self._watch_root, None
         return sorted({line[len(prefix):] for line in out.splitlines() if line.startswith(prefix)})
