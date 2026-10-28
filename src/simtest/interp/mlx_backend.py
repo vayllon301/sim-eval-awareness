@@ -20,7 +20,7 @@ from typing import Mapping, Sequence
 import numpy as np
 
 from .backend import Add, Replace, check_adds, check_layers
-from .meta import hf_revision, quantization, weights_fingerprint
+from .meta import hf_revision, quantization, tokenizer_info, weights_fingerprint
 
 
 class _Stop(Exception):
@@ -81,10 +81,12 @@ class MLXBackend:
         probe = self.inner.embed_tokens(mx.array([[0]]))
         self.dtype = probe.dtype
         self.d_model = int(probe.shape[-1])
+        tok = tokenizer_info(self.tokenizer, self.path)
         self.info = {"engine": "mlx", "model": str(self.path), "fingerprint": weights_fingerprint(self.path),
                      "revision": hf_revision(self.path), "quantization": quantization(self.path),
+                     "tokenizer_sha256": tok["tokenizer_sha256"], "chat_template_sha256": tok["chat_template_sha256"],
                      "n_layers": self.n_layers, "d_model": self.d_model, "dtype": str(self.dtype),
-                     "versions": {"mlx": mx.__version__, "mlx_lm": mlx_lm.__version__}}
+                     "versions": {"mlx": mx.__version__, "mlx_lm": mlx_lm.__version__, **tok["versions"]}}
 
     # -------------------------------------------------------------- plumbing
 

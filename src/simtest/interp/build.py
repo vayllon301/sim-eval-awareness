@@ -43,7 +43,7 @@ def slug(topic: str, words: int = 2) -> str:
 def collect(backend: Backend, texts: Sequence[str], layers: Sequence[int], start: int = D.TOKEN_START,
             keep_tokens: Sequence[bool] | None = None, progress=None):
     """Per text: the mean activation from `start` on at each layer, optionally its token
-    activations from `start` on, and the token norms (for the mean residual norm)."""
+    activations from `start` on, and its token norms (for the mean residual norm)."""
     means = {L: [] for L in layers}
     tokens = {L: [] for L in layers}
     norms = {L: [] for L in layers}
@@ -59,24 +59,25 @@ def collect(backend: Backend, texts: Sequence[str], layers: Sequence[int], start
                 tokens[L].append(acts[L][start:])
         if progress:
             progress(i + 1, len(texts))
-    return ({L: np.stack(v) for L, v in means.items()}, {L: v for L, v in tokens.items()},
-            {L: np.concatenate(v) for L, v in norms.items()}, n_tokens)
+    return {L: np.stack(v) for L, v in means.items()}, tokens, norms, n_tokens
 
 
 def build_emotions(backend: Backend, rows: Sequence[dict], layers: Sequence[int], *, variance: float = 0.5,
                    concept_topics: Sequence[str] = (), progress=None) -> tuple[VectorSet, dict, dict]:
-    """Returns (vectors, report, neutral text means per layer)."""
+    """Returns (vectors, report, training neutral text means per layer). Everything fitted
+    (vectors, neutral PCs, offsets, reference norms) uses training rows only; held-out rows
+    are only scored."""
     layers = sorted(int(L) for L in layers)
     emotions = list(dict.fromkeys(r["emotion"] for r in rows if r["kind"] == "emotion"))
-    neutral_rows = [r for r in rows if r["kind"] == "neutral"]
-    is_neutral = [r["kind"] == "neutral" for r in rows]
-    means, tokens, norms, n_tokens = collect(backend, [r["text"] for r in rows], layers, keep_tokens=is_neutral,
+    train_neutral = [r["kind"] == "neutral" and r["split"] == "train" for r in rows]
+    means, tokens, norms, n_tokens = collect(backend, [r["text"] for r in rows], layers, keep_tokens=train_neutral,
                                              progress=progress)
     idx = {"train": {e: [] for e in emotions}, "test": {e: [] for e in emotions}}
     for i, r in enumerate(rows):
         if r["kind"] == "emotion":
             idx[r["split"]][r["emotion"]].append(i)
-    neutral_idx = [i for i, r in enumerate(rows) if r["kind"] == "neutral"]
+    neutral_idx = [i for i, keep in enumerate(train_neutral) if keep]
+    train_idx = [i for i, r in enumerate(rows) if r["split"] == "train"]
     vs = VectorSet(meta={})
     report = {"layers": {}, "n_tokens": {"min": int(min(n_tokens)), "median": float(np.median(n_tokens)),
                                          "max": int(max(n_tokens))}}
@@ -109,14 +110,14 @@ def build_emotions(backend: Backend, rows: Sequence[dict], layers: Sequence[int]
             if not pos or not neg:
                 raise ValueError(f"concept topic {topic!r} has no training stories")
             vs.add(f"topic:{slug(topic)}", L, D.contrast_vector(m[pos], m[neg], info["pcs"]))
-        resid[str(L)] = float(norms[L].mean())
+        resid[str(L)] = float(np.concatenate([norms[L][i] for i in train_idx]).mean())
         neutral_means = m[neutral_idx]
         for name in [*emotions, *[f"topic:{slug(t)}" for t in concept_topics]]:
             offsets.setdefault(name, {})[str(L)] = float((neutral_means @ vs.get(name, L)).mean()) if len(neutral_idx) else 0.0
         report["layers"][str(L)] = rep
     report["chosen_layer"] = choose_layer(report, backend.n_layers)
     vs.meta.update({"resid_norm_mean": resid, "offset": offsets,
-                    "norm_reference": "all texts (stories and neutral dialogues), tokens from 50 on",
+                    "norm_reference": "training texts (stories and neutral dialogues), tokens from 50 on",
                     "params": {"token_start": D.TOKEN_START, "neutral_pc_variance": variance, "pca_on": "neutral tokens"},
                     "vector_info": {**{e: {"method": "emotions", "dataset": "texts"} for e in emotions},
                                     **{f"topic:{slug(t)}": {"method": "topics", "dataset": "texts", "topic": t}

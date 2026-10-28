@@ -53,6 +53,32 @@ def weights_fingerprint(model_dir: str | Path) -> str:
     return "fp1:" + h.hexdigest()
 
 
+def tokenizer_info(tokenizer, model_dir: str | Path) -> dict:
+    """What turns messages into token IDs, beyond the weights: sha256 of the tokenizer files
+    (tokenizer.json, tokenizer_config.json), sha256 of the chat template in effect (the one
+    the loaded tokenizer renders with), and the versions of the libraries that render and
+    tokenize (transformers, tokenizers)."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    d = Path(model_dir).expanduser()
+    h = hashlib.sha256(b"simtest-tokenizer-v1")
+    for name in ("tokenizer.json", "tokenizer_config.json"):
+        p = d / name
+        if p.exists():
+            h.update(name.encode() + b"\0" + p.read_bytes())
+    template = getattr(tokenizer, "chat_template", None)
+    if isinstance(template, dict):
+        template = json.dumps(template, sort_keys=True)
+    versions = {}
+    for pkg in ("transformers", "tokenizers"):
+        try:
+            versions[pkg] = version(pkg)
+        except PackageNotFoundError:
+            versions[pkg] = None
+    return {"tokenizer_sha256": h.hexdigest(), "chat_template_sha256": bytes_sha256(template.encode()) if template else None,
+            "versions": versions}
+
+
 def hf_revision(model_dir: str | Path) -> str | None:
     """The commit of a Hugging Face cache snapshot (…/snapshots/<sha>), else None."""
     parts = Path(model_dir).expanduser().resolve().parts

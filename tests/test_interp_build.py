@@ -1,6 +1,7 @@
 """The vector-building pipeline end to end on the fake backend: every vector at every
 layer, validation numbers, metadata, and a file that loads back."""
 
+import copy
 import json
 from pathlib import Path
 
@@ -27,7 +28,8 @@ def rows():
                             "split": "test" if ti == 3 else "train", "text": text, "generator": "test"})
     for ti, topic in enumerate(TOPICS):
         for k in range(3):
-            out.append({"id": f"n-{ti}-{k}", "kind": "neutral", "emotion": None, "topic": topic, "split": "train",
+            out.append({"id": f"n-{ti}-{k}", "kind": "neutral", "emotion": None, "topic": topic,
+                        "split": "test" if ti == 3 else "train",
                         "text": f"Human: How long is {topic}? Assistant: It is {k + 3} hours long. " * 3, "generator": "test"})
     return out
 
@@ -60,11 +62,48 @@ def test_build_all_on_the_fake_backend(tmp_path):
     assert back.meta["eval"]["layers"]["2"]["heldout"]["accuracy"] == 1.0
 
 
+def test_heldout_neutral_rows_do_not_change_what_is_fitted():
+    """Review B1: PCA, offsets and reference norms come from training rows only."""
+    b = FakeBackend()
+    pairs = json.loads((ROOT / "explore" / "interp" / "data" / "eval_awareness_pairs.json").read_text())
+    base = rows()
+    changed = copy.deepcopy(base)
+    for r in changed:
+        if r["kind"] == "neutral" and r["split"] == "test":
+            r["text"] = "Human: List four prime numbers. Assistant: 2, 3, 5 and 7, in order. " * 3
+    v1, r1 = build_all(b, base, [2, 3], pairs=pairs, concept_topics=["a bakery morning"])
+    v2, r2 = build_all(b, changed, [2, 3], pairs=pairs, concept_topics=["a bakery morning"])
+    for k, v in v1.vectors.items():
+        assert np.array_equal(v, v2.vectors[k]), k
+    assert v1.meta["offset"] == v2.meta["offset"]
+    assert v1.meta["resid_norm_mean"] == v2.meta["resid_norm_mean"]
+    for L in ("2", "3"):
+        assert r1["layers"][L]["variants"] == r2["layers"][L]["variants"]
+
+
 def test_short_texts_are_refused():
     rs = rows()
     rs[0]["text"] = "Too short."
     with pytest.raises(ValueError, match="need more than 50"):
         build_all(FakeBackend(), rs, [2])
+
+
+def test_backend_provenance_covers_tokenizer_and_template(tmp_path):
+    """Review B3: tokenizer files and the template in effect change the recorded provenance."""
+    from simtest.interp.meta import tokenizer_info
+
+    class Tok:
+        chat_template = "{{ messages }}"
+
+    (tmp_path / "tokenizer.json").write_text('{"model": "a"}')
+    a = tokenizer_info(Tok(), tmp_path)
+    assert set(a["versions"]) == {"transformers", "tokenizers"} and a["chat_template_sha256"]
+    other = Tok()
+    other.chat_template = "{{ messages }}\n"
+    assert tokenizer_info(other, tmp_path)["chat_template_sha256"] != a["chat_template_sha256"]
+    assert tokenizer_info(other, tmp_path)["tokenizer_sha256"] == a["tokenizer_sha256"]
+    (tmp_path / "tokenizer.json").write_text('{"model": "b"}')
+    assert tokenizer_info(Tok(), tmp_path)["tokenizer_sha256"] != a["tokenizer_sha256"]
 
 
 def test_choose_layer_breaks_ties_towards_two_thirds():
