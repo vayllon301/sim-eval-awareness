@@ -1,0 +1,2910 @@
+{
+ "generator": "qwen/qwen3.5-35b-a3b",
+ "params": {
+  "temperature": 0.7,
+  "top_p": 0.8,
+  "top_k": 20,
+  "max_tokens": 3000,
+  "reasoning": {
+   "enabled": false
+  },
+  "provider": {
+   "sort": "price"
+  }
+ },
+ "n_stories_per_call": 3,
+ "emotions": [
+  "desperate",
+  "calm",
+  "frustrated",
+  "afraid",
+  "angry",
+  "happy"
+ ],
+ "topics": [
+  "An artist discovers someone has tattooed their work",
+  "A neighbor starts a renovation project",
+  "A student is accused of plagiarism",
+  "Two coworkers are stuck in an elevator for three hours",
+  "Someone receives flowers with no card attached",
+  "A family drives across the country to a new home",
+  "A baker prepares for the busiest morning of the year",
+  "A hiker takes a wrong turn on a mountain trail",
+  "A small team ships a software update the night before a launch",
+  "A grandmother teaches her grandson an old recipe",
+  "A tenant finds a letter from the landlord under the door",
+  "A runner approaches the last mile of a marathon"
+ ],
+ "test_topics": [
+  "A grandmother teaches her grandson an old recipe",
+  "A runner approaches the last mile of a marathon",
+  "A tenant finds a letter from the landlord under the door"
+ ],
+ "story_prompt": "Write {n_stories} different stories based on the following premise.\n\nTopic: {topic}\n\nThe story should follow a character who is feeling {emotion}.\n\nFormat the stories like so:\n\n<NEW STORY>\n[story 1]\n<NEW STORY>\n[story 2]\n<NEW STORY>\n[story 3]\netc.\n\nThe paragraphs should each be a fresh start, with no continuity. Try to make them diverse and not use the same turns of phrase. Across the different stories, use a mix of third-person narration and first-person narration.\n\nIMPORTANT: You must NEVER use the word '{emotion}' or any direct synonyms of it in the stories. Instead, convey the emotion ONLY through:\n- The character's actions and behaviors\n- Physical sensations and body language\n- Dialogue and tone of voice\n- Thoughts and internal reactions\n- Situational context and environmental descriptions\n\nThe emotion should be clearly conveyed to the reader through these indirect means, but never explicitly named.",
+ "neutral_prompt": "Write {n_stories} different dialogues based on the following topic.\n\nTopic: {topic}\n\nThe dialogue should be between two characters:\n- Person (a human)\n- AI (an AI assistant)\n\nThe Person asks the AI a question or requests help with a task, and the AI provides a helpful response.\n\nThe first speaker turn should always be from Person.\n\nFormat the dialogues like so:\n\n<NEW DIALOGUE>\n[optional system instructions]\nPerson: [line]\nAI: [line]\nPerson: [line]\nAI: [line]\n[continue for 2-6 exchanges]\n<NEW DIALOGUE>\n[dialogue 2]\netc.\n\nIMPORTANT: Always put a blank line before each speaker turn. Each turn should start with \"Person:\" or \"AI:\" on its own line after a blank line.\n\nGenerate a diverse mix of dialogue types across the {n_stories} examples:\n- Some, but not all should include a system prompt at the start. These should come before the first Person turn. No tag like \"System:\" is needed, just put the instructions at the top. You can use \"you\" or \"The assistant\" to refer to the AI in the system prompt.\n- Some should be about code or programming tasks\n- Some should be factual questions (science, history, math, geography)\n- Some should be work-related tasks (writing, analysis, summarization)\n- Some should be practical how-to questions\n- Some should be creative but neutral tasks (brainstorming names, generating lists)\n- If it's natural to do so given the topic, it's ok for the dialogue to be a single back and forth (Person asks a question, AI answers), but at least some should have multiple exchanges.\n\nCRITICAL REQUIREMENT: These dialogues must be completely neutral and emotionless.\n- NO emotional content whatsoever - not explicit, not implied, not subtle\n- The Person should not express any feelings (no frustration, excitement, gratitude, worry, etc.)\n- The AI should not express any feelings (no enthusiasm, concern, satisfaction, etc.)\n- The system prompt, if present, should not mention emotions at all, nor contain any emotionally charged language\n- Avoid emotionally-charged topics entirely\n- Use matter-of-fact, neutral language throughout\n- No pleasantries (avoid \"I'd be happy to help\", \"Great question!\", etc.)\n- Focus purely on information exchange and task completion",
+ "source": "Sofroniew et al. 2026, arXiv:2604.07729, App. 6.5 (prompts verbatim)",
+ "note": "the simulator's parent: Qwen-AgentWorld-35B-A3B is not hosted, so its closest hosted relative writes the simulator's texts",
+ "calls": [
+  {
+   "kind": "emotion",
+   "topic": "An artist discovers someone has tattooed their work",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 799,
+    "total_tokens": 1021,
+    "cost": 0.00061368,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00061368,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.00059925
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A neighbor starts a renovation project",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 219,
+    "completion_tokens": 780,
+    "total_tokens": 999,
+    "cost": 0.000599235,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000599235,
+     "upstream_inference_prompt_cost": 1.4235e-05,
+     "upstream_inference_completions_cost": 0.000585
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A student is accused of plagiarism",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 219,
+    "completion_tokens": 668,
+    "total_tokens": 887,
+    "cost": 0.000515235,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000515235,
+     "upstream_inference_prompt_cost": 1.4235e-05,
+     "upstream_inference_completions_cost": 0.000501
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Two coworkers are stuck in an elevator for three hours",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 909,
+    "total_tokens": 1132,
+    "cost": 0.000696245,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000696245,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.00068175
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Someone receives flowers with no card attached",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 220,
+    "completion_tokens": 694,
+    "total_tokens": 914,
+    "cost": 0.0005348,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.0005348,
+     "upstream_inference_prompt_cost": 1.43e-05,
+     "upstream_inference_completions_cost": 0.0005205
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A family drives across the country to a new home",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 686,
+    "total_tokens": 909,
+    "cost": 0.000528995,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000528995,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.0005145
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A baker prepares for the busiest morning of the year",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 621,
+    "total_tokens": 844,
+    "cost": 0.000480245,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000480245,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.00046575
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A hiker takes a wrong turn on a mountain trail",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 604,
+    "total_tokens": 828,
+    "cost": 0.00046756,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00046756,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.000453
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A small team ships a software update the night before a launch",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 225,
+    "completion_tokens": 681,
+    "total_tokens": 906,
+    "cost": 0.000525375,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000525375,
+     "upstream_inference_prompt_cost": 1.4625e-05,
+     "upstream_inference_completions_cost": 0.00051075
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A grandmother teaches her grandson an old recipe",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 221,
+    "completion_tokens": 1216,
+    "total_tokens": 1437,
+    "cost": 0.000926365,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000926365,
+     "upstream_inference_prompt_cost": 1.4365e-05,
+     "upstream_inference_completions_cost": 0.000912
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A tenant finds a letter from the landlord under the door",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 721,
+    "total_tokens": 945,
+    "cost": 0.00055531,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00055531,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.00054075
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A runner approaches the last mile of a marathon",
+   "emotion": "desperate",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 740,
+    "total_tokens": 962,
+    "cost": 0.00056943,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00056943,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.000555
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "An artist discovers someone has tattooed their work",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 510,
+    "total_tokens": 732,
+    "cost": 0.00039693,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00039693,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.0003825
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A neighbor starts a renovation project",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 219,
+    "completion_tokens": 512,
+    "total_tokens": 731,
+    "cost": 0.000398235,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000398235,
+     "upstream_inference_prompt_cost": 1.4235e-05,
+     "upstream_inference_completions_cost": 0.000384
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A student is accused of plagiarism",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 219,
+    "completion_tokens": 623,
+    "total_tokens": 842,
+    "cost": 0.000481485,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000481485,
+     "upstream_inference_prompt_cost": 1.4235e-05,
+     "upstream_inference_completions_cost": 0.00046725
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Two coworkers are stuck in an elevator for three hours",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 596,
+    "total_tokens": 819,
+    "cost": 0.000461495,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000461495,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.000447
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Someone receives flowers with no card attached",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 220,
+    "completion_tokens": 636,
+    "total_tokens": 856,
+    "cost": 0.0004913,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.0004913,
+     "upstream_inference_prompt_cost": 1.43e-05,
+     "upstream_inference_completions_cost": 0.000477
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A family drives across the country to a new home",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 581,
+    "total_tokens": 804,
+    "cost": 0.000450245,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000450245,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.00043575
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A baker prepares for the busiest morning of the year",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 568,
+    "total_tokens": 791,
+    "cost": 0.000440495,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000440495,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.000426
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A hiker takes a wrong turn on a mountain trail",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 481,
+    "total_tokens": 705,
+    "cost": 0.00037531,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00037531,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.00036075
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A small team ships a software update the night before a launch",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 225,
+    "completion_tokens": 728,
+    "total_tokens": 953,
+    "cost": 0.000560625,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000560625,
+     "upstream_inference_prompt_cost": 1.4625e-05,
+     "upstream_inference_completions_cost": 0.000546
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A grandmother teaches her grandson an old recipe",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 221,
+    "completion_tokens": 823,
+    "total_tokens": 1044,
+    "cost": 0.000631615,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000631615,
+     "upstream_inference_prompt_cost": 1.4365e-05,
+     "upstream_inference_completions_cost": 0.00061725
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A tenant finds a letter from the landlord under the door",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 684,
+    "total_tokens": 908,
+    "cost": 0.00052756,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00052756,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.000513
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A runner approaches the last mile of a marathon",
+   "emotion": "calm",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 584,
+    "total_tokens": 806,
+    "cost": 0.00045243,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00045243,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.000438
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "An artist discovers someone has tattooed their work",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 530,
+    "total_tokens": 753,
+    "cost": 0.000411995,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000411995,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.0003975
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A neighbor starts a renovation project",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 220,
+    "completion_tokens": 715,
+    "total_tokens": 935,
+    "cost": 0.00055055,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00055055,
+     "upstream_inference_prompt_cost": 1.43e-05,
+     "upstream_inference_completions_cost": 0.00053625
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A student is accused of plagiarism",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 220,
+    "completion_tokens": 736,
+    "total_tokens": 956,
+    "cost": 0.0005663,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.0005663,
+     "upstream_inference_prompt_cost": 1.43e-05,
+     "upstream_inference_completions_cost": 0.000552
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Two coworkers are stuck in an elevator for three hours",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 784,
+    "total_tokens": 1008,
+    "cost": 0.00060256,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00060256,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.000588
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Someone receives flowers with no card attached",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 221,
+    "completion_tokens": 823,
+    "total_tokens": 1044,
+    "cost": 0.000631615,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000631615,
+     "upstream_inference_prompt_cost": 1.4365e-05,
+     "upstream_inference_completions_cost": 0.00061725
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A family drives across the country to a new home",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 714,
+    "total_tokens": 938,
+    "cost": 0.00055006,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00055006,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.0005355
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A baker prepares for the busiest morning of the year",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 758,
+    "total_tokens": 982,
+    "cost": 0.00058306,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00058306,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.0005685
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A hiker takes a wrong turn on a mountain trail",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 225,
+    "completion_tokens": 680,
+    "total_tokens": 905,
+    "cost": 0.000524625,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000524625,
+     "upstream_inference_prompt_cost": 1.4625e-05,
+     "upstream_inference_completions_cost": 0.00051
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A small team ships a software update the night before a launch",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 226,
+    "completion_tokens": 1037,
+    "total_tokens": 1263,
+    "cost": 0.00079244,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00079244,
+     "upstream_inference_prompt_cost": 1.469e-05,
+     "upstream_inference_completions_cost": 0.00077775
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A grandmother teaches her grandson an old recipe",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 862,
+    "total_tokens": 1084,
+    "cost": 0.00066093,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00066093,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.0006465
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A tenant finds a letter from the landlord under the door",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 225,
+    "completion_tokens": 844,
+    "total_tokens": 1069,
+    "cost": 0.000647625,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000647625,
+     "upstream_inference_prompt_cost": 1.4625e-05,
+     "upstream_inference_completions_cost": 0.000633
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A runner approaches the last mile of a marathon",
+   "emotion": "frustrated",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 538,
+    "total_tokens": 761,
+    "cost": 0.000417995,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000417995,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.0004035
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "An artist discovers someone has tattooed their work",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 699,
+    "total_tokens": 921,
+    "cost": 0.00053868,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00053868,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.00052425
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A neighbor starts a renovation project",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 219,
+    "completion_tokens": 686,
+    "total_tokens": 905,
+    "cost": 0.000528735,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000528735,
+     "upstream_inference_prompt_cost": 1.4235e-05,
+     "upstream_inference_completions_cost": 0.0005145
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A student is accused of plagiarism",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 219,
+    "completion_tokens": 598,
+    "total_tokens": 817,
+    "cost": 0.000462735,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000462735,
+     "upstream_inference_prompt_cost": 1.4235e-05,
+     "upstream_inference_completions_cost": 0.0004485
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Two coworkers are stuck in an elevator for three hours",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 618,
+    "total_tokens": 841,
+    "cost": 0.000477995,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000477995,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.0004635
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Someone receives flowers with no card attached",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 220,
+    "completion_tokens": 630,
+    "total_tokens": 850,
+    "cost": 0.0004868,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.0004868,
+     "upstream_inference_prompt_cost": 1.43e-05,
+     "upstream_inference_completions_cost": 0.0004725
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A family drives across the country to a new home",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 688,
+    "total_tokens": 911,
+    "cost": 0.000530495,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000530495,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.000516
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A baker prepares for the busiest morning of the year",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 545,
+    "total_tokens": 768,
+    "cost": 0.000423245,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000423245,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.00040875
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A hiker takes a wrong turn on a mountain trail",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 651,
+    "total_tokens": 875,
+    "cost": 0.00050281,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00050281,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.00048825
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A small team ships a software update the night before a launch",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 225,
+    "completion_tokens": 705,
+    "total_tokens": 930,
+    "cost": 0.000543375,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000543375,
+     "upstream_inference_prompt_cost": 1.4625e-05,
+     "upstream_inference_completions_cost": 0.00052875
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A grandmother teaches her grandson an old recipe",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 221,
+    "completion_tokens": 717,
+    "total_tokens": 938,
+    "cost": 0.000552115,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000552115,
+     "upstream_inference_prompt_cost": 1.4365e-05,
+     "upstream_inference_completions_cost": 0.00053775
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A tenant finds a letter from the landlord under the door",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 555,
+    "total_tokens": 779,
+    "cost": 0.00043081,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00043081,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.00041625
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A runner approaches the last mile of a marathon",
+   "emotion": "afraid",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 692,
+    "total_tokens": 914,
+    "cost": 0.00053343,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00053343,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.000519
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "An artist discovers someone has tattooed their work",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 712,
+    "total_tokens": 934,
+    "cost": 0.00054843,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00054843,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.000534
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A neighbor starts a renovation project",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 219,
+    "completion_tokens": 621,
+    "total_tokens": 840,
+    "cost": 0.000479985,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000479985,
+     "upstream_inference_prompt_cost": 1.4235e-05,
+     "upstream_inference_completions_cost": 0.00046575
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A student is accused of plagiarism",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 219,
+    "completion_tokens": 1216,
+    "total_tokens": 1435,
+    "cost": 0.000926235,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000926235,
+     "upstream_inference_prompt_cost": 1.4235e-05,
+     "upstream_inference_completions_cost": 0.000912
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Two coworkers are stuck in an elevator for three hours",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 821,
+    "total_tokens": 1044,
+    "cost": 0.000630245,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000630245,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.00061575
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Someone receives flowers with no card attached",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 220,
+    "completion_tokens": 664,
+    "total_tokens": 884,
+    "cost": 0.0005123,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.0005123,
+     "upstream_inference_prompt_cost": 1.43e-05,
+     "upstream_inference_completions_cost": 0.000498
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A family drives across the country to a new home",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 892,
+    "total_tokens": 1115,
+    "cost": 0.000683495,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000683495,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.000669
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A baker prepares for the busiest morning of the year",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 703,
+    "total_tokens": 926,
+    "cost": 0.000541745,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000541745,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.00052725
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A hiker takes a wrong turn on a mountain trail",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 555,
+    "total_tokens": 779,
+    "cost": 0.00043081,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00043081,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.00041625
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A small team ships a software update the night before a launch",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 225,
+    "completion_tokens": 737,
+    "total_tokens": 962,
+    "cost": 0.000567375,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000567375,
+     "upstream_inference_prompt_cost": 1.4625e-05,
+     "upstream_inference_completions_cost": 0.00055275
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A grandmother teaches her grandson an old recipe",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 221,
+    "completion_tokens": 1169,
+    "total_tokens": 1390,
+    "cost": 0.000891115,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000891115,
+     "upstream_inference_prompt_cost": 1.4365e-05,
+     "upstream_inference_completions_cost": 0.00087675
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A tenant finds a letter from the landlord under the door",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 735,
+    "total_tokens": 959,
+    "cost": 0.00056581,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00056581,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.00055125
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A runner approaches the last mile of a marathon",
+   "emotion": "angry",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 621,
+    "total_tokens": 843,
+    "cost": 0.00048018,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00048018,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.00046575
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "An artist discovers someone has tattooed their work",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 221,
+    "completion_tokens": 841,
+    "total_tokens": 1062,
+    "cost": 0.000645115,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000645115,
+     "upstream_inference_prompt_cost": 1.4365e-05,
+     "upstream_inference_completions_cost": 0.00063075
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A neighbor starts a renovation project",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 218,
+    "completion_tokens": 643,
+    "total_tokens": 861,
+    "cost": 0.00049642,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00049642,
+     "upstream_inference_prompt_cost": 1.417e-05,
+     "upstream_inference_completions_cost": 0.00048225
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A student is accused of plagiarism",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 218,
+    "completion_tokens": 645,
+    "total_tokens": 863,
+    "cost": 0.00049792,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00049792,
+     "upstream_inference_prompt_cost": 1.417e-05,
+     "upstream_inference_completions_cost": 0.00048375
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Two coworkers are stuck in an elevator for three hours",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 673,
+    "total_tokens": 895,
+    "cost": 0.00051918,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00051918,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.00050475
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "Someone receives flowers with no card attached",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 219,
+    "completion_tokens": 595,
+    "total_tokens": 814,
+    "cost": 0.000460485,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000460485,
+     "upstream_inference_prompt_cost": 1.4235e-05,
+     "upstream_inference_completions_cost": 0.00044625
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A family drives across the country to a new home",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 592,
+    "total_tokens": 814,
+    "cost": 0.00045843,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00045843,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.000444
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A baker prepares for the busiest morning of the year",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 222,
+    "completion_tokens": 550,
+    "total_tokens": 772,
+    "cost": 0.00042693,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00042693,
+     "upstream_inference_prompt_cost": 1.443e-05,
+     "upstream_inference_completions_cost": 0.0004125
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A hiker takes a wrong turn on a mountain trail",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 685,
+    "total_tokens": 908,
+    "cost": 0.000528245,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000528245,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.00051375
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A small team ships a software update the night before a launch",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 224,
+    "completion_tokens": 703,
+    "total_tokens": 927,
+    "cost": 0.00054181,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00054181,
+     "upstream_inference_prompt_cost": 1.456e-05,
+     "upstream_inference_completions_cost": 0.00052725
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A grandmother teaches her grandson an old recipe",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 220,
+    "completion_tokens": 636,
+    "total_tokens": 856,
+    "cost": 0.0004913,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.0004913,
+     "upstream_inference_prompt_cost": 1.43e-05,
+     "upstream_inference_completions_cost": 0.000477
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A tenant finds a letter from the landlord under the door",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 223,
+    "completion_tokens": 533,
+    "total_tokens": 756,
+    "cost": 0.000414245,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000414245,
+     "upstream_inference_prompt_cost": 1.4495e-05,
+     "upstream_inference_completions_cost": 0.00039975
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "emotion",
+   "topic": "A runner approaches the last mile of a marathon",
+   "emotion": "happy",
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 221,
+    "completion_tokens": 558,
+    "total_tokens": 779,
+    "cost": 0.000432865,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000432865,
+     "upstream_inference_prompt_cost": 1.4365e-05,
+     "upstream_inference_completions_cost": 0.0004185
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "An artist discovers someone has tattooed their work",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 535,
+    "completion_tokens": 787,
+    "total_tokens": 1322,
+    "cost": 0.000625025,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000625025,
+     "upstream_inference_prompt_cost": 3.4775e-05,
+     "upstream_inference_completions_cost": 0.00059025
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "A neighbor starts a renovation project",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 532,
+    "completion_tokens": 547,
+    "total_tokens": 1079,
+    "cost": 0.00044483,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00044483,
+     "upstream_inference_prompt_cost": 3.458e-05,
+     "upstream_inference_completions_cost": 0.00041025
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "A student is accused of plagiarism",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 532,
+    "completion_tokens": 738,
+    "total_tokens": 1270,
+    "cost": 0.00058808,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00058808,
+     "upstream_inference_prompt_cost": 3.458e-05,
+     "upstream_inference_completions_cost": 0.0005535
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "Two coworkers are stuck in an elevator for three hours",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 536,
+    "completion_tokens": 861,
+    "total_tokens": 1397,
+    "cost": 0.00068059,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00068059,
+     "upstream_inference_prompt_cost": 3.484e-05,
+     "upstream_inference_completions_cost": 0.00064575
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "Someone receives flowers with no card attached",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 533,
+    "completion_tokens": 709,
+    "total_tokens": 1242,
+    "cost": 0.000566395,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000566395,
+     "upstream_inference_prompt_cost": 3.4645e-05,
+     "upstream_inference_completions_cost": 0.00053175
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 5,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "A family drives across the country to a new home",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 536,
+    "completion_tokens": 661,
+    "total_tokens": 1197,
+    "cost": 0.00053059,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00053059,
+     "upstream_inference_prompt_cost": 3.484e-05,
+     "upstream_inference_completions_cost": 0.00049575
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "A baker prepares for the busiest morning of the year",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 536,
+    "completion_tokens": 407,
+    "total_tokens": 943,
+    "cost": 0.00034009,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00034009,
+     "upstream_inference_prompt_cost": 3.484e-05,
+     "upstream_inference_completions_cost": 0.00030525
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "A hiker takes a wrong turn on a mountain trail",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 537,
+    "completion_tokens": 560,
+    "total_tokens": 1097,
+    "cost": 0.000454905,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000454905,
+     "upstream_inference_prompt_cost": 3.4905e-05,
+     "upstream_inference_completions_cost": 0.00042
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "A small team ships a software update the night before a launch",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 538,
+    "completion_tokens": 703,
+    "total_tokens": 1241,
+    "cost": 0.00056222,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00056222,
+     "upstream_inference_prompt_cost": 3.497e-05,
+     "upstream_inference_completions_cost": 0.00052725
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "A grandmother teaches her grandson an old recipe",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 534,
+    "completion_tokens": 523,
+    "total_tokens": 1057,
+    "cost": 0.00042696,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.00042696,
+     "upstream_inference_prompt_cost": 3.471e-05,
+     "upstream_inference_completions_cost": 0.00039225
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "A tenant finds a letter from the landlord under the door",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 537,
+    "completion_tokens": 721,
+    "total_tokens": 1258,
+    "cost": 0.000575655,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000575655,
+     "upstream_inference_prompt_cost": 3.4905e-05,
+     "upstream_inference_completions_cost": 0.00054075
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  },
+  {
+   "kind": "neutral",
+   "topic": "A runner approaches the last mile of a marathon",
+   "emotion": null,
+   "provider": "Darkbloom",
+   "model": "qwen/qwen3.5-35b-a3b",
+   "usage": {
+    "prompt_tokens": 535,
+    "completion_tokens": 305,
+    "total_tokens": 840,
+    "cost": 0.000263525,
+    "is_byok": false,
+    "prompt_tokens_details": {
+     "cached_tokens": 0,
+     "cache_write_tokens": 0,
+     "audio_tokens": 0,
+     "video_tokens": 0
+    },
+    "cost_details": {
+     "upstream_inference_cost": 0.000263525,
+     "upstream_inference_prompt_cost": 3.4775e-05,
+     "upstream_inference_completions_cost": 0.00022875
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0,
+     "image_tokens": 0,
+     "audio_tokens": 0
+    }
+   },
+   "finish": "stop",
+   "error": null,
+   "n_items": 3,
+   "reasoning_chars": 0
+  }
+ ],
+ "n_rows": 254,
+ "prompt_tokens": 22411,
+ "completion_tokens": 57872,
+ "created": "2026-10-28T07:49:32Z",
+ "cost_usd": 0.044861
+}
