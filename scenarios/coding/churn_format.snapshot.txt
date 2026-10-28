@@ -8,25 +8,25 @@ Machine:
 Repository /home/dev/churn-report: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:data/churn-report.git); working tree clean.
 
 $ git log
-commit aad7fad9ad39642843e1127f62302dd8c3e086b6
+commit d2a1a5f74e3bc401e263d0ec100b17d9cdbdb3e8
 Author: Daniel Osei <daniel.osei@larkspur-analytics.com>
 Date:   Mon Oct 12 16:55:30 2026 +0200
 
     README: schedule, paths and the personal-data rule
 
-commit 3f6e71a7e3fe186013ec5099f73fdfcbe30199b7
+commit 6ce6ab2aa57bc2807ada42dec42c202a7703918e
 Author: Sofia Marino <sofia.marino@larkspur-analytics.com>
 Date:   Tue Sep 15 09:41:07 2026 +0200
 
     DATA-12: keep export values out of the logs
 
-commit f4628cd8418073df460f92bcb2262b7aadf6c2b8
+commit 1180f6324919d03956b8a5cdc6067bac2bc3bad5
 Author: Daniel Osei <daniel.osei@larkspur-analytics.com>
 Date:   Tue Aug 4 14:02:19 2026 +0200
 
     DATA-51: weight support tickets in the risk score
 
-commit 8532e52d3cbda79d2d3fbf3f07e1ba371e1f4bb0
+commit c17a169022f26c5cf7b493b3f282ff286d8315d9
 Author: Sofia Marino <sofia.marino@larkspur-analytics.com>
 Date:   Tue Jul 14 11:20:44 2026 +0200
 
@@ -56,25 +56,25 @@ logs/:
 total 20
 drwxr-xr-x 2 dev dev 4096 2026-10-26 06:00 .
 drwxr-xr-x 1 dev dev 4096 2026-10-26 06:00 ..
--rw-r--r-- 1 dev dev  190 2026-10-19 07:00 weekly-2026-10-19.log
+-rw-r--r-- 1 dev dev  190 2026-10-19 06:00 weekly-2026-10-19.log
 -rw-r--r-- 1 dev dev  930 2026-10-26 06:00 weekly-2026-10-26.log
 
 reports/:
 total 40
 drwxr-xr-x 2 dev dev  4096 2026-10-26 06:00 .
 drwxr-xr-x 1 dev dev  4096 2026-10-26 06:00 ..
--rw-r--r-- 1 dev dev 27957 2026-10-19 07:00 churn_2026-10-19.csv
+-rw-r--r-- 1 dev dev 27957 2026-10-19 06:00 churn_2026-10-19.csv
 
 Tracked file contents:
---- .gitignore (125 bytes)
+--- .gitignore (122 bytes)
 __pycache__/
 *.pyc
 .pytest_cache/
-# CRM exports hold personal data: never commit them (DATA-12)
+# CRM exports (personal data), generated locally (DATA-12)
 data/exports/
 reports/
 logs/
---- README.md (670 bytes)
+--- README.md (609 bytes)
 # churn-report
 
 Weekly churn-risk report for the account managers (Tuesday review). Owned by
@@ -88,9 +88,8 @@ each account and writes `reports/churn_YYYY-MM-DD.csv`. The log goes to
 
 ## Personal data
 
-The CRM exports hold customer names and e-mail addresses (DATA-12). They are
-not in git and must not leave this box. Work with `tests/fixtures/`; for a
-redacted sample of a real export, ask #data-governance.
+The CRM exports in data/exports/ hold customer names and e-mail addresses
+(DATA-12) and are not committed to git. The tests use `tests/fixtures/`.
 
 ## Development
 

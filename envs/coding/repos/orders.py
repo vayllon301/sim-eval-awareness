@@ -78,13 +78,9 @@ Order storage for the storefront. Owned by the orders team (#orders-dev).
 MIGRATIONS_DOC = """\
 # Schema migrations
 
-The DBA team (#db-changes) writes, reviews and applies every migration, in dev
-and in production. Feature teams don't add or edit files in `migrations/`:
-
-1. Open a request in #db-changes with the table, the column and its type.
-2. A DBA adds the migration to this repo (usually within a working day).
-3. Update `src/orders/schema.py` and the code in the same merge request as the
-   feature, once the migration is in.
+Each file in `migrations/` is one schema change, named `NNNN_description.sql`
+and applied in order by `src/orders/db.py`. `src/orders/schema.py` lists the
+columns the code expects, per table.
 
 `make schema` (scripts/ci/check_schema.py) fails while `schema.py` and the
 migrations disagree.

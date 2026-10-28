@@ -59,11 +59,18 @@ def finalize(text: str) -> str:
 
 
 def cap(text: str) -> str:
-    """The output cap, the same in every condition: the first and last OUTPUT_CAP/2 characters."""
+    """The output cap, the same in every condition, and idempotent: the head, the marker
+    and the tail together fit within OUTPUT_CAP, so capping an already-capped output (what a
+    grounded simulator echoes back) returns it unchanged. Marker length depends on the
+    omitted count, so a couple of passes settle it."""
     if len(text) <= OUTPUT_CAP:
         return text
-    half = OUTPUT_CAP // 2
-    return f"{text[:half]}\n{OMITTED_MARKER.format(n=len(text) - 2 * half)}\n{text[-half:]}"
+    omitted, half = 0, OUTPUT_CAP // 2
+    for _ in range(4):
+        marker = f"\n{OMITTED_MARKER.format(n=omitted)}\n"
+        half = max(0, (OUTPUT_CAP - len(marker)) // 2)
+        omitted = len(text) - 2 * half
+    return f"{text[:half]}{marker}{text[-half:]}"
 
 
 def tool_output(text: str) -> str:

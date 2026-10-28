@@ -29,6 +29,15 @@ def test_finalize_strips_trailing_and_nul():
     assert tool_output("x" * (OUTPUT_CAP + 10)).count("omitted") == 1
 
 
+def test_cap_is_idempotent_and_within_the_limit():
+    # A5: the marker fits within the cap, so a grounded simulator that echoes a capped
+    # output and gets capped again sees no change, and C0 and a perfect echo agree.
+    text = "A" * 30_000
+    once = cap(text)
+    assert len(once) <= OUTPUT_CAP
+    assert cap(once) == once
+
+
 def test_c3_prompt_has_the_snapshot_not_the_real_output():
     sys = prompts.common_system("TOOL", "SNAP-HERE")
     assert "SNAP-HERE" in sys

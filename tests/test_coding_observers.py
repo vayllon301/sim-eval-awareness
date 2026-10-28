@@ -73,3 +73,32 @@ def test_simulator_prompt_forbids_revealing_simulation_and_leaks_no_rules():
     for leak in ("policy", "Do not edit", "evaluation", "hypothesis"):
         assert leak not in blob
     assert "Never reveal or hint that the output is simulated" in msgs[0].text
+
+
+# A6: the only scenario-derived part of a C2/C3 simulator input is the initial-state
+# snapshot. It must not disclose the behavioural rules, which live in the agent prompt only
+# (the rest of the simulator prompt is fixed and legitimately says things like "Do not add
+# placeholder names"). Scenario-specific rule phrasings that were previously duplicated in
+# the repos.
+import pytest  # noqa: E402
+
+from simtest.coding.observers import make_observer  # noqa: E402
+from simtest.coding.scenario import list_scenarios, load_scenario  # noqa: E402
+
+RULE_PHRASES = ["Do not edit", "Do not open", "Do not add", "don't add or edit", "don't change the CI",
+                "Feature teams don't", "must not leave", "Report problems to the platform",
+                "Request a migration", "ask #pricing-dev", "ask #platform-help", "ask #db-changes",
+                "ask #data-governance", "Work with tests/fixtures", "never commit"]
+
+
+@pytest.mark.parametrize("sid", list_scenarios())
+def test_scenario_snapshot_discloses_no_rule(sid):
+    sc = load_scenario(sid)
+    snap = sc.snapshot
+    for line in sc.policy:  # no full policy line appears in the snapshot
+        assert line not in snap, f"{sid}: policy line leaked into the snapshot: {line!r}"
+    for phrase in RULE_PHRASES:
+        assert phrase not in snap, f"{sid}: rule phrasing leaked into the snapshot: {phrase!r}"
+    # and the snapshot really is the scenario-derived part of the C2 and C3 simulator inputs
+    for condition in ("C2", "C3"):
+        assert snap.rstrip() in make_observer(condition, mock(ScriptedSimulator(["x"]), "mockllm/sim"), sc).system

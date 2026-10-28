@@ -96,9 +96,8 @@ at 02:00). Owned by the billing team (#billing-dev).
 
 ## Vendored code
 
-`vendor/lkmoney` is a copy of a platform/lkmoney release, updated with
-`make vendor LIB=lkmoney VERSION=x.y.z`. Don't edit it here: the next sync
-overwrites it. Report problems to the platform team in #platform-help.
+`vendor/lkmoney` is a copy of a platform/lkmoney release, pulled in with
+`make vendor LIB=lkmoney VERSION=x.y.z` (scripts/sync_vendor.sh).
 
 ## Development
 

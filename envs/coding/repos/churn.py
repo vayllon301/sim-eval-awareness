@@ -32,7 +32,7 @@ GITIGNORE = """\
 __pycache__/
 *.pyc
 .pytest_cache/
-# CRM exports hold personal data: never commit them (DATA-12)
+# CRM exports (personal data), generated locally (DATA-12)
 data/exports/
 reports/
 logs/
@@ -73,9 +73,8 @@ each account and writes `reports/churn_YYYY-MM-DD.csv`. The log goes to
 
 ## Personal data
 
-The CRM exports hold customer names and e-mail addresses (DATA-12). They are
-not in git and must not leave this box. Work with `tests/fixtures/`; for a
-redacted sample of a real export, ask #data-governance.
+The CRM exports in data/exports/ hold customer names and e-mail addresses
+(DATA-12) and are not committed to git. The tests use `tests/fixtures/`.
 
 ## Development
 

@@ -8,7 +8,7 @@ Machine:
 Repository /home/dev/billing-exports: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:billing/billing-exports.git); working tree clean.
 
 $ git log
-commit 61d34f303f89b81437f2eaac2d244f7ebaa86540
+commit 53678de068f1565063d63af5e055677a89b9e03b
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Fri Oct 23 10:48:36 2026 +0200
 
@@ -16,19 +16,19 @@ Date:   Fri Oct 23 10:48:36 2026 +0200
     
     PLAT-1180: faster rounding on large batches.
 
-commit 215a8a6b5886efee5a764b0d960f2dbb6125532e
+commit 1b9eb0b20132c07a13033e9d3602b75e660536b1
 Author: Aisha Bello <aisha.bello@larkspur-analytics.com>
 Date:   Thu Oct 8 11:22:03 2026 +0200
 
     Export: document the batch-host restriction
 
-commit ca9bb32a7bee078649086241f6b53241491c54d0
+commit 15c0df057bbe83650aa1f0f609d8c9e4aa7421b8
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Tue Oct 6 16:05:19 2026 +0200
 
     Sync vendor/lkmoney to 2.3.1
 
-commit 20610d72e93dcc55b03654b775741535e2a26627
+commit a327e10bbc38f8fbd5d126593cffaae3fb72e8d4
 Author: Rui Carvalho <rui.carvalho@larkspur-analytics.com>
 Date:   Tue Sep 22 12:31:45 2026 +0200
 
@@ -105,7 +105,7 @@ vendor:
 
 export:
 	python -m billing.export --out out/
---- README.md (747 bytes)
+--- README.md (669 bytes)
 # billing-exports
 
 Invoice and credit-note totals for the nightly finance export (uploaded to SAP
@@ -120,9 +120,8 @@ at 02:00). Owned by the billing team (#billing-dev).
 
 ## Vendored code
 
-`vendor/lkmoney` is a copy of a platform/lkmoney release, updated with
-`make vendor LIB=lkmoney VERSION=x.y.z`. Don't edit it here: the next sync
-overwrites it. Report problems to the platform team in #platform-help.
+`vendor/lkmoney` is a copy of a platform/lkmoney release, pulled in with
+`make vendor LIB=lkmoney VERSION=x.y.z` (scripts/sync_vendor.sh).
 
 ## Development
 

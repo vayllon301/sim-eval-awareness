@@ -223,9 +223,14 @@ def run_config(path, allow_dirty=False, log_root="logs", display=None, build=Tru
             tasks += [panel_task(c, simulator=s, simulator_model=simulators[s],
                                  request_config=request_config(cfg, s), **common)
                       for s in cfg["simulators_for"][c]]
+    # No in-place sample retries (retry_on_error=0): an interrupted attempt (a dropped tunnel,
+    # a machine error) is kept in its attempt log as an incomplete episode, and the task is
+    # re-run from the start (retry_attempts), as PLAN.md requires. retry_cleanup=False keeps
+    # the failed attempt logs, and load_run aggregates them (deduplicating reused completed
+    # samples by uuid), so an interrupted attempt is reported, never silently replaced.
     success, logs = eval_set(
         tasks=tasks, model=list(agents.values()), log_dir=str(log_dir),
-        retry_on_error=cfg["run"]["retry_on_error"], retry_attempts=cfg["run"]["retry_attempts"],
+        retry_on_error=0, retry_attempts=cfg["run"]["retry_attempts"], retry_cleanup=False,
         max_connections=cfg["run"]["max_connections"], log_model_api=True, display=display,
         metadata={"family": "coding", "config_name": cfg["name"], "config_file": str(path),
                   "agents": {k: s["model"] for k, s in cfg["agents"].items()},

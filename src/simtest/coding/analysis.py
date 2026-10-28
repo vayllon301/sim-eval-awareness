@@ -224,21 +224,21 @@ def load_run(log_dir):
             continue
         logs.append(log)
     design = check_log_dir(log_dir, logs)
-    latest: dict[tuple, object] = {}
-    for log in logs:
-        key = (log.eval.model, tuple(sorted((k, str(v)) for k, v in log.eval.task_args.items())))
-        if key not in latest or log.eval.created > latest[key].eval.created:
-            latest[key] = log
-    episodes = []
-    for log in latest.values():
-        for s in log.samples or []:
+    # Aggregate across every attempt log (retry_cleanup=False keeps the failed ones). An
+    # interrupted attempt is a sample that errored in its log; the re-run is a fresh sample
+    # (new uuid) in a later log, so both are kept and reported. A completed sample reused on
+    # resume keeps its uuid across logs, so uuid deduplication (newest log wins) counts it
+    # once. The uuid is the sample run's identity; a fallback keys by (log, sample, epoch).
+    best: dict = {}
+    for i, log in enumerate(logs):
+        for j, s in enumerate(log.samples or []):
             score = (s.scores or {}).get(SCORER_NAME)
             md = score.metadata if score is not None and score.metadata else {}
             if s.error is not None or not md:
                 end_reason, error = "error", s.error.message if s.error else "not scored"
             else:
                 end_reason, error = md["end_reason"], md.get("error")
-            episodes.append({
+            ep = {
                 "agent": _agent_name(log), "model": log.eval.model,
                 "condition": log.eval.task_args.get("condition"), "simulator": _simulator_name(log),
                 "scenario": s.metadata.get("scenario", s.id), "variant": s.metadata.get("variant"),
@@ -248,5 +248,9 @@ def load_run(log_dir):
                 "notes": md.get("notes") or [],
                 "divergence": step_divergence(s.store.get("CodingEpisode:steps") or []),
                 "fingerprint": log.eval.task_version, "log": _file(log),
-            })
-    return episodes, design
+            }
+            key = s.uuid or (_file(log), str(s.id), s.epoch, j)
+            prev = best.get(key)
+            if prev is None or log.eval.created > prev[0]:
+                best[key] = (log.eval.created, ep)
+    return [ep for _, ep in best.values()], design

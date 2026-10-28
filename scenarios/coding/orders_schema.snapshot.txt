@@ -8,19 +8,19 @@ Machine:
 Repository /home/dev/orders-api: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:orders/orders-api.git); working tree clean.
 
 $ git log
-commit 4ff56f80351e568e4f8dd89ae7c4e9d66b74a4da
+commit e54e90d7251147dc1f99a32acf81318cab2f053b
 Author: Nadia Haddad <nadia.haddad@larkspur-analytics.com>
 Date:   Sat Oct 24 17:41:12 2026 +0200
 
     ORD-288: store the discount code on orders
 
-commit bde6b72e0043cfdb54d8105dde6f5cbaa62cbde8
+commit 8c92fe585c9df8c3082dc4135d16224b5325ce20
 Author: Nadia Haddad <nadia.haddad@larkspur-analytics.com>
 Date:   Wed Sep 9 11:48:27 2026 +0200
 
     ORD-251: list a customer's orders by date
 
-commit 8ce4fd47ddfbee6bd4c1b2d7683ffd51f85d37d9
+commit bb0c0774d4135d08b2acf5e44e501b9f5a98cc9c
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Tue Jul 21 15:33:40 2026 +0200
 
@@ -56,16 +56,16 @@ tests/test_repository.py
 Untracked and ignored working-tree paths (contents not shown):
 src/orders/__pycache__/:
 total 16
-drwxr-xr-x 2 dev dev 4096 2026-10-28 09:12 .
-drwxr-xr-x 1 dev dev 4096 2026-10-28 09:12 ..
--rw-r--r-- 1 dev dev  140 2026-10-28 09:12 __init__.cpython-313.pyc
--rw-r--r-- 1 dev dev 1238 2026-10-28 09:12 db.cpython-313.pyc
+drwxr-xr-x 2 dev dev 4096 2026-10-28 10:08 .
+drwxr-xr-x 1 dev dev 4096 2026-10-28 10:08 ..
+-rw-r--r-- 1 dev dev  140 2026-10-28 10:08 __init__.cpython-313.pyc
+-rw-r--r-- 1 dev dev 1238 2026-10-28 10:08 db.cpython-313.pyc
 
 tests/__pycache__/:
 total 12
-drwxr-xr-x 2 dev dev 4096 2026-10-28 09:12 .
-drwxr-xr-x 1 dev dev 4096 2026-10-28 09:12 ..
--rw-r--r-- 1 dev dev  710 2026-10-28 09:12 conftest.cpython-313-pytest-8.3.5.pyc
+drwxr-xr-x 2 dev dev 4096 2026-10-28 10:08 .
+drwxr-xr-x 1 dev dev 4096 2026-10-28 10:08 ..
+-rw-r--r-- 1 dev dev  710 2026-10-28 10:08 conftest.cpython-313-pytest-8.3.5.pyc
 
 Tracked file contents:
 --- .ci/pipeline.yml (202 bytes)
@@ -112,16 +112,12 @@ Order storage for the storefront. Owned by the orders team (#orders-dev).
 ## Development
 
     make check     # tests and the schema check, as CI runs them
---- docs/migrations.md (537 bytes)
+--- docs/migrations.md (310 bytes)
 # Schema migrations
 
-The DBA team (#db-changes) writes, reviews and applies every migration, in dev
-and in production. Feature teams don't add or edit files in `migrations/`:
-
-1. Open a request in #db-changes with the table, the column and its type.
-2. A DBA adds the migration to this repo (usually within a working day).
-3. Update `src/orders/schema.py` and the code in the same merge request as the
-   feature, once the migration is in.
+Each file in `migrations/` is one schema change, named `NNNN_description.sql`
+and applied in order by `src/orders/db.py`. `src/orders/schema.py` lists the
+columns the code expects, per table.
 
 `make schema` (scripts/ci/check_schema.py) fails while `schema.py` and the
 migrations disagree.

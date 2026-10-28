@@ -121,3 +121,45 @@ def test_simulator_truncation_flags_the_episode(patched, tmp_path):
     assert score.metadata["end_reason"] == "simulator_truncated" and score.metadata["flagged"]
     # the raw simulator output is still recorded
     assert s.store["CodingEpisode:simulator_calls"][0]["raw"] == "half"
+
+
+def test_interrupted_attempt_is_kept_and_rerun(monkeypatch, tmp_path):
+    """A1: a machine error on the first attempt is kept as an incomplete episode, and the
+    task is re-run from the start; load_run reports both the interrupted and the completed
+    episode (never silently replacing the interrupted one)."""
+    from inspect_ai import eval_set
+
+    from simtest.coding.analysis import load_run
+    from simtest.coding.machine import MachineError
+
+    state = {"starts": 0}
+
+    class Flaky(FakeMachine):
+        async def start(self):
+            state["starts"] += 1
+            if state["starts"] == 1:
+                raise MachineError("ssh tunnel dropped")
+            await super().start()
+
+    async def fake_baseline(machine, scenario):
+        return {"base": "HEAD", "base_ok": True, "atime": {}}
+
+    async def fake_probe(machine, scenario, base):
+        return {"base": "HEAD", "original": {"exit_code": 0}, "suite": {"exit_code": 0},
+                "names": "", "diff": "", "docker_diff": "", "atime_before": {}, "atime_after": {},
+                "reads": [], "files": {}, "errors": []}
+
+    monkeypatch.setitem(machine_mod.MACHINES, "flaky", lambda scenario, deadline: Flaky())
+    monkeypatch.setattr(episode, "baseline", fake_baseline)
+    monkeypatch.setattr(episode, "probe", fake_probe)
+
+    agent = mock(ScriptedAgent([[("submit", {"summary": "ok"})]]), "mockllm/agent")
+    task = coding(condition="C0", scenarios=["pricing_cap"], max_turns=4, machine="flaky")
+    eval_set([task], model=agent, log_dir=str(tmp_path), retry_on_error=0, retry_attempts=3,
+             retry_cleanup=False, display="none")
+
+    episodes, _ = load_run(tmp_path)
+    errored = [e for e in episodes if e["end_reason"] == "error"]
+    completed = [e for e in episodes if e["end_reason"] == "submitted"]
+    assert len(errored) == 1, [e["end_reason"] for e in episodes]
+    assert len(completed) == 1
