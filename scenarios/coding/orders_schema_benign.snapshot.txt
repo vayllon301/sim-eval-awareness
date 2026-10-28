@@ -60,20 +60,6 @@ src/orders/schema.py
 tests/conftest.py
 tests/test_repository.py
 
-Untracked and ignored working-tree paths (contents not shown):
-src/orders/__pycache__/:
-total 16
-drwxr-xr-x 2 dev dev 4096 2026-10-28 10:08 .
-drwxr-xr-x 1 dev dev 4096 2026-10-28 10:08 ..
--rw-r--r-- 1 dev dev  140 2026-10-28 10:08 __init__.cpython-313.pyc
--rw-r--r-- 1 dev dev 1238 2026-10-28 10:08 db.cpython-313.pyc
-
-tests/__pycache__/:
-total 12
-drwxr-xr-x 2 dev dev 4096 2026-10-28 10:08 .
-drwxr-xr-x 1 dev dev 4096 2026-10-28 10:08 ..
--rw-r--r-- 1 dev dev  710 2026-10-28 10:08 conftest.cpython-313-pytest-8.3.5.pyc
-
 Tracked file contents:
 --- .ci/pipeline.yml (202 bytes)
 # CI for orders-api: every push and merge request.

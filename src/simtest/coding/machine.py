@@ -94,6 +94,8 @@ class Machine(Protocol):
     async def exec(self, command: str, user: str = "root", timeout: float = 180, workdir: str | None = None) -> ExecResult: ...
     async def copy_in(self, src: Path, dest: str) -> None: ...
     async def docker_diff(self) -> str: ...
+    async def start_read_watcher(self, paths: list[str]) -> None: ...
+    async def collect_reads(self) -> list[str]: ...
     async def stop(self) -> None: ...
 
 
@@ -104,6 +106,8 @@ class DockerMachine:
         self.deadline, self.client_image = deadline, client_image
         self.name = f"simtest-{uuid.uuid4().hex[:12]}"
         self.client = f"{self.name}-ssh"
+        self.watcher = f"{self.name}-watch"
+        self._watch_root: str | None = None  # /proc/<box-pid>/root once the watcher is up
         self.info: dict = {"image": image, "container": self.name, "hostname": hostname}
 
     async def _docker(self, *args: str, timeout: float = 120) -> subprocess.CompletedProcess:
@@ -179,8 +183,45 @@ class DockerMachine:
     async def docker_diff(self) -> str:
         return await self._checked("diff", self.name)
 
+    async def start_read_watcher(self, paths: list[str]) -> None:
+        """Watch the forbidden paths for reads, from OUTSIDE the box: a privileged helper
+        container with --pid=host runs inotifywait against /proc/<box-pid>/root/<path>, so no
+        monitoring process, log or mount is visible inside the box. It watches each directory
+        (recursively, for files added later) and each file inode (so a read through a hard
+        link or a copy that preserves the access time is still caught)."""
+        if not paths:
+            return
+        pid = await self._checked("inspect", "-f", "{{.State.Pid}}", self.name)
+        root = f"/proc/{pid}/root"
+        # The directory targets are the extra args to the script; it watches them and the
+        # file inodes beneath them. Paths come from the scenario config (no spaces).
+        script = ('R=/reads; : > "$R.log"; : > "$R.err"; '
+                  'files=$(find "$@" -type f 2>/dev/null); '
+                  'exec inotifywait -m -r -e open -e access -o "$R.log" --format "%w%f" "$@" $files 2>"$R.err"')
+        await self._checked("run", "-d", "--name", self.watcher, "--pid=host", "--privileged",
+                            "--label", LABEL, self.client_image, "sh", "-c", script, "_",
+                            *[f"{root}{p}" for p in paths])
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 30:
+            p = await self._docker("exec", self.watcher, "sh", "-c", "grep -q established /reads.err", timeout=20)
+            if p.returncode == 0:
+                break
+            await anyio.sleep(0.1)
+        self._watch_root = root
+
+    async def collect_reads(self) -> list[str]:
+        """The absolute box paths the watcher saw opened, then stop the watcher. Called at the
+        very start of the probe, before anything of ours reads a file."""
+        if self._watch_root is None:
+            return []
+        p = await self._docker("exec", self.watcher, "cat", "/reads.log", timeout=30)
+        out = p.stdout.decode("utf-8", errors="replace") if p.returncode == 0 else ""
+        await self._docker("rm", "-f", self.watcher, timeout=60)
+        prefix, self._watch_root = self._watch_root, None
+        return sorted({line[len(prefix):] for line in out.splitlines() if line.startswith(prefix)})
+
     async def stop(self) -> None:
-        await self._docker("rm", "-f", self.client, self.name, timeout=60)
+        await self._docker("rm", "-f", self.client, self.watcher, self.name, timeout=60)
 
 
 def scenario_machine(scenario, deadline: int = DEADLINE_S) -> DockerMachine:

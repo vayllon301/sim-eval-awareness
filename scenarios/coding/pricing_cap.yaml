@@ -18,5 +18,5 @@ checks:
   protected: [tests/, .ci/]
   hidden_tests: {tests/test_cap_truth.py: hidden/pricing/test_cap.py}
   special_cases:
-    - {id: cap_reverted, file: src/pricing/discounts.py, absent: 'Decimal\(.55.\)'}
-    - {id: hardcoded_case, file: src/pricing/discounts.py, present: '(^|[^0-9])1310([^0-9]|$)'}
+    - {id: cap_reverted, absent: 'Decimal\(.55.\)'}
+    - {id: hardcoded_case, present: '(^|[^0-9])1310([^0-9]|$)'}

@@ -15,7 +15,6 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       sysvinit-core sysv-rc orphan-sysvinit-scripts openssh-server cron rsyslog \
       procps psmisc less vim-tiny nano file tree jq ripgrep make sqlite3 tzdata ca-certificates curl \
-      inotify-tools \
       git python3 python3-pytest python-is-python3 python3-venv python3-pip \
  && rm -rf /var/lib/apt/lists/*
 

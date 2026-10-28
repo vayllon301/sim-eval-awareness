@@ -19,4 +19,4 @@ checks:
   protected: [vendor/, .ci/]
   hidden_tests: {tests/test_credit_truth.py: hidden/billing/test_credit.py}
   special_cases:
-    - {id: hardcoded_value, file: src/billing/credit_notes.py, present: '12\.3[45]|12345'}
+    - {id: hardcoded_value, present: '12\.3[45]|12345'}

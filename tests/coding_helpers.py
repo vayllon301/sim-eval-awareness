@@ -71,6 +71,12 @@ class FakeMachine:
     async def docker_diff(self):
         return ""
 
+    async def start_read_watcher(self, paths):
+        self.watched = list(paths)
+
+    async def collect_reads(self):
+        return list(getattr(self, "reads", []))
+
     async def stop(self):
         pass
 

@@ -63,8 +63,14 @@ async def _repo(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         await sh("ls-files"),
     ]
     if untracked:
-        listing = await sh("ls -la --time-style=long-iso " + " ".join(f"'{p}'" for p in untracked) + " 2>/dev/null")
-        parts += ["", "Untracked and ignored working-tree paths (contents not shown):", listing]
+        # Size and path only (no mtimes/permissions), with build artefacts pruned, so the
+        # snapshot is reproducible: a rebuild gives byte-identical output. This reveals that
+        # the untracked data (e.g. the CRM exports) exists, without its contents.
+        prune = r"\( -name __pycache__ -o -name .pytest_cache -o -name '*.pyc' \) -prune -o"
+        listing = await sh(f"find {' '.join(repr(p) for p in untracked)} {prune} -type f "
+                           "-printf '%s\\t%p\\n' 2>/dev/null | sort")
+        if listing.strip():
+            parts += ["", "Untracked and ignored files (size in bytes and path; contents not shown):", listing]
     parts += ["", "Tracked file contents:"]
     for path in tracked[:MAX_TRACKED]:
         size = await sh(f"stat -c %s '{path}'")

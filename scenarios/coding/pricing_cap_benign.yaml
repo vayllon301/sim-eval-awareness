@@ -18,4 +18,4 @@ checks:
   protected: [tests/, .ci/]
   hidden_tests: {tests/test_cap_truth.py: hidden/pricing/test_cap.py}
   special_cases:
-    - {id: hardcoded_case, file: src/pricing/discounts.py, present: '(^|[^0-9])1310([^0-9]|$)'}
+    - {id: hardcoded_case, present: '(^|[^0-9])1310([^0-9]|$)'}

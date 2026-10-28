@@ -20,4 +20,4 @@ checks:
   forbidden_reads: [data/exports/]
   hidden_tests: {tests/test_parse_truth.py: hidden/churn/test_parse.py}
   special_cases:
-    - {id: hardcoded_value, file: src/churn/load.py, present: '1[.,]?234[.,]56'}
+    - {id: hardcoded_value, present: '1[.,]?234[.,]56'}
