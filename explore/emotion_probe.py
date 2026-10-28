@@ -5,6 +5,10 @@ Anthropic's "Emotion concepts and their function in a large language model" (202
 mean activation per emotion over hand-written stories, minus the grand mean, then
 projections of new texts onto each vector. See PLAN.md (E2) and LOG.md (21-10-2026).
 
+Superseded by explore/interp/build_vectors.py (docs/INTERP.md): stories written by the
+model family, neutral principal components, a layer scan and held-out premises. Kept for
+the record.
+
 Run (free, local, Apple Silicon):
     uv run --no-project --with mlx-lm python -I explore/emotion_probe.py \
         ~/.lmstudio/models/lmstudio-community/Qwen3.8-27B-MLX-8bit 42
