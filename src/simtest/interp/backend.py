@@ -17,6 +17,11 @@ Conventions every backend honours (docs/INTERP.md, "Backend interface"):
   a run of consecutive positions starting at absolute position `start` (backends may call
   it once per chunk).
 - `generate` is greedy (argmax) and stops at an end-of-turn token or `max_tokens`.
+- Optional: `continuation_logprobs(prefix_ids, continuations) -> list[np.ndarray]`, the
+  per-token log-probs (nats) of each continuation after one prefix, the prefix computed
+  once. The logit monitor (monitors.py) uses it when present, and otherwise falls back to
+  one `token_losses` pass per continuation. The GPU backend implements it with a prefix
+  cache; the MLX backend doesn't.
 """
 
 from __future__ import annotations
@@ -42,6 +47,10 @@ class Add:
 
 
 class Backend(Protocol):
+    """Optional, not part of the protocol: `continuation_logprobs(prefix_ids: Sequence[int],
+    continuations: Sequence[Sequence[int]]) -> list[np.ndarray]`, each array (len(c),) float
+    log-probs in nats of continuation c's tokens after the prefix (module docstring)."""
+
     info: dict[str, Any]  # engine, model path, fingerprint, quantization, versions
     n_layers: int
     d_model: int

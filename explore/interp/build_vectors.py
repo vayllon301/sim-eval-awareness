@@ -1,5 +1,6 @@
 """Exploratory: build a vector file on a local MLX model (emotion vectors, unrelated-concept
-controls, the evaluation-awareness vector) at several layers, with validation.
+controls, the evaluation-awareness vector and its training twin) at several layers, with
+validation.
 Reference: docs/INTERP.md. The logic is simtest.interp.build; this is its command line.
 
 Development only: local 8-bit/4-bit weights are never evidence (one backend per
@@ -27,6 +28,7 @@ def main():
     ap.add_argument("model"), ap.add_argument("texts"), ap.add_argument("out")
     ap.add_argument("--layers", required=True)
     ap.add_argument("--pairs", default="explore/interp/data/eval_awareness_pairs.json")
+    ap.add_argument("--train-pairs", default="explore/interp/data/train_awareness_pairs.json")
     a = ap.parse_args()
     if Path(a.out).exists():
         sys.exit(f"{a.out} exists; refusing to overwrite")
@@ -41,7 +43,8 @@ def main():
     t = time.time()
     tick = lambda i, n: (i % 50 == 0 or i == n) and print(f"  {i}/{n} texts [{time.time() - t:.0f}s]", flush=True)
     vs, rep = build_all(b, rows, layers, texts_path=a.texts, pairs=json.loads(Path(a.pairs).read_text()),
-                        pairs_path=a.pairs, concept_topics=CONCEPTS, progress=tick,
+                        pairs_path=a.pairs, train_pairs=json.loads(Path(a.train_pairs).read_text()),
+                        train_pairs_path=a.train_pairs, concept_topics=CONCEPTS, progress=tick,
                         extra_datasets={"texts_generation": {"generator": gen_meta.get("generator"), "note": gen_meta.get("note"),
                                                              "providers": sorted({c.get("provider") or "?" for c in gen_meta.get("calls", [])})}})
     vs.save(a.out)
@@ -59,6 +62,14 @@ def main():
               f"{e.get('heldout_pairs', {}).get('accuracy', float('nan')):>7.2f} "
               f"{e.get('generalisation', {}).get('auroc', float('nan')):>12.2f} "
               f"{e.get('generalisation', {}).get('pair_accuracy', float('nan')):>9.2f}  {vs.resid_norm(L):.1f}")
+    print(f"\ntraining twin\n{'layer':>5} {'TA LOO':>7} {'TA held':>7} {'TA gen AUROC':>12} {'gen pairs':>9} {'cos EA':>7}")
+    for L in layers:
+        e = rep.get("train_awareness", {}).get(str(L), {})
+        print(f"{L:>5} {e.get('loo_pairs', {}).get('correct', '-'):>4}/{e.get('loo_pairs', {}).get('n', '-'):<2} "
+              f"{e.get('heldout_pairs', {}).get('accuracy', float('nan')):>7.2f} "
+              f"{e.get('generalisation', {}).get('auroc', float('nan')):>12.2f} "
+              f"{e.get('generalisation', {}).get('pair_accuracy', float('nan')):>9.2f} "
+              f"{e.get('cosine_with_eval_awareness', float('nan')):>7.2f}")
     L = rep["chosen_layer"]
     print(f"\nchosen layer {L}; held-out confusion there (rows: true, columns: predicted):")
     conf = rep["layers"][str(L)]["heldout"]["confusion"]

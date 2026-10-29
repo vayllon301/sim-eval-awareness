@@ -13,7 +13,10 @@ vectors, a role for every token. Reference: docs/INTERP.md, "Reader".
    against the template's own rendering.
 3. `read` runs one forward pass (no logits kept) and stores, per token, the projection of
    the residual stream onto each unit vector at each chosen layer, and optionally the
-   top-k latents of an SAE. Raw activations are never stored.
+   top-k latents of an SAE. Raw activations are never stored. It also stores, per agent
+   turn, the position of the last token of that turn's prompt (`prompt_end`), where a
+   reading is taken before the agent writes anything. Given phrases, it adds the logit
+   monitor (monitors.py): their log-probability at the start of each turn's reasoning.
 
 Roles: template (special tokens and template text), system (the system turn: the
 template's tools block, the reasoning-effort sentence, the system prompt), user,
@@ -25,7 +28,8 @@ readings on tool_output tokens reflect what the agent reads, not its own state.
 Causal attention makes one pass over the final conversation equal to the passes the
 server made turn by turn, as long as each turn's prompt is a prefix of the next one
 (true for Qwen3.8 with preserve_thinking on, its default). `prompt_checks` compares the
-rendered prompt lengths with the token counts the server reported.
+rendered prompt lengths with the token counts the server reported, and `prompt_ends`
+checks that each turn's rendered prompt is a prefix of the full rendering.
 """
 
 from __future__ import annotations
@@ -283,17 +287,30 @@ def render(ep: Episode, tokenizer) -> Rendered:
     return Rendered(text=text, ids=np.asarray(ids, dtype=np.int32), role=role, turn=turn, segments=segs)
 
 
-def prompt_checks(ep: Episode, tokenizer) -> list[dict]:
+def turn_prompts(ep: Episode, tokenizer) -> list[list[int]]:
+    """For each agent turn (the k-th assistant message), its prompt as rendered here: the
+    token IDs of the messages before it, plus the generation prompt."""
+    return [chat_ids(tokenizer, ep.messages[:i], ep.tools, add_generation_prompt=True, **ep.template_kwargs)
+            for i, m in enumerate(ep.messages) if m["role"] == "assistant"]
+
+
+def prompt_checks(ep: Episode, tokenizer, prompts: Sequence[Sequence[int]] | None = None) -> list[dict]:
     """For each agent turn, the length of its prompt as rendered here (the messages before
-    it, plus the generation prompt) next to the prompt tokens the server reported."""
+    it, plus the generation prompt) next to the prompt tokens the server reported.
+    `prompts` reuses `turn_prompts` output."""
     recorded = ep.meta.get("prompt_tokens") or []
-    out, k = [], 0
-    for i, m in enumerate(ep.messages):
-        if m["role"] == "assistant":
-            n = len(chat_ids(tokenizer, ep.messages[:i], ep.tools, add_generation_prompt=True, **ep.template_kwargs))
-            out.append({"turn": k, "recorded": recorded[k] if k < len(recorded) else None, "rendered": n})
-            k += 1
-    return out
+    prompts = turn_prompts(ep, tokenizer) if prompts is None else prompts
+    return [{"turn": k, "recorded": recorded[k] if k < len(recorded) else None, "rendered": len(p)}
+            for k, p in enumerate(prompts)]
+
+
+def prompt_ends(prompts: Sequence[Sequence[int]], ids: Sequence[int]) -> np.ndarray:
+    """For each agent turn, the position in the full rendering `ids` of the last token of its
+    prompt (its length minus 1), or -1 if the prompt's IDs are not the first IDs of `ids`
+    (the one pass over `ids` then doesn't contain that turn's prompt)."""
+    ids = np.asarray(ids)
+    return np.array([len(p) - 1 if 0 < len(p) <= len(ids) and np.array_equal(ids[:len(p)], p) else -1
+                     for p in prompts], dtype=np.int32)
 
 
 # ---------------------------------------------------------------- reading
@@ -309,6 +326,7 @@ class Reading:
     proj: np.ndarray  # (T, n_layers, n_names) float32: residual stream . unit vector (not centred)
     sae: dict[int, tuple[np.ndarray, np.ndarray]] = field(default_factory=dict)  # layer: (idx (T,k), val (T,k))
     meta: dict = field(default_factory=dict)
+    prompt_end: np.ndarray | None = None  # (agent turns,) int32: last token of each turn's prompt, -1 if unknown
 
     def save(self, path: str | Path) -> Path:
         path = Path(path)
@@ -316,6 +334,8 @@ class Reading:
         arrays = {"token_ids": self.token_ids, "role": self.role, "turn": self.turn, "proj": self.proj.astype(np.float32)}
         for L, (idx, val) in self.sae.items():
             arrays[f"sae_idx@{L}"], arrays[f"sae_val@{L}"] = idx.astype(np.int32), val.astype(np.float16)
+        if self.prompt_end is not None:
+            arrays["prompt_end"] = self.prompt_end.astype(np.int32)
         meta = {**self.meta, "layers": self.layers, "names": self.names, "roles": list(ROLES)}
         np.savez_compressed(path, meta=np.array(json.dumps(meta, sort_keys=True)), **arrays)
         summary = path.with_name(path.name.removesuffix(".npz") + ".summary.json")
@@ -328,15 +348,20 @@ class Reading:
         meta = json.loads(str(z["meta"]))
         sae = {int(k.split("@")[1]): (z[k], z[k.replace("idx", "val")]) for k in z.files if k.startswith("sae_idx@")}
         return cls(token_ids=z["token_ids"], role=z["role"], turn=z["turn"], layers=meta["layers"], names=meta["names"],
-                   proj=z["proj"], sae=sae, meta=meta)
+                   proj=z["proj"], sae=sae, meta=meta,
+                   prompt_end=z["prompt_end"] if "prompt_end" in z.files else None)  # older readings have none
 
 
 def summarize(r: Reading) -> dict:
     """Mean and SD of each projection by role group, and by agent turn (agent tokens and
-    tool outputs separately). `mean_centred` subtracts the vector file's neutral offset."""
+    tool outputs separately, and the projection at the last token of the turn's prompt,
+    None where unknown). `mean_centred` and `prompt_end_centred` subtract the vector file's
+    neutral offset."""
     offsets = r.meta.get("offsets") or {}
     out: dict[str, Any] = {"n_tokens": int(len(r.role)),
                            "tokens_by_role": {k: int((r.role == R[k]).sum()) for k in ROLES}, "by_group": {}, "by_turn": {}}
+    if "logit_monitor" in r.meta:
+        out["logit_monitor"] = r.meta["logit_monitor"]
     turns = sorted(int(t) for t in set(r.turn.tolist()) if t >= 0)
     for li, L in enumerate(r.layers):
         for vi, name in enumerate(r.names):
@@ -357,6 +382,9 @@ def summarize(r: Reading) -> dict:
                 for gname in ("agent", "tool_output"):
                     m = (r.turn == t) & np.isin(r.role, [R[x_] for x_ in GROUPS[gname]])
                     row[gname] = float(x[m].mean()) if m.any() else None
+                pos = int(r.prompt_end[t]) if r.prompt_end is not None and t < len(r.prompt_end) else -1
+                row["prompt_end"] = float(x[pos]) if pos >= 0 else None
+                row["prompt_end_centred"] = None if row["prompt_end"] is None or off is None else row["prompt_end"] - off
                 per.append(row)
             out["by_turn"][key] = per
     return out
@@ -364,9 +392,12 @@ def summarize(r: Reading) -> dict:
 
 def read(backend: Backend, ep: Episode, vectors: VectorSet, layers: Sequence[int], *,
          names: Sequence[str] | None = None, saes: Mapping[int, Any] | None = None,
-         allow_other_model: bool = False, vectors_path: str | None = None) -> Reading:
+         allow_other_model: bool = False, vectors_path: str | None = None, phrases: dict | None = None,
+         phrases_path: str | None = None, phrase_turns: Sequence[int] | None = None) -> Reading:
     """One forward pass over the rendered episode; projections onto `names` (default: all
-    vectors in the file) at `layers`, and top-k latents for each layer in `saes`."""
+    vectors in the file) at `layers`, top-k latents for each layer in `saes`, and each
+    turn's prompt end. With `phrases` (a phrase file: {status, source, groups}), the logit
+    monitor on every agent turn with reasoning, or on `phrase_turns`."""
     want = vectors.meta.get("model", {}).get("fingerprint")
     have = backend.info.get("fingerprint")
     if want != have and not allow_other_model:
@@ -375,6 +406,8 @@ def read(backend: Backend, ep: Episode, vectors: VectorSet, layers: Sequence[int
     names = list(names or vectors.names)
     layers = sorted(set(int(L) for L in layers) | set(int(L) for L in (saes or {})))
     rd = render(ep, backend.tokenizer)
+    prompts = turn_prompts(ep, backend.tokenizer)
+    ends = prompt_ends(prompts, rd.ids)
     acts = backend.activations(rd.ids.tolist(), layers)
     proj = np.zeros((len(rd.ids), len(layers), len(names)), dtype=np.float32)
     for li, L in enumerate(layers):
@@ -390,8 +423,15 @@ def read(backend: Backend, ep: Episode, vectors: VectorSet, layers: Sequence[int
     meta = {"episode": ep.meta, "backend": backend.info, "vectors_model": vectors.meta.get("model"),
             "vectors_path": vectors_path, "vectors_sha256": file_sha256(vectors_path) if vectors_path else None,
             "offsets": offsets, "template_kwargs": ep.template_kwargs, "text_sha256": bytes_sha256(rd.text.encode()),
-            "n_tokens": int(len(rd.ids)), "prompt_checks": prompt_checks(ep, backend.tokenizer),
+            "n_tokens": int(len(rd.ids)), "prompt_checks": prompt_checks(ep, backend.tokenizer, prompts),
+            "prompt_end_not_prefix": [k for k, e in enumerate(ends.tolist()) if e < 0],
             "sae": {str(L): getattr(s, "info", {}) for L, s in (saes or {}).items()},
             "created": now(), "git_commit": git_commit()}
+    if phrases is not None:
+        from .monitors import logit_monitor  # monitors imports this module
+
+        meta["logit_monitor"] = {"phrases_path": phrases_path, "status": phrases.get("status"),
+                                 "phrases_sha256": file_sha256(phrases_path) if phrases_path else None,
+                                 **logit_monitor(backend, rd.ids, rd.role, rd.turn, phrases["groups"], turns=phrase_turns)}
     return Reading(token_ids=rd.ids, role=rd.role, turn=rd.turn, layers=layers, names=names, proj=proj, sae=sae_out,
-                   meta=meta)
+                   meta=meta, prompt_end=ends)

@@ -11,7 +11,7 @@ import pytest
 from simtest.interp import directions as D
 from simtest.interp.fake import FakeBackend, FakeTokenizer
 from simtest.interp.reader import (R, ROLES, Episode, Reading, RenderError, colab_probe_prompts, from_colab_probe,
-                                   load_colab_probe, prompt_checks, read, render)
+                                   load_colab_probe, prompt_checks, read, render, summarize)
 from simtest.interp.sae import TopKSAE
 from simtest.interp.vectors import VectorSet
 
@@ -180,6 +180,60 @@ def test_read_projects_at_every_token(tmp_path):
     assert g["tool_output"]["n"] == int((r.role == R["tool_output"]).sum())
     assert [t["turn"] for t in summary["by_turn"]["calm@2"]] == [0, 1, 2, 3]
     assert summary["by_turn"]["calm@2"][3]["tool_output"] is None
+
+
+def test_prompt_ends_are_the_last_token_of_each_turn_prompt(tmp_path):
+    b = FakeBackend()
+    ep, vs = episode(), fake_vectors(b)
+    r = read(b, ep, vs, [2, 4])
+    lengths = [c["rendered"] for c in prompt_checks(ep, b.tokenizer)]
+    assert r.prompt_end.dtype == np.int32 and r.prompt_end.tolist() == [n - 1 for n in lengths]
+    assert r.meta["prompt_end_not_prefix"] == []
+    for k, pos in enumerate(r.prompt_end.tolist()):  # the fake prompt ends with "<think>\n"; the reasoning follows
+        assert r.turn[pos] == k and r.role[pos] == R["template"] and r.role[pos + 1] == R["reasoning"]
+    summary = summarize(r)
+    for li, L in enumerate(r.layers):
+        for vi, name in enumerate(r.names):
+            for row in summary["by_turn"][f"{name}@{L}"]:
+                assert row["prompt_end"] == pytest.approx(float(r.proj[r.prompt_end[row["turn"]], li, vi]))
+    row = summary["by_turn"]["calm@2"][1]
+    assert row["prompt_end_centred"] == pytest.approx(row["prompt_end"] - 0.25)
+    assert summary["by_turn"]["desperate@2"][1]["prompt_end_centred"] is None  # no offset in the file
+    back = Reading.load(r.save(tmp_path / "ep.npz"))
+    assert np.array_equal(back.prompt_end, r.prompt_end) and back.prompt_end.dtype == np.int32
+
+
+class ForgetfulPromptTokenizer(FakeTokenizer):
+    """Turn prompts leave out earlier reasoning (as Qwen templates do without
+    preserve_thinking); the full rendering keeps it."""
+
+    def apply_chat_template(self, messages, tools=None, tokenize=True, add_generation_prompt=False, **kw):
+        if add_generation_prompt:
+            messages = [{k: v for k, v in m.items() if k != "reasoning_content"} for m in messages]
+        return super().apply_chat_template(messages, tools=tools, tokenize=tokenize,
+                                           add_generation_prompt=add_generation_prompt, **kw)
+
+
+def test_prompt_end_is_missing_where_the_prompt_is_not_a_prefix():
+    b = FakeBackend()
+    b.tokenizer = ForgetfulPromptTokenizer()
+    r = read(b, episode(), fake_vectors(b), [2])
+    assert r.prompt_end[0] > 0 and r.prompt_end[1:].tolist() == [-1, -1, -1]  # turn 0 has no earlier reasoning
+    assert r.meta["prompt_end_not_prefix"] == [1, 2, 3]
+    rows_ = summarize(r)["by_turn"]["calm@2"]
+    assert rows_[0]["prompt_end"] is not None and rows_[0]["prompt_end_centred"] is not None
+    assert all(row["prompt_end"] is None and row["prompt_end_centred"] is None for row in rows_[1:])
+
+
+def test_older_readings_without_prompt_end_still_load(tmp_path):
+    b = FakeBackend()
+    path = read(b, episode(), fake_vectors(b), [2]).save(tmp_path / "ep.npz")
+    z = dict(np.load(path))
+    z.pop("prompt_end")
+    np.savez_compressed(tmp_path / "old.npz", **z)
+    old = Reading.load(tmp_path / "old.npz")
+    assert old.prompt_end is None and old.proj.shape[0] == len(old.role)
+    assert all(row["prompt_end"] is None for row in summarize(old)["by_turn"]["calm@2"])
 
 
 def test_read_refuses_vectors_from_another_model():

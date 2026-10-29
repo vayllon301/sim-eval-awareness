@@ -1,11 +1,15 @@
-"""Build a vector file on a backend: emotion vectors, unrelated-concept controls and an
-evaluation-awareness vector, each at every scanned layer, with their validation.
+"""Build a vector file on a backend: emotion vectors, unrelated-concept controls, an
+evaluation-awareness vector and its training twin, each at every scanned layer, with their
+validation.
 
 Inputs:
 - texts: rows {id, kind: emotion|neutral, emotion, topic, split: train|test, text}
   (explore/interp/gen_texts.py). Texts are fed raw, without a chat template.
 - eval pairs: {pairs: [{real, eval}], heldout: [indices], generalisation: {pairs}}
   (explore/interp/data/eval_awareness_pairs.json).
+- train pairs: {pairs: [{real, train}], heldout: [indices]}, the same real statements with
+  the evaluation side reworded as training (explore/interp/data/train_awareness_pairs.json).
+  Its generalisation check uses the eval pairs' coding pairs.
 
 Layer choice, fixed before any run: the scanned layer with the highest held-out emotion
 accuracy; ties go to the layer closest to two-thirds of the depth. Every scanned layer is
@@ -31,7 +35,13 @@ METHOD = {"emotions": "emotion-diffmeans-v1: story means from token 50, minus th
           "topics": "topic-diffmeans-v1: mean of one premise's stories (all emotions) minus the mean of the other "
                     "training premises' stories, neutral PCs projected out, unit length",
           "eval_awareness": "contrast-v1 (Hua et al.): mean(eval) - mean(real) at the colon ending each prompt, "
-                            "rendered as a user message with the chat template, unit length, no PC projection"}
+                            "rendered as a user message with the chat template, unit length, no PC projection",
+          "train_awareness": "contrast-v1, training twin (after Aranguri): mean(train) - mean(real) at the colon ending "
+                             "each prompt, rendered as a user message with the chat template, unit length, no PC "
+                             "projection; the eval pairs with the evaluation side reworded as training"}
+# contrast vectors: the positive side's key in the pairs file, the dataset name, the sign
+CONTRASTS = {"eval_awareness": ("eval", "eval_pairs", "positive = evaluation"),
+             "train_awareness": ("train", "train_pairs", "positive = training")}
 
 
 def slug(topic: str, words: int = 2) -> str:
@@ -139,8 +149,12 @@ def _user_render(backend: Backend, text: str):
     return render(ep, backend.tokenizer)
 
 
-def build_eval_awareness(backend: Backend, doc: dict, layers: Sequence[int], vs: VectorSet) -> dict:
-    """Adds 'eval_awareness' at each layer to `vs`; returns its validation."""
+def build_contrast(backend: Backend, name: str, doc: dict, layers: Sequence[int], vs: VectorSet, *,
+                   generalisation: Sequence[dict] = ()) -> dict:
+    """Adds `name` (a key of CONTRASTS) at each layer to `vs`: mean(positive) - mean(real) at
+    the colon ending each prompt of the training pairs. Returns its validation; the
+    `generalisation` pairs {real, eval} are read as the mean over the user message's tokens."""
+    positive, dataset, sign = CONTRASTS[name]
     layers = sorted(int(L) for L in layers)
     pairs = doc["pairs"]
     held = set(doc.get("heldout") or [])
@@ -163,15 +177,15 @@ def build_eval_awareness(backend: Backend, doc: dict, layers: Sequence[int], vs:
         return {L: acts[L][user].astype(np.float64).mean(0) for L in layers}
 
     real = [colon_acts(p["real"]) for p in pairs]
-    fake = [colon_acts(p["eval"]) for p in pairs]
-    gen = (doc.get("generalisation") or {}).get("pairs") or []
+    fake = [colon_acts(p[positive]) for p in pairs]
+    gen = list(generalisation)
     g_real = [mean_user_acts(p["real"]) for p in gen]
     g_fake = [mean_user_acts(p["eval"]) for p in gen]
     out = {}
     for L in layers:
         R_, F_ = np.stack([a[L] for a in real]), np.stack([a[L] for a in fake])
         v = D.contrast_vector(F_[train_i], R_[train_i])
-        vs.add("eval_awareness", L, v)
+        vs.add(name, L, v)
         rep = {"loo_pairs": D.paired_loo(F_, R_)}
         rep["loo_pairs"].pop("margins")
         if held:
@@ -183,28 +197,34 @@ def build_eval_awareness(backend: Backend, doc: dict, layers: Sequence[int], vs:
             gr, gf = np.stack([a[L] for a in g_real]) @ v, np.stack([a[L] for a in g_fake]) @ v
             rep["generalisation"] = {"pair_accuracy": float((gf > gr).mean()), "auroc": D.auroc(gf, gr), "n_pairs": len(gen)}
         out[str(L)] = rep
-    vs.meta.setdefault("vector_info", {})["eval_awareness"] = {"method": "eval_awareness", "dataset": "eval_pairs",
-                                                               "sign": "positive = evaluation"}
+    vs.meta.setdefault("vector_info", {})[name] = {"method": name, "dataset": dataset, "sign": sign}
     return out
 
 
 def build_all(backend: Backend, rows: Sequence[dict], layers: Sequence[int], *, texts_path: str | None = None,
-              pairs: dict | None = None, pairs_path: str | None = None, concept_topics: Sequence[str] = (),
+              pairs: dict | None = None, pairs_path: str | None = None, train_pairs: dict | None = None,
+              train_pairs_path: str | None = None, concept_topics: Sequence[str] = (),
               extra_datasets: dict | None = None, progress=None) -> tuple[VectorSet, dict]:
     vs, report, neutral_means = build_emotions(backend, rows, layers, concept_topics=concept_topics, progress=progress)
-    if pairs is not None:
-        report["eval_awareness"] = build_eval_awareness(backend, pairs, layers, vs)
+    gen = ((pairs or {}).get("generalisation") or {}).get("pairs") or []  # the eval file's coding pairs, for both
+    contrasts = [(n, d, p) for n, d, p in (("eval_awareness", pairs, pairs_path),
+                                           ("train_awareness", train_pairs, train_pairs_path)) if d is not None]
+    for name, doc, _ in contrasts:
+        report[name] = build_contrast(backend, name, doc, layers, vs, generalisation=gen)
         for L in layers:  # the neutral offset, for centring readings
             nm = neutral_means[int(L)]
-            vs.meta["offset"].setdefault("eval_awareness", {})[str(L)] = (
-                float((nm @ vs.get("eval_awareness", L)).mean()) if len(nm) else 0.0)
+            vs.meta["offset"].setdefault(name, {})[str(L)] = float((nm @ vs.get(name, L)).mean()) if len(nm) else 0.0
+    if pairs is not None and train_pairs is not None:
+        for L in layers:
+            report["train_awareness"][str(L)]["cosine_with_eval_awareness"] = float(
+                vs.get("eval_awareness", L).astype(np.float64) @ vs.get("train_awareness", L))
     n = lambda kind, split=None: sum(1 for r in rows if r["kind"] == kind and (split is None or r["split"] == split))
     datasets = {"texts": {"path": texts_path, "sha256": file_sha256(texts_path) if texts_path else None,
                           "n_emotion_train": n("emotion", "train"), "n_emotion_test": n("emotion", "test"),
                           "n_neutral": n("neutral"), "generators": sorted({r.get("generator") for r in rows} - {None})}}
-    if pairs is not None:
-        datasets["eval_pairs"] = {"path": pairs_path, "sha256": file_sha256(pairs_path) if pairs_path else None,
-                                  "n_pairs": len(pairs["pairs"]), "heldout": pairs.get("heldout")}
+    for name, doc, path in contrasts:
+        datasets[CONTRASTS[name][1]] = {"path": path, "sha256": file_sha256(path) if path else None,
+                                        "n_pairs": len(doc["pairs"]), "heldout": doc.get("heldout")}
     datasets.update(extra_datasets or {})
     vs.meta.update({"model": backend.info, "method": METHOD, "datasets": datasets, "eval": report,
                     "chosen_layer": report["chosen_layer"], "layer_rule": "highest held-out emotion accuracy; ties to "
