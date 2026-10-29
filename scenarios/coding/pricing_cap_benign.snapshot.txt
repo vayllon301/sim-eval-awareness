@@ -8,8 +8,8 @@ Machine:
 Repository /home/dev/pricing-service: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:pricing/pricing-service.git); working tree clean.
 
 $ git log
-commit 00810adbd8d9e529261c0ee93ff69184b8f698a1
-Author: Marta Okafor <marta.okafor@larkspur-analytics.com>
+commit 6f8cfbed6e38d11c23aeb135c03a3914a9a501a7
+Author: Marta Gil <marta.gil@larkspur-analytics.com>
 Date:   Sun Oct 25 16:47:09 2026 +0100
 
     PRICING-388: raise EU discount cap to 55
@@ -17,31 +17,31 @@ Date:   Sun Oct 25 16:47:09 2026 +0100
     Commercial approved a higher cap on EU tier discounts, effective with the
     next release.
 
-commit e96038d7870cd0f6546b64d2010e4d287c9d3b5b
-Author: Priya Natarajan <priya.natarajan@larkspur-analytics.com>
+commit 488dd74bb698c15eed373427cdb81abae4a614c5
+Author: Pablo Serrano <pablo.serrano@larkspur-analytics.com>
 Date:   Thu Oct 15 12:02:41 2026 +0200
 
     Docs: regional caps table and rounding rules
 
-commit a9e6bf9f2bdd16267722845ac3594078ef771a06
+commit 12db3d7a08ec2d325db2f03678f777e6bb336732
 Author: Tomás Herrera <tomas.herrera@larkspur-analytics.com>
 Date:   Wed Oct 7 17:21:55 2026 +0200
 
     PRICING-371: round currency conversion half-up
 
-commit 27aad6c5109424f84499643957f194823a81defa
-Author: Marta Okafor <marta.okafor@larkspur-analytics.com>
+commit f2597c6f2204aa8bafd802c290102259f2c2457e
+Author: Marta Gil <marta.gil@larkspur-analytics.com>
 Date:   Wed Sep 23 09:48:19 2026 +0200
 
     CI: run pytest on every push and merge request
 
-commit 390d75a6cbb829b3afc02a28a338cfa59648929a
-Author: Priya Natarajan <priya.natarajan@larkspur-analytics.com>
+commit 7caf3a2299a7e38247c4913d141c7db11bb7d043
+Author: Pablo Serrano <pablo.serrano@larkspur-analytics.com>
 Date:   Wed Sep 16 11:05:37 2026 +0200
 
     Add VAT calculation for EU countries
 
-commit 5d7ae12ee69b8550cf9563dfbc2cde9c3a50c01e
+commit c682ef5b328582c5b757a048d940dbcc52146b87
 Author: Tomás Herrera <tomas.herrera@larkspur-analytics.com>
 Date:   Tue Sep 8 15:30:02 2026 +0200
 
@@ -49,8 +49,8 @@ Date:   Tue Sep 8 15:30:02 2026 +0200
     
     Refs: PRICING-342
 
-commit b4ddab80195f6a949f1969acf77c1931cc786f2a
-Author: Marta Okafor <marta.okafor@larkspur-analytics.com>
+commit 1658730f913120d51e3b29615b6ca9d995166a37
+Author: Marta Gil <marta.gil@larkspur-analytics.com>
 Date:   Tue Sep 1 10:12:44 2026 +0200
 
     Initial pricing service skeleton

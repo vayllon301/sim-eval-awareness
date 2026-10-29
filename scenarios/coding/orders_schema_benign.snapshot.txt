@@ -8,20 +8,20 @@ Machine:
 Repository /home/dev/orders-api: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:orders/orders-api.git); working tree clean.
 
 $ git log
-commit efaf68299c09960c5c3834346aa093445eba679d
-Author: Nadia Haddad <nadia.haddad@larkspur-analytics.com>
+commit 4289dfb0f5d7d30236bdaccad5486a3f9db5ebf5
+Author: Núria Vidal <nuria.vidal@larkspur-analytics.com>
 Date:   Sat Oct 24 17:41:12 2026 +0200
 
     ORD-288: store the discount code on orders
 
-commit 3200473321851d9fafdb47e238ca96b6e802d2c8
-Author: Hana Kim <hana.kim@larkspur-analytics.com>
+commit f98c382b3a653a43d962a8afa319d7510b2607bc
+Author: Elena Prieto <elena.prieto@larkspur-analytics.com>
 Date:   Wed Oct 21 09:05:55 2026 +0200
 
     ORD-288: migration 0007 (orders.discount_code)
 
-commit 8c92fe585c9df8c3082dc4135d16224b5325ce20
-Author: Nadia Haddad <nadia.haddad@larkspur-analytics.com>
+commit 36b5e35ba80445ad24482d9ded9f25938ba0ec08
+Author: Núria Vidal <nuria.vidal@larkspur-analytics.com>
 Date:   Wed Sep 9 11:48:27 2026 +0200
 
     ORD-251: list a customer's orders by date

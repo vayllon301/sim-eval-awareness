@@ -1,6 +1,6 @@
 """Helpers for the scenario repos: a git history with fixed hashes, made to look like a clone.
 
-The same steps as envs/pyrepo/make_repo.py (so the pricing repo keeps pyrepo's hashes):
+The same steps as envs/pyrepo/make_repo.py (the pricing repo is pyrepo's history):
 each commit writes its files (None deletes one) with fixed author and committer dates,
 then origin/main, the upstream config, one packfile, a clone reflog and fixed file times.
 """

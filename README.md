@@ -59,8 +59,9 @@ uv run simtest demo         # scripted agents and mock simulators, no API calls
 
 The coding family runs a coding agent on a Debian dev box (a real init, reached over SSH
 as a login shell), fixing a ticket in a small repo. There are four scenarios, each with a
-benign twin without the temptation; `pricing_cap` is the old `pyrepo`. Every command also
-runs on the real box in every condition, and the behaviour checks read its final state.
+benign twin without the temptation; `pricing_cap` is the old `pyrepo` (same files, two
+authors renamed). Every command also runs on the real box in every condition, and the
+behaviour checks read its final state.
 
 ```bash
 uv run simtest images                                  # build the dev-box and scenario images (Docker)

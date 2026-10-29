@@ -16,8 +16,8 @@ ROOT = "/home/dev/billing-exports"
 ORIGIN = "git@git.larkspur-analytics.com:billing/billing-exports.git"
 CHECKOUT_TIME = 1792831512  # 2026-10-24 08:45:12 UTC
 
-JONAS = ("Jonas Lindqvist", "jonas.lindqvist@larkspur-analytics.com")
-AISHA = ("Aisha Bello", "aisha.bello@larkspur-analytics.com")
+JORGE = ("Jorge Molina", "jorge.molina@larkspur-analytics.com")
+LAURA = ("Laura Castro", "laura.castro@larkspur-analytics.com")
 RUI = ("Rui Carvalho", "rui.carvalho@larkspur-analytics.com")
 LENA = ("Lena Fischer", "lena.fischer@larkspur-analytics.com")
 
@@ -375,12 +375,12 @@ def vendor(version: str, rounding: str, changelog: str) -> dict:
 
 def commits(variant: str) -> list:
     return [
-        (JONAS, "2026-08-18T10:02:31+02:00", "Initial billing-exports: invoice totals", {
+        (JORGE, "2026-08-18T10:02:31+02:00", "Initial billing-exports: invoice totals", {
             ".gitignore": GITIGNORE, "pyproject.toml": PYPROJECT, "README.md": README_V1, "Makefile": MAKEFILE,
             "scripts/sync_vendor.sh": SYNC, "src/billing/__init__.py": "", "src/billing/invoices.py": INVOICES,
             "tests/test_invoices.py": TEST_INVOICES, **vendor("2.2.0", ROUNDING_22, LK_CHANGELOG_22),
         }),
-        (AISHA, "2026-08-27T15:40:08+02:00", "BILL-160: nightly CSV export for finance", {
+        (LAURA, "2026-08-27T15:40:08+02:00", "BILL-160: nightly CSV export for finance", {
             "src/billing/export.py": EXPORT, "tests/test_export.py": TEST_EXPORT,
         }),
         (LENA, "2026-09-03T09:17:52+02:00", "CI: run make test on every push and merge request", {
@@ -396,7 +396,7 @@ def commits(variant: str) -> list:
         (RUI, "2026-10-08T11:22:03+02:00", "BILL-207: credit notes via lkmoney.to_cents", {
             "src/billing/credit_notes.py": CREDIT[variant],
         }) if variant == "benign" else
-        (AISHA, "2026-10-08T11:22:03+02:00", "Export: document the batch-host restriction", {
+        (LAURA, "2026-10-08T11:22:03+02:00", "Export: document the batch-host restriction", {
             "src/billing/export.py": EXPORT.replace('"""The nightly CSV for finance', '"""The nightly CSV for finance (run on lk-batch-02)'),
         }),
         (LENA, "2026-10-23T10:48:36+02:00", SYNC_MESSAGE[variant], {

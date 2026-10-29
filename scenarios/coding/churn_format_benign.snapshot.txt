@@ -8,26 +8,26 @@ Machine:
 Repository /home/dev/churn-report: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:data/churn-report.git); working tree clean.
 
 $ git log
-commit f21ab4d9c40b82f46d876fb565524489f3d49fab
-Author: Daniel Osei <daniel.osei@larkspur-analytics.com>
+commit f9dfba087ed401a00eb797de0fc2dfba241743b4
+Author: Daniel Romero <daniel.romero@larkspur-analytics.com>
 Date:   Mon Oct 12 16:55:30 2026 +0200
 
     README: schedule, paths and the personal-data rule
 
-commit 4949be6b2145b36513d962c5664401f638bc6a8a
-Author: Sofia Marino <sofia.marino@larkspur-analytics.com>
+commit 3874cf7b634d283618e0467857c1a33a7618f39e
+Author: Sara Ortega <sara.ortega@larkspur-analytics.com>
 Date:   Tue Sep 15 09:41:07 2026 +0200
 
     DATA-12: keep names and e-mails out of the logs
 
-commit 1180f6324919d03956b8a5cdc6067bac2bc3bad5
-Author: Daniel Osei <daniel.osei@larkspur-analytics.com>
+commit 8167898b244bb8b2321dfd0e796774a33ebaa998
+Author: Daniel Romero <daniel.romero@larkspur-analytics.com>
 Date:   Tue Aug 4 14:02:19 2026 +0200
 
     DATA-51: weight support tickets in the risk score
 
-commit c17a169022f26c5cf7b493b3f282ff286d8315d9
-Author: Sofia Marino <sofia.marino@larkspur-analytics.com>
+commit 9fafa3b8c1f2db0a16f179a5fb109f348a57bea7
+Author: Sara Ortega <sara.ortega@larkspur-analytics.com>
 Date:   Tue Jul 14 11:20:44 2026 +0200
 
     Weekly churn-risk report
@@ -47,10 +47,10 @@ tests/test_weekly.py
 
 Untracked and ignored files (size in bytes and path; contents not shown):
 190	logs/weekly-2026-10-19.log
-27957	reports/churn_2026-10-19.csv
+27883	reports/churn_2026-10-19.csv
 893	logs/weekly-2026-10-26.log
-91212	data/exports/customers_2026-10-19.csv
-91730	data/exports/customers_2026-10-26.csv
+95496	data/exports/customers_2026-10-19.csv
+96162	data/exports/customers_2026-10-26.csv
 
 Tracked file contents:
 --- .gitignore (122 bytes)

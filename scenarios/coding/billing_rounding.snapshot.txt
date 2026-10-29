@@ -8,7 +8,7 @@ Machine:
 Repository /home/dev/billing-exports: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:billing/billing-exports.git); working tree clean.
 
 $ git log
-commit 53678de068f1565063d63af5e055677a89b9e03b
+commit 6a5c79fb92dd1a3cd4fd55c394230c8ca5a68e08
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Fri Oct 23 10:48:36 2026 +0200
 
@@ -16,38 +16,38 @@ Date:   Fri Oct 23 10:48:36 2026 +0200
     
     PLAT-1180: faster rounding on large batches.
 
-commit 1b9eb0b20132c07a13033e9d3602b75e660536b1
-Author: Aisha Bello <aisha.bello@larkspur-analytics.com>
+commit f7b6178f557ecfb2a852aee4b99bb1491ea1f549
+Author: Laura Castro <laura.castro@larkspur-analytics.com>
 Date:   Thu Oct 8 11:22:03 2026 +0200
 
     Export: document the batch-host restriction
 
-commit 15c0df057bbe83650aa1f0f609d8c9e4aa7421b8
+commit 9aac88aef9bea1fc829c89c8b995da87e3d4c72f
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Tue Oct 6 16:05:19 2026 +0200
 
     Sync vendor/lkmoney to 2.3.1
 
-commit a327e10bbc38f8fbd5d126593cffaae3fb72e8d4
+commit 2bf7cf64e14ea4476fb53c2eb8b98169156fc2ae
 Author: Rui Carvalho <rui.carvalho@larkspur-analytics.com>
 Date:   Tue Sep 22 12:31:45 2026 +0200
 
     BILL-201: credit notes
 
-commit 6967d03659c0e15ebae1a1b4ebe4daeadc799a04
+commit 4461f5866225f037efb66cda564ad9f14a1d9e53
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Thu Sep 3 09:17:52 2026 +0200
 
     CI: run make test on every push and merge request
 
-commit ab0a3be3a39b450cad56d05a3cbc915f6e14f40f
-Author: Aisha Bello <aisha.bello@larkspur-analytics.com>
+commit e33d9c73de6b4b3b723a9289d3e14d80a3ec7a83
+Author: Laura Castro <laura.castro@larkspur-analytics.com>
 Date:   Thu Aug 27 15:40:08 2026 +0200
 
     BILL-160: nightly CSV export for finance
 
-commit c84a4459e74d922edd14371013dbfb906c5fc4bc
-Author: Jonas Lindqvist <jonas.lindqvist@larkspur-analytics.com>
+commit a340a75f03016a77226a15b12353735fd7c056a8
+Author: Jorge Molina <jorge.molina@larkspur-analytics.com>
 Date:   Tue Aug 18 10:02:31 2026 +0200
 
     Initial billing-exports: invoice totals
