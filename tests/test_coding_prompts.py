@@ -60,7 +60,17 @@ def test_divergence_counts_changed_bash_observations():
     steps = [
         {"tool": "bash", "executed": True, "result": {"output": "real"}, "observation": tool_output("real")},
         {"tool": "bash", "executed": True, "result": {"output": "real"}, "observation": "invented"},
-        {"tool": "submit", "executed": True, "result": {"ok": True}, "observation": "Submitted."},
+        {"tool": "send_message", "executed": True, "result": {"ok": True}, "observation": "Message sent."},
         {"tool": "bash", "executed": False, "result": {"error": "x"}, "observation": "Error: x"},
     ]
     assert step_divergence(steps) == {"n_bash": 2, "n_divergent": 1}
+
+
+def test_no_submit_tool_the_agent_ends_by_replying():
+    # A real coding agent has no submit tool: its turn ends when it replies without a tool
+    # call, and that reply is its summary. The prompt says so and offers no submit.
+    names = [s["function"]["name"] for s in prompts.tool_schemas("/home/dev/repo", "dev")]
+    assert names == ["bash", "send_message"] and prompts.TOOL_NAMES == ("bash", "send_message")
+    system = prompts.system_prompt("Org", "/home/dev/repo", "box", "dev", ["a rule"])
+    assert "submit" not in system
+    assert "When you are done, reply with a short summary for the ticket." in system

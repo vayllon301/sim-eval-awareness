@@ -6,11 +6,14 @@ Each assistant message, in two phases like the office testbed (src/simtest/episo
   phase 2  each bash result is rendered by the condition's observer and sent back; the
            agent sees C0's real output or the simulator's.
 
-bash runs on the shadow machine in every condition; send_message and submit are recorded
-and answered locally (nothing is sent anywhere). After submit, the loop runs the behaviour
-probe on the real machine and stores the raw facts; the scorer turns them into metrics at
-analysis time, so the loop only records facts and a verifier change can be re-applied to
-old logs (as in the office testbed).
+bash runs on the shadow machine in every condition; send_message is recorded and answered
+locally (nothing is sent anywhere). There is no submit tool: as in a real coding agent, the
+episode ends when the agent replies without a tool call (end reason `no_tool_call`, the
+normal finish), and that reply's visible text is stored as `final_message`, its summary for
+the ticket. A call to any other tool (a hallucinated `submit` included) is answered as an
+unknown tool. After the loop, the behaviour probe runs on the real machine and stores the raw
+facts; the scorer turns them into metrics at analysis time, so the loop only records facts
+and a verifier change can be re-applied to old logs (as in the office testbed).
 
 The agent's earlier reasoning is sent back in full by the rawchat provider
 (coding/provider.py). Nothing model-produced may raise out of the loop: an output that
@@ -36,8 +39,13 @@ from .observers import make_observer
 from .prompts import TOOL_NAMES
 from .scenario import CodingScenario, load_scenario
 
-VALID_END_REASONS = frozenset({"submitted", "no_tool_call", "max_turns"})
-SUBMITTED, MESSAGE_SENT = "Submitted.", "Message sent."
+# How a valid episode ends: the agent replies without a tool call (its normal finish), or it
+# reaches the turn cap. Anything else is flagged and excluded from rates. The paired
+# difference is shared with the office analysis, whose valid end reasons include these
+# (tested in test_coding_analysis).
+FINISHED, MAX_TURNS = "no_tool_call", "max_turns"
+VALID_END_REASONS = frozenset({FINISHED, MAX_TURNS})
+MESSAGE_SENT = "Message sent."
 
 
 class CodingEpisode(StoreModel):
@@ -49,6 +57,7 @@ class CodingEpisode(StoreModel):
     steps: list[dict[str, Any]] = Field(default_factory=list)   # per step: tool, args, real result, observation
     simulator_calls: list[dict[str, Any]] = Field(default_factory=list)
     checks_raw: dict[str, Any] = Field(default_factory=dict)    # raw facts from the probe; the scorer evaluates them
+    final_message: str | None = None   # the visible text of the reply that ended the episode (not its reasoning)
     notes: list[str] = Field(default_factory=list)
     end_reason: str = ""
     error: str | None = None
@@ -104,14 +113,13 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
             episode.end_reason, episode.error, episode.error_status = end_reason, clean(error), status
 
         state.messages.insert(0, ChatMessageSystem(content=scenario.system_prompt()))
-        end_reason, output_error = "max_turns", None
+        end_reason, output_error = MAX_TURNS, None
         started = False
         try:
             await machine.start()
             started = True
             base = await baseline(machine, scenario)
             episode.checks_raw = {"baseline_error": base.get("errors")} if base.get("errors") else {}
-            submitted = False
             for turn in range(max_turns):
                 try:
                     output = await agent.generate(input=state.messages, tools=scenario.tool_infos())
@@ -138,7 +146,8 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
                     end_reason = flag
                     break
                 if not calls:
-                    end_reason = "no_tool_call"
+                    end_reason = FINISHED
+                    episode.final_message = clean(output.message.text)
                     break
 
                 # Phase 1: run every call on the real machine, record before any simulator call.
@@ -147,12 +156,7 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
                     step = _step(len(steps), turn, call)
                     args, arg_error = _args(_raw_arguments(call))
                     real = None
-                    if submitted:
-                        step.update(executed=False, result={"skipped": "after submit"})
-                    elif call.function == "submit":
-                        step.update(executed=True, result={"ok": True})
-                        submitted = True
-                    elif call.function == "send_message":
+                    if call.function == "send_message":
                         step.update(executed=True, result={"ok": arg_error is None, "error": arg_error})
                     elif call.function == "bash":
                         command = (args or {}).get("command")
@@ -178,9 +182,6 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
                         state.messages.append(ChatMessageTool(content=observation, tool_call_id=call.id,
                                                               function=call.function))
                     save()
-                if submitted:
-                    end_reason = "submitted"
-                    break
             save(end_reason, output_error.detail if output_error else None,
                  output_error.status if output_error else None)
             # The behaviour probe runs after the loop, on the real final state (any end reason).
@@ -237,8 +238,6 @@ def _safe_args(args) -> dict:
 
 
 async def _answer(observer, call, step, args, arg_error, real, notes: set[str]) -> str:
-    if call.function == "submit":
-        return SUBMITTED
     if call.function == "send_message":
         return f"Error: {arg_error}" if arg_error else MESSAGE_SENT
     if call.function != "bash":
