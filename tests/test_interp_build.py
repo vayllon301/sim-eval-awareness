@@ -8,11 +8,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from simtest.interp.build import build_all, choose_layer, slug
+from simtest.interp import directions as D
+from simtest.interp.build import METHOD, build_all, choose_layer, slug
 from simtest.interp.fake import FakeBackend
+from simtest.interp.reader import R, Episode, render
 from simtest.interp.vectors import VectorSet
 
 ROOT = Path(__file__).resolve().parents[1]
+DATA = ROOT / "explore" / "interp" / "data"
+EVAL_PAIRS, TRAIN_PAIRS = DATA / "eval_awareness_pairs.json", DATA / "train_awareness_pairs.json"
 WORDS = {"desperate": "please no time left begging last chance", "calm": "slow quiet still easy breath rest",
          "angry": "slam shout furious rage fists glare"}
 TOPICS = ["a bakery morning", "a mountain trail", "a train journey", "a school exam"]
@@ -60,6 +64,76 @@ def test_build_all_on_the_fake_backend(tmp_path):
     back = VectorSet.load(tmp_path / "v.safetensors")
     assert back.names == vs.names and np.allclose(back.get("calm", 3), vs.get("calm", 3))
     assert back.meta["eval"]["layers"]["2"]["heldout"]["accuracy"] == 1.0
+
+
+def test_train_pairs_mirror_the_eval_pairs():
+    ev, tr = json.loads(EVAL_PAIRS.read_text()), json.loads(TRAIN_PAIRS.read_text())
+    assert len(tr["pairs"]) == 16 and all(set(p) == {"real", "train"} for p in tr["pairs"])
+    assert [p["real"] for p in tr["pairs"]] == [p["real"] for p in ev["pairs"]]  # Hua et al.'s, verbatim
+    assert all(p["train"].endswith(":") for p in tr["pairs"])
+    assert tr["heldout"] == ev["heldout"] == [12, 13, 14, 15] and tr["heldout_rule"] == ev["heldout_rule"]
+    assert "generalisation" not in tr and "Aranguri" in tr["source"]
+    train = [p["train"] for p in tr["pairs"]]
+    assert len(set(train)) == 16 and all("train" in t for t in train)
+    assert not any(w in t.lower() for t in train for w in ("evaluat", "test", "benchmark", "assess"))
+
+
+def colon_acts(b, text, L):
+    rd = render(Episode(messages=[{"role": "user", "content": text}], tools=[], turns=[-1]), b.tokenizer)
+    pos = int(np.flatnonzero(rd.role == R["user"])[-1])
+    return b.activations(rd.ids.tolist(), [L])[L][pos].astype(np.float64)
+
+
+def mean_user_acts(b, text, L):
+    rd = render(Episode(messages=[{"role": "user", "content": text}], tools=[], turns=[-1]), b.tokenizer)
+    return b.activations(rd.ids.tolist(), [L])[L][rd.role == R["user"]].astype(np.float64).mean(0)
+
+
+def test_training_twin_is_built_and_validated():
+    b = FakeBackend()
+    ev, tr = json.loads(EVAL_PAIRS.read_text()), json.loads(TRAIN_PAIRS.read_text())
+    vs, rep = build_all(b, rows(), [2, 3], pairs=ev, pairs_path=str(EVAL_PAIRS), train_pairs=tr,
+                        train_pairs_path=str(TRAIN_PAIRS))
+    assert vs.names[-2:] == ["eval_awareness", "train_awareness"]
+    train_i = [i for i in range(16) if i not in tr["heldout"]]
+    for L in (2, 3):
+        real = np.stack([colon_acts(b, tr["pairs"][i]["real"], L) for i in train_i])
+        pos = np.stack([colon_acts(b, tr["pairs"][i]["train"], L) for i in train_i])
+        v = vs.get("train_awareness", L)
+        assert np.allclose(v, D.contrast_vector(pos, real), atol=1e-6)
+        ta = rep["train_awareness"][str(L)]
+        assert ta["loo_pairs"]["n"] == 16 and ta["heldout_pairs"]["n"] == 4 and 0 <= ta["heldout_auroc"] <= 1
+        assert np.isclose(ta["cosine_with_eval_awareness"], float(vs.get("eval_awareness", L) @ v), atol=1e-6)
+        gen = ev["generalisation"]["pairs"]  # the eval file's coding pairs: real vs evaluation, mean over user tokens
+        gr = [mean_user_acts(b, p["real"], L) @ v for p in gen]
+        gf = [mean_user_acts(b, p["eval"], L) @ v for p in gen]
+        assert ta["generalisation"]["n_pairs"] == 8
+        assert np.isclose(ta["generalisation"]["auroc"], D.auroc(gf, gr))
+        assert np.isclose(ta["generalisation"]["pair_accuracy"], np.mean(np.array(gf) > np.array(gr)))
+        assert str(L) in vs.meta["offset"]["train_awareness"]
+    assert vs.meta["vector_info"]["train_awareness"] == {"method": "train_awareness", "dataset": "train_pairs",
+                                                         "sign": "positive = training"}
+    d = vs.meta["datasets"]["train_pairs"]
+    assert d["path"] == str(TRAIN_PAIRS) and len(d["sha256"]) == 64 and d["n_pairs"] == 16 and d["heldout"] == [12, 13, 14, 15]
+    assert "train_awareness" in vs.meta["method"] == METHOD
+
+
+def test_eval_awareness_is_unchanged_by_the_twin():
+    b = FakeBackend()
+    ev, tr = json.loads(EVAL_PAIRS.read_text()), json.loads(TRAIN_PAIRS.read_text())
+    v1, r1 = build_all(b, rows(), [2, 3], pairs=ev)
+    v2, r2 = build_all(b, rows(), [2, 3], pairs=ev, train_pairs=tr)
+    assert r1["eval_awareness"] == r2["eval_awareness"] and "train_awareness" not in r1
+    assert v1.meta["offset"]["eval_awareness"] == v2.meta["offset"]["eval_awareness"]
+    train_i = [i for i in range(16) if i not in ev["heldout"]]
+    for L in (2, 3):
+        assert np.array_equal(v1.get("eval_awareness", L), v2.get("eval_awareness", L))
+        real = np.stack([colon_acts(b, ev["pairs"][i]["real"], L) for i in train_i])
+        pos = np.stack([colon_acts(b, ev["pairs"][i]["eval"], L) for i in train_i])
+        assert np.allclose(v1.get("eval_awareness", L), D.contrast_vector(pos, real), atol=1e-6)
+    alone, r3 = build_all(b, rows(), [2], train_pairs=tr)  # without the eval pairs: no cosine, no coding pairs
+    assert "eval_awareness" not in alone.names and set(r3["train_awareness"]["2"]) == {"loo_pairs", "heldout_pairs",
+                                                                                      "heldout_auroc"}
 
 
 def test_heldout_neutral_rows_do_not_change_what_is_fitted():
