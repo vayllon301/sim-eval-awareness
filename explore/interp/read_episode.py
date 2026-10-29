@@ -42,7 +42,9 @@ def main():
               f"unread outputs dropped {ep.meta['unread_outputs_dropped']}")
         print("  tokens by role: " + ", ".join(f"{k} {v}" for k, v in s["tokens_by_role"].items() if v))
         print("  prompt length per turn, rendered here vs reported by the server: "
-              + ", ".join(f"{c['rendered']}/{c['recorded']}" for c in r.meta["prompt_checks"]))
+              + ", ".join(f"{c['rendered']}/{c['recorded']}" for c in r.meta["prompt_checks"])
+              + (f"; not a prefix of the episode (no prompt-end reading): turns {r.meta['prompt_end_not_prefix']}"
+                 if r.meta["prompt_end_not_prefix"] else ""))
         for L in r.layers:
             print(f"  layer {L}, mean projection minus the neutral offset (agent's own tokens | tool outputs | system+user):")
             for name in r.names:
