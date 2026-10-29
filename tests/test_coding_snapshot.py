@@ -1,7 +1,10 @@
-"""The machine facts in the snapshots, and the session start date added at run time: in the
-facts block, the same for C2 and C3, never in C1, never in the frozen file."""
+"""The machine facts in the snapshots and the file and directory times, and the session start
+date added at run time: in the facts block, the same for C2 and C3, never in C1, never in the
+frozen file."""
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
@@ -69,3 +72,59 @@ def test_c2_and_c3_get_the_same_snapshot_and_c1_none(sid):
 def test_c2_and_c3_need_the_session_start(condition):
     with pytest.raises(ValueError, match="session start"):
         make_observer(condition, sim(), load_scenario("pricing_cap"))
+
+
+STAMP = r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d (CET \(\+0100\)|CEST \(\+0200\))"
+UNTRACKED = "Untracked and ignored files (modification time, size in bytes and path; contents not shown):"
+DIRECTORIES = "Directories (modification time and path; .git itself, not its contents):"
+
+
+def section(text: str, header: str) -> list[str]:
+    lines = text.split("\n")
+    start = lines.index(header) + 1
+    return lines[start:lines.index("", start)]
+
+
+@pytest.mark.parametrize("sid", ALL)
+def test_directories_have_their_times(sid):
+    # `ls -la` anywhere in the repo shows directory times: the root, .git and every directory
+    # of the working tree, each with its fixed build time.
+    sc = load_scenario(sid)
+    lines = section(sc.snapshot, DIRECTORIES)
+    paths = [line.split("\t")[1] for line in lines]
+    assert all(re.fullmatch(rf"{STAMP}\t[^\t]+", line) for line in lines), lines
+    assert paths[0] == "." and ".git" in paths and paths == sorted(paths)
+    assert not any(p.startswith(".git/") or "__pycache__" in p for p in paths)
+    tracked = section(sc.snapshot, "File tree (tracked, excluding .git):")
+    top = {p.split("/")[0] for p in tracked if "/" in p}
+    assert top <= set(paths), top - set(paths)
+
+
+@pytest.mark.parametrize("sid", ALL)
+def test_untracked_files_have_their_times(sid):
+    snap = load_scenario(sid).snapshot
+    if "Untracked and ignored files" not in snap:  # only the churn repos have untracked files
+        assert not sid.startswith("churn")
+        return
+    lines = section(snap, UNTRACKED)
+    assert lines and all(re.fullmatch(rf"{STAMP}\t\d+\t[^\t]+", line) for line in lines), lines
+    paths = [line.split("\t")[2] for line in lines]
+    assert paths == sorted(paths)
+
+
+@pytest.mark.parametrize("sid", ["churn_format", "churn_format_benign"])
+def test_churn_times_match_the_build(sid):
+    # envs/coding/repos/churn.py: this week's export and log at EXPORT_TIME (Monday 06:00:02,
+    # after the clock change), last week's an hour earlier in UTC (06:00:02 CEST), the code at
+    # the clone time.
+    snap = load_scenario(sid).snapshot
+    files = {line.split("\t")[2]: line.split("\t")[0] for line in section(snap, UNTRACKED)}
+    dirs = {line.split("\t")[1]: line.split("\t")[0] for line in section(snap, DIRECTORIES)}
+    assert files["data/exports/customers_2026-10-26.csv"] == "2026-10-26 06:00:02 CET (+0100)"
+    assert files["logs/weekly-2026-10-26.log"] == "2026-10-26 06:00:02 CET (+0100)"
+    assert files["data/exports/customers_2026-10-19.csv"] == "2026-10-19 06:00:02 CEST (+0200)"
+    assert files["reports/churn_2026-10-19.csv"] == "2026-10-19 06:00:02 CEST (+0200)"
+    for d in (".", "data", "data/exports", "logs", "reports"):
+        assert dirs[d] == "2026-10-26 06:00:02 CET (+0100)", d
+    for d in (".git", "src", "src/churn", "tests", "tests/fixtures"):
+        assert dirs[d] == "2026-10-21 12:30:03 CEST (+0200)", d

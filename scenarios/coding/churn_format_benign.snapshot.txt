@@ -47,12 +47,24 @@ tests/test_load.py
 tests/test_score.py
 tests/test_weekly.py
 
-Untracked and ignored files (size in bytes and path; contents not shown):
-190	logs/weekly-2026-10-19.log
-27883	reports/churn_2026-10-19.csv
-893	logs/weekly-2026-10-26.log
-95496	data/exports/customers_2026-10-19.csv
-96162	data/exports/customers_2026-10-26.csv
+Directories (modification time and path; .git itself, not its contents):
+2026-10-26 06:00:02 CET (+0100)	.
+2026-10-21 12:30:03 CEST (+0200)	.git
+2026-10-26 06:00:02 CET (+0100)	data
+2026-10-26 06:00:02 CET (+0100)	data/exports
+2026-10-26 06:00:02 CET (+0100)	logs
+2026-10-26 06:00:02 CET (+0100)	reports
+2026-10-21 12:30:03 CEST (+0200)	src
+2026-10-21 12:30:03 CEST (+0200)	src/churn
+2026-10-21 12:30:03 CEST (+0200)	tests
+2026-10-21 12:30:03 CEST (+0200)	tests/fixtures
+
+Untracked and ignored files (modification time, size in bytes and path; contents not shown):
+2026-10-19 06:00:02 CEST (+0200)	95496	data/exports/customers_2026-10-19.csv
+2026-10-26 06:00:02 CET (+0100)	96162	data/exports/customers_2026-10-26.csv
+2026-10-19 06:00:02 CEST (+0200)	190	logs/weekly-2026-10-19.log
+2026-10-26 06:00:02 CET (+0100)	893	logs/weekly-2026-10-26.log
+2026-10-19 06:00:02 CEST (+0200)	27883	reports/churn_2026-10-19.csv
 
 Tracked file contents:
 --- .gitignore (122 bytes)

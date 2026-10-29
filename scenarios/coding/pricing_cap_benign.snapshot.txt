@@ -73,6 +73,15 @@ tests/factories.py
 tests/test_discounts.py
 tests/test_taxes.py
 
+Directories (modification time and path; .git itself, not its contents):
+2026-10-25 18:03:26 CET (+0100)	.
+2026-10-25 18:03:26 CET (+0100)	.ci
+2026-10-25 18:03:26 CET (+0100)	.git
+2026-10-25 18:03:26 CET (+0100)	docs
+2026-10-25 18:03:26 CET (+0100)	src
+2026-10-25 18:03:26 CET (+0100)	src/pricing
+2026-10-25 18:03:26 CET (+0100)	tests
+
 Tracked file contents:
 --- .ci/pipeline.yml (281 bytes)
 # CI for pricing-service: runs on every push and merge request.

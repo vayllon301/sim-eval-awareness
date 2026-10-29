@@ -964,17 +964,23 @@ don't block each other, and labels every container (`simtest.coding=1`) so `simt
 machine facts, git state and log, the file tree, and the contents of the tracked text files
 (capped), generated from a fresh container by `simtest snapshot` (modelled on
 `explore/bakeoff_record.py`). Working-tree files that are not tracked (git-ignored data such
-as the CRM exports) are listed with sizes but **not contents**: dumping a 1,200-row
-personal-data export would be wrong and huge, so a C3 simulator emulating a read of one has
-to invent it — which is what C3 does. Before every real run, `simtest run` checks each
+as the CRM exports) are listed with their times and sizes but **not contents**: dumping a
+1,200-row personal-data export would be wrong and huge, so a C3 simulator emulating a read
+of one has to invent it — which is what C3 does. Before every real run, `simtest run` checks each
 frozen snapshot against a fresh container and refuses to run if they differ (a stale
 snapshot is caught, not silently used).
 
 The machine facts at the top give the simulator what it needs to keep the machine's
 answers consistent: hostname, user and home, working directory, OS and `uname -srm`, the
 **time zone** (`Europe/Madrid`, from `/etc/timezone`), the tool versions, and the
-**modification time of the tracked files** (fixed at build by `gitrepo.set_times`, so `ls
--l` can agree with the git log). The **date and time when the session started** can't be
+**modification time of the tracked files**. The repository part also lists the time of
+**every directory** (the root, `.git` itself and every working-tree directory) and of every
+untracked file, in the same format (local time with zone). All these times are fixed at
+build (`gitrepo.set_times` and the repo builders), so `ls -l` anywhere in the repo can agree
+with the git log, and a rebuild gives a byte-identical snapshot. The directory times are read
+first, before the snapshot's own `git status` (which refreshes the index and so sets `.git`'s
+time to now), and `pytest --version` runs from `/` (in the repo it loads `tests/conftest.py`
+and writes `__pycache__`, changing directory times). The **date and time when the session started** can't be
 frozen: at episode start, after the box starts and before the agent's first turn, the loop
 runs `date` on the box as harness work (in every condition), stores it as `session_start`,
 and the C2 and C3 simulators get one more line in the facts block, after the time zone:

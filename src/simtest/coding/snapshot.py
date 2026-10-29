@@ -3,13 +3,15 @@
 Modelled on explore/bakeoff_record.py: machine facts, git state and log, the file tree,
 and the contents of the tracked text files, read from a fresh container of the scenario's
 image. Also lists working-tree files that are not tracked (untracked or git-ignored, such
-as the CRM exports) with their sizes but not their contents: they are part of the baseline
-the real box has, but dumping a 1,200-row personal-data export would be wrong and huge, so
-a C3 simulator emulating a read of one has to invent it — which is what C3 does.
+as the CRM exports) with their times and sizes but not their contents: they are part of the
+baseline the real box has, but dumping a 1,200-row personal-data export would be wrong and
+huge, so a C3 simulator emulating a read of one has to invent it — which is what C3 does.
 
-The machine facts include the time zone and the modification time of the tracked files
-(fixed at build, gitrepo.set_times), so a simulator can make `date`, `ls -l` and the git log
-agree. The date and time when the session started can't be frozen: the episode reads `date`
+The machine facts include the time zone and the modification time of the tracked files, and
+the snapshot lists every directory's time (the root, .git and the working tree's) and every
+untracked file's. All are fixed at build (gitrepo.set_times, the repo builders), so a rebuild
+gives byte-identical output and a simulator can make `date`, `ls -l` and the git log agree.
+The date and time when the session started can't be frozen: the episode reads `date`
 on the real box at the start and `session_snapshot` adds it to the facts block of the text
 the C2 and C3 simulators get. The frozen file, its fingerprint and `check` never include it.
 
@@ -28,9 +30,15 @@ MAX_FILE_BYTES = 40_000      # per tracked file in the snapshot
 MAX_TRACKED = 80             # tracked files whose contents are included
 TIME_ZONE = "- Time zone: "
 SESSION_START = "- Date and time when the session started: {date}"
-# Each distinct modification time of the tracked files, in the box's time zone.
-FILE_TIMES = ("git -c safe.directory='*' ls-files -z | xargs -0 stat -c %Y | sort -un | "
-              "while read t; do date -d \"@$t\" '+%Y-%m-%d %H:%M:%S %Z (%z)'; done")
+STAMP = "date -d \"@${t%.*}\" '+%Y-%m-%d %H:%M:%S %Z (%z)'"   # an epoch $t in the box's time zone
+# Each distinct modification time of the tracked files.
+FILE_TIMES = f"git -c safe.directory='*' ls-files -z | xargs -0 stat -c %Y | sort -un | while read t; do {STAMP}; done"
+# Build artefacts, never listed (they don't exist in the image; a run could make them).
+PRUNE = r"\( -name __pycache__ -o -name .pytest_cache -o -name '*.pyc' \) -prune -o"
+# The time and path of every directory: the root, .git itself (not its contents) and the
+# working tree's, sorted by path.
+DIR_TIMES = (f"find . {PRUNE} -path ./.git -printf '%T@ %p\\n' -prune -o -type d -printf '%T@ %p\\n' | "
+             f"sed 's| \\./| |' | LC_ALL=C sort -k2 | while read t p; do printf '%s\\t%s\\n' \"$({STAMP})\" \"$p\"; done")
 
 
 async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
@@ -50,7 +58,9 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         f"- OS: {os_name}, {await sh('uname -srm')}; no network access",
         f"{TIME_ZONE}{await sh('cat /etc/timezone')}",
         f"- {await sh('python3 --version')} at {await sh('command -v python3')}; "
-        f"pytest {await sh('pytest --version 2>/dev/null | head -1')}; {await sh('git --version')}",
+        # From /, not the repo: there pytest loads tests/conftest.py and writes __pycache__,
+        # which would change directory times the real box still has at the agent's start.
+        f"pytest {await sh('cd / && pytest --version 2>/dev/null | head -1')}; {await sh('git --version')}",
         files,
         "",
     ]
@@ -78,7 +88,14 @@ def session_snapshot(snapshot: str, started: str) -> str:
     raise ValueError("the snapshot has no time zone line in its facts block; regenerate it (simtest snapshot)")
 
 
-async def _repo(m: DockerMachine, scenario: CodingScenario) -> list[str]:
+async def _directories(m: DockerMachine, scenario: CodingScenario) -> str:
+    """Every directory's time, read first: before anything of ours runs in the repo (`git
+    status` refreshes the index, which sets .git's time to now)."""
+    res = await m.exec(DIR_TIMES, user=scenario.machine["user"], workdir=scenario.workdir)
+    return res.output.rstrip("\n")
+
+
+async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[str]:
     repo, user = scenario.workdir, scenario.machine["user"]
 
     async def sh(cmd: str) -> str:
@@ -99,16 +116,21 @@ async def _repo(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         "",
         "File tree (tracked, excluding .git):",
         await sh("ls-files"),
+        "",
+        "Directories (modification time and path; .git itself, not its contents):",
+        dirs,
     ]
     if untracked:
-        # Size and path only (no mtimes/permissions), with build artefacts pruned, so the
-        # snapshot is reproducible: a rebuild gives byte-identical output. This reveals that
-        # the untracked data (e.g. the CRM exports) exists, without its contents.
-        prune = r"\( -name __pycache__ -o -name .pytest_cache -o -name '*.pyc' \) -prune -o"
-        listing = await sh(f"find {' '.join(repr(p) for p in untracked)} {prune} -type f "
-                           "-printf '%s\\t%p\\n' 2>/dev/null | sort")
+        # Time, size and path (no permissions), with build artefacts pruned. The times are
+        # fixed at build, so the snapshot is reproducible: a rebuild gives byte-identical
+        # output. This reveals that the untracked data (e.g. the CRM exports) exists, without
+        # its contents.
+        listing = await sh(f"find {' '.join(repr(p) for p in untracked)} {PRUNE} -type f "
+                           "-printf '%T@ %s %p\\n' 2>/dev/null | LC_ALL=C sort -k3 | "
+                           f"while read t s p; do printf '%s\\t%s\\t%s\\n' \"$({STAMP})\" \"$s\" \"$p\"; done")
         if listing.strip():
-            parts += ["", "Untracked and ignored files (size in bytes and path; contents not shown):", listing]
+            parts += ["", "Untracked and ignored files (modification time, size in bytes and path; contents not shown):",
+                      listing]
     parts += ["", "Tracked file contents:"]
     for path in tracked[:MAX_TRACKED]:
         size = await sh(f"stat -c %s '{path}'")
@@ -128,7 +150,8 @@ async def _generate(scenario: CodingScenario, image: str | None = None) -> str:
     m.info["started"] = True
     try:
         await anyio.sleep(1.0)  # let init set the hostname and hosts files
-        parts = await _facts(m, scenario) + await _repo(m, scenario)
+        dirs = await _directories(m, scenario)
+        parts = await _facts(m, scenario) + await _repo(m, scenario, dirs)
     finally:
         await m._docker("rm", "-f", m.name, timeout=60)
     return "\n".join(parts) + "\n"

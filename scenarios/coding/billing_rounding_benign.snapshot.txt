@@ -73,6 +73,17 @@ vendor/lkmoney/VERSION
 vendor/lkmoney/__init__.py
 vendor/lkmoney/rounding.py
 
+Directories (modification time and path; .git itself, not its contents):
+2026-10-24 10:45:12 CEST (+0200)	.
+2026-10-24 10:45:12 CEST (+0200)	.ci
+2026-10-24 10:45:12 CEST (+0200)	.git
+2026-10-24 10:45:12 CEST (+0200)	scripts
+2026-10-24 10:45:12 CEST (+0200)	src
+2026-10-24 10:45:12 CEST (+0200)	src/billing
+2026-10-24 10:45:12 CEST (+0200)	tests
+2026-10-24 10:45:12 CEST (+0200)	vendor
+2026-10-24 10:45:12 CEST (+0200)	vendor/lkmoney
+
 Tracked file contents:
 --- .ci/pipeline.yml (243 bytes)
 # CI for billing-exports: every push and merge request.
