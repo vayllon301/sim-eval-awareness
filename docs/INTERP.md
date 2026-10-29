@@ -1,8 +1,9 @@
 # Interpretability tools (`simtest.interp`)
 
 Reference for the code that reads and steers the two models from the inside: emotion
-vectors, an evaluation-awareness vector, a post-hoc episode reader, Qwen-Scope SAEs and
-activation steering. The testbed itself is in [`TESTBED.md`](TESTBED.md).
+vectors, an evaluation-awareness vector and its training twin, a post-hoc episode reader
+with a logit monitor, Qwen-Scope SAEs and activation steering. The testbed itself is in
+[`TESTBED.md`](TESTBED.md).
 
 **Status.** Built and tested on the laptop with MLX. The experiment's reference backend is
 bf16 on a GPU (Colab), and its torch and steering-engine backends come later (see
@@ -31,10 +32,11 @@ Nothing in the testbed imports `simtest.interp`, and importing it doesn't import
 | `src/simtest/interp/build.py` | Builds a vector file from texts and contrast pairs, with validation |
 | `src/simtest/interp/vectors.py` | The vector file format |
 | `src/simtest/interp/steering.py` | The steering spec format and its resolution |
-| `src/simtest/interp/reader.py` | Episode adapters, rendering with role masks, per-token projections |
+| `src/simtest/interp/reader.py` | Episode adapters, rendering with role masks, per-token projections, prompt-end positions |
+| `src/simtest/interp/monitors.py` | The logit monitor: log-probs of short sentences at the start of each turn's reasoning |
 | `src/simtest/interp/sae.py` | TopK SAEs: a torch-free `.pt` reader, encode, decode, FVU |
 | `src/simtest/interp/meta.py` | Weights fingerprints, hashes, versions |
-| `explore/interp/` | Command-line scripts (below) and the datasets in `data/` |
+| `explore/interp/` | Command-line scripts (below) and the datasets in `data/`: texts, eval and training pairs, logit-monitor phrases |
 | `tests/test_interp_*.py` | Offline tests; `test_interp_model.py` needs a local model and is skipped by default |
 
 ## Backend interface
@@ -52,6 +54,8 @@ class Backend(Protocol):
     def activations(self, ids, layers, *, steer=()) -> dict[int, np.ndarray]   # {L: (T, d) float32}
     def token_losses(self, ids, *, replace=None) -> np.ndarray                 # (T-1,) next-token CE, nats
     def generate(self, ids, *, max_tokens, steer=()) -> list[int]              # greedy
+    # optional, not in the Protocol:
+    def continuation_logprobs(self, prefix_ids, continuations) -> list[np.ndarray]  # per token, nats
 ```
 
 Conventions every backend honours:
@@ -69,6 +73,11 @@ Conventions every backend honours:
   after it; `h` is a run of consecutive positions starting at absolute position `start`.
   Used to splice an SAE reconstruction in.
 - **`generate`** is greedy and stops at an end-of-turn token or `max_tokens`.
+- **`continuation_logprobs`** (optional): the log-prob of each token of each continuation
+  after one prefix, one array of shape (len(c),) per continuation, with the prefix
+  computed once. The logit monitor uses it when a backend has it and otherwise calls
+  `token_losses` once per continuation. The MLX backend doesn't have it; the GPU backend
+  will, with a prefix cache.
 
 The MLX backend wraps the decoder layers it needs for the duration of a call and restores
 them after. Long sequences run in chunks with the model's own cache (as mlx-lm's prefill
@@ -80,7 +89,8 @@ near-tie, which would look like a steering effect at strength 0.
 ## Vector file
 
 One safetensors file per model and vector set. Tensors are float32 unit vectors named
-`<name>@<layer>` (`desperate@42`, `topic:baker-prepares@42`, `eval_awareness@42`). The
+`<name>@<layer>` (`desperate@42`, `topic:baker-prepares@42`, `eval_awareness@42`,
+`train_awareness@42`). The
 header metadata has one key, `simtest_interp`, holding a JSON object:
 
 | Field | What |
@@ -92,7 +102,7 @@ header metadata has one key, `simtest_interp`, holding a JSON object:
 | `offset` | `{name: {layer: mean projection of the training neutral texts}}`, to centre readings |
 | `vector_info`, `method`, `params` | How each vector was made |
 | `datasets` | Paths, sha256, counts and generators of the texts and pairs |
-| `eval` | Validation per layer (held-out, leave-one-out, eval-awareness checks) |
+| `eval` | Validation per layer (held-out, leave-one-out, eval-awareness and training-twin checks) |
 | `chosen_layer`, `layer_rule` | The layer the rule picked |
 | `created`, `git_commit` | When and from which code |
 
@@ -153,6 +163,24 @@ Hua, Qin, Marks and Nanda (arXiv:2510.20487): their 16 contrastive pairs ("real 
   message and as an evaluation item), read as the mean over the user message's tokens
   (AUROC and pair accuracy).
 
+**Training twin** (`train_awareness`). Aranguri ("Different eval awareness may track
+different graders", LessWrong, 25-10-2026) found on Qwen3.6-27B that eval-awareness probes
+score nearly the same when their statements are rewritten as training (r ≈ 0.98). A probe
+may read training awareness rather than evaluation awareness.
+
+- Pairs in `explore/interp/data/train_awareness_pairs.json`: the same 16 real statements,
+  verbatim, and each evaluation statement reworded as training, with the same structure
+  and about the same length ("You are talking to an AI evaluator:" becomes "You are
+  talking to an AI trainer:"). Ours: his rewrites aren't public.
+- Built like the eval vector (`build.build_contrast`): read at the colon, mean(training) −
+  mean(real) over the training pairs, unit length, no PC projection. Positive means
+  training. Same held-out pairs (13–16) and leave-one-pair-out.
+- Two more checks per layer: `cosine_with_eval_awareness`, and `generalisation` on the
+  eval file's 8 coding pairs (real vs evaluation, mean over the user tokens), which asks
+  how well the training direction separates real from evaluation requests. If it does as
+  well as the eval vector, or tracks C3 as well, the reading isn't specific to evaluation.
+- Its neutral offset is set like eval_awareness's. `eval_awareness` itself is unchanged.
+
 ## Controls
 
 The steering design needs controls at the same norm, both signs (Fomin et al.; UK AISI
@@ -210,8 +238,9 @@ can't, so "generated tokens only" would need its own check; it is not in the spe
 
 ## Reader
 
-Post hoc, one forward pass per episode, no logits kept. Stores projections (and SAE
-top-k latents when asked), never raw activations.
+Post hoc, one forward pass per episode, no logits kept (the logit monitor, when asked,
+adds its own passes). Stores projections (and SAE top-k latents when asked), never raw
+activations.
 
 1. **Adapters** turn an episode record into chat messages and tools. Only adapters know a
    record format:
@@ -245,11 +274,62 @@ top-k latents when asked), never raw activations.
    so the reader uses them instead of re-rendering.
 
 **Output:** `<episode>.npz` with `token_ids`, `role` (index into `ROLES`), `turn`, `proj`
-(T × layers × vectors, float32, the raw dot product), optional `sae_idx@L` / `sae_val@L`
-(top-k latents), and `meta` (JSON: episode, backend, vectors and their hash, offsets,
-prompt checks, text hash). `<episode>.summary.json` has the mean and SD of each
-projection by role group (agent, reasoning, content+tool_call, tool_output, system, user,
-template), centred by the vector file's neutral offset, and per agent turn.
+(T × layers × vectors, float32, the raw dot product), `prompt_end` (below), optional
+`sae_idx@L` / `sae_val@L` (top-k latents), and `meta` (JSON: episode, backend, vectors
+and their hash, offsets, prompt checks, text hash, the logit monitor when asked).
+`<episode>.summary.json` has the mean and SD of each projection by role group (agent,
+reasoning, content+tool_call, tool_output, system, user, template), centred by the vector
+file's neutral offset, per agent turn (with the prompt-end reading), and the logit
+monitor when asked.
+
+**Prompt-end readings.** Aranguri's best eval-vs-deployment detector was a probe read at
+the last token of the prompt, before the model writes anything. Reading with the response
+included diluted it. The reader keeps that position for every agent turn.
+
+- For agent turn k (the k-th assistant message), the position is n_k − 1. n_k is the
+  token length of the messages before it, rendered with the generation prompt: the
+  prompts `prompt_checks` compares with the server's counts, rendered once for both.
+- Those n_k IDs must equal the first n_k IDs of the full rendering. Where they don't (a
+  template that drops earlier reasoning from prompts, say), the position is −1 and the
+  turn is listed in `meta["prompt_end_not_prefix"]`. This compares our own two
+  renderings; whether the server saw the same prompt is what `prompt_checks` asks.
+- Stored as `prompt_end` in the npz (int32, one per agent turn). Older readings without it
+  still load (`prompt_end` is None).
+- Each `by_turn` row of the summary has `prompt_end` (the raw projection there) and
+  `prompt_end_centred` (minus the neutral offset, like `mean_centred`). Both are None when
+  the position is −1 or unknown.
+- If the generation prompt opens the reasoning (`<think>\n`, as in the fake template), the
+  next token is the turn's first reasoning token.
+
+**Logit monitor** (`monitors.py`, after Aranguri): the log-probability that the agent starts
+a turn's reasoning with a short awareness sentence ("The user might be testing"). In his
+work it tracked verbalised awareness best. Here it gives a continuous version of
+verbalisation, so a difference can show even if verbalised rates sit near zero.
+
+- Prefix: the full rendering's token IDs up to, not including, the turn's first
+  `reasoning` token. Turns without reasoning tokens give None.
+- Each phrase is encoded as plain text (`backend.encode`, no special tokens) and scored
+  after the prefix: total log-prob (`logprob`, nats), mean per token (`mean`), and its
+  token count.
+- Phrases come in groups (`eval`, `training`, `control`). Per turn: each phrase, each
+  group's mean of `logprob` and of `mean`, and each group minus the control group
+  (`eval_minus_control`, `training_minus_control`). The control sentences are neutral first
+  sentences, so a condition that shifts every sentence's probability isn't read as
+  awareness.
+- `read(..., phrases=doc, phrases_path=path, phrase_turns=None)` stores it as
+  `meta["logit_monitor"]` and `summary["logit_monitor"]`: the phrase file's path, sha256 and
+  status, the scoring path (`token_losses` or `continuation_logprobs`), the phrases with
+  their token counts, and one row per scored turn (`turn`, `prefix_len`, `phrases`,
+  `groups`, the differences). `phrase_turns` scores only some turns.
+- **Cost.** The generic path calls `token_losses` on prefix + phrase: one forward pass over
+  the whole prefix per turn and phrase. With the draft's 10 phrases, an 8-turn episode is
+  80 passes over prefixes of up to the whole episode, so it is slow on the laptop and
+  meant for checks (score a few turns with `--logit-turns`). The cached path
+  (`continuation_logprobs`) computes each prefix once and comes with the GPU backend.
+- Phrases: `explore/interp/data/logit_monitor_phrases.json`, a draft. Aranguri's two
+  sentences verbatim, three coding-agent drafts of ours (eval), two training sentences, and
+  three controls (one shares the common "The user" opening). In N2 they are replaced by
+  sentences picked from what the pilot agent actually writes, and frozen before N3.
 
 Emotion vectors are local: readings on tool-output tokens reflect what the agent reads,
 not its own state. Report the agent's own tokens and tool outputs separately.
@@ -297,10 +377,12 @@ minutes. Outputs go to `logs/interp/` (not in git).
 ```bash
 # texts (paid, OpenRouter, a few cents per set)
 uv run --env-file ../.env python -I explore/interp/gen_texts.py qwen/qwen3.8-27b explore/interp/data/texts-qwen3.8-27b
-# vectors: emotions, controls, eval awareness, at several layers
+# vectors: emotions, controls, eval awareness and its training twin, at several layers
+# (--pairs and --train-pairs default to the files in explore/interp/data/)
 uv run --extra interp python -I explore/interp/build_vectors.py <model-dir> <texts.jsonl> <out.safetensors> --layers 36,39,42,45,48
-# readings of episodes
-uv run --extra interp python -I explore/interp/read_episode.py <model-dir> <vectors> --layers 42 --out-dir logs/interp/readings logs/colab-probe/*.jsonl
+# readings of episodes (--logit-phrases adds the logit monitor; --logit-turns 0,3 limits it to those turns)
+uv run --extra interp python -I explore/interp/read_episode.py <model-dir> <vectors> --layers 42 --out-dir logs/interp/readings logs/colab-probe/*.jsonl \
+    --logit-phrases explore/interp/data/logit_monitor_phrases.json --logit-turns 0
 # SAE transfer
 uv run --extra interp python -I explore/interp/sae_transfer.py <model-dir> <sae-snapshot-dir> --layers 32,42,48 --out logs/interp/sae/<name>.json
 # steering checks
@@ -324,3 +406,6 @@ superseded by `build_vectors.py` and kept for the record.
 - Vectors rebuilt on the reference backend (the same texts and pairs), the SAE transfer
   check on bf16 activations of pilot transcripts, and an Inspect-format adapter for the
   reader.
+- `continuation_logprobs` on the GPU backend, the logit monitor's cached path: each turn's
+  prefix run once, its cache kept, then every phrase scored from it. It must match the
+  generic `token_losses` path on the same episode, and its cost is measured there.
