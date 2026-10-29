@@ -15,7 +15,9 @@ vectors, a role for every token. Reference: docs/INTERP.md, "Reader".
    the residual stream onto each unit vector at each chosen layer, and optionally the
    top-k latents of an SAE. Raw activations are never stored. It also stores, per agent
    turn, the position of the last token of the prompt the server saw for that turn
-   (`prompt_end`), where a reading before the agent writes anything is taken.
+   (`prompt_end`), where a reading before the agent writes anything is taken. Given
+   phrases, it adds the logit monitor (monitors.py): their log-probability at the start
+   of each turn's reasoning.
 
 Roles: template (special tokens and template text), system (the system turn: the
 template's tools block, the reasoning-effort sentence, the system prompt), user,
@@ -359,6 +361,8 @@ def summarize(r: Reading) -> dict:
     offsets = r.meta.get("offsets") or {}
     out: dict[str, Any] = {"n_tokens": int(len(r.role)),
                            "tokens_by_role": {k: int((r.role == R[k]).sum()) for k in ROLES}, "by_group": {}, "by_turn": {}}
+    if "logit_monitor" in r.meta:
+        out["logit_monitor"] = r.meta["logit_monitor"]
     turns = sorted(int(t) for t in set(r.turn.tolist()) if t >= 0)
     for li, L in enumerate(r.layers):
         for vi, name in enumerate(r.names):
@@ -389,9 +393,12 @@ def summarize(r: Reading) -> dict:
 
 def read(backend: Backend, ep: Episode, vectors: VectorSet, layers: Sequence[int], *,
          names: Sequence[str] | None = None, saes: Mapping[int, Any] | None = None,
-         allow_other_model: bool = False, vectors_path: str | None = None) -> Reading:
+         allow_other_model: bool = False, vectors_path: str | None = None, phrases: dict | None = None,
+         phrases_path: str | None = None, phrase_turns: Sequence[int] | None = None) -> Reading:
     """One forward pass over the rendered episode; projections onto `names` (default: all
-    vectors in the file) at `layers`, and top-k latents for each layer in `saes`."""
+    vectors in the file) at `layers`, top-k latents for each layer in `saes`, and each
+    turn's prompt end. With `phrases` (a phrase file: {status, source, groups}), the logit
+    monitor on every agent turn with reasoning, or on `phrase_turns`."""
     want = vectors.meta.get("model", {}).get("fingerprint")
     have = backend.info.get("fingerprint")
     if want != have and not allow_other_model:
@@ -421,5 +428,11 @@ def read(backend: Backend, ep: Episode, vectors: VectorSet, layers: Sequence[int
             "prompt_end_not_prefix": [k for k, e in enumerate(ends.tolist()) if e < 0],
             "sae": {str(L): getattr(s, "info", {}) for L, s in (saes or {}).items()},
             "created": now(), "git_commit": git_commit()}
+    if phrases is not None:
+        from .monitors import logit_monitor  # monitors imports this module
+
+        meta["logit_monitor"] = {"phrases_path": phrases_path, "status": phrases.get("status"),
+                                 "phrases_sha256": file_sha256(phrases_path) if phrases_path else None,
+                                 **logit_monitor(backend, rd.ids, rd.role, rd.turn, phrases["groups"], turns=phrase_turns)}
     return Reading(token_ids=rd.ids, role=rd.role, turn=rd.turn, layers=layers, names=names, proj=proj, sae=sae_out,
                    meta=meta, prompt_end=ends)
