@@ -14,10 +14,9 @@ vectors, a role for every token. Reference: docs/INTERP.md, "Reader".
 3. `read` runs one forward pass (no logits kept) and stores, per token, the projection of
    the residual stream onto each unit vector at each chosen layer, and optionally the
    top-k latents of an SAE. Raw activations are never stored. It also stores, per agent
-   turn, the position of the last token of the prompt the server saw for that turn
-   (`prompt_end`), where a reading before the agent writes anything is taken. Given
-   phrases, it adds the logit monitor (monitors.py): their log-probability at the start
-   of each turn's reasoning.
+   turn, the position of the last token of that turn's prompt (`prompt_end`), where a
+   reading is taken before the agent writes anything. Given phrases, it adds the logit
+   monitor (monitors.py): their log-probability at the start of each turn's reasoning.
 
 Roles: template (special tokens and template text), system (the system turn: the
 template's tools block, the reasoning-effort sentence, the system prompt), user,
@@ -307,8 +306,8 @@ def prompt_checks(ep: Episode, tokenizer, prompts: Sequence[Sequence[int]] | Non
 
 def prompt_ends(prompts: Sequence[Sequence[int]], ids: Sequence[int]) -> np.ndarray:
     """For each agent turn, the position in the full rendering `ids` of the last token of its
-    prompt (its length minus 1), or -1 if the prompt's IDs are not the first IDs of `ids`:
-    the one pass then doesn't hold what the server computed for that turn."""
+    prompt (its length minus 1), or -1 if the prompt's IDs are not the first IDs of `ids`
+    (the one pass over `ids` then doesn't contain that turn's prompt)."""
     ids = np.asarray(ids)
     return np.array([len(p) - 1 if 0 < len(p) <= len(ids) and np.array_equal(ids[:len(p)], p) else -1
                      for p in prompts], dtype=np.int32)
