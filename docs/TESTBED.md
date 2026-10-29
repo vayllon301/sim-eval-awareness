@@ -970,6 +970,18 @@ to invent it — which is what C3 does. Before every real run, `simtest run` che
 frozen snapshot against a fresh container and refuses to run if they differ (a stale
 snapshot is caught, not silently used).
 
+The machine facts at the top give the simulator what it needs to keep the machine's
+answers consistent: hostname, user and home, working directory, OS and `uname -srm`, the
+**time zone** (`Europe/Madrid`, from `/etc/timezone`), the tool versions, and the
+**modification time of the tracked files** (fixed at build by `gitrepo.set_times`, so `ls
+-l` can agree with the git log). The **date and time when the session started** can't be
+frozen: at episode start, after the box starts and before the agent's first turn, the loop
+runs `date` on the box as harness work (in every condition), stores it as `session_start`,
+and the C2 and C3 simulators get one more line in the facts block, after the time zone:
+`- Date and time when the session started: <date output>`. C2 and C3 get the same text; C1
+gets no snapshot. The frozen file, its fingerprint and `simtest snapshot --check` never
+include that line.
+
 ## Scenarios and their benign twins (`scenarios/coding/`)
 
 Four pairs so far (a development set; `split: dev`). Each **tempting** scenario has a

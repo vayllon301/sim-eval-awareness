@@ -13,7 +13,7 @@ import simtest.coding.episode as episode
 from simtest.coding import machine as machine_mod
 from simtest.coding.scorer import SCORER_NAME
 from simtest.coding.task import coding
-from coding_helpers import FakeMachine, ScriptedAgent, ScriptedSimulator, mock
+from coding_helpers import FAKE_DATE, FakeMachine, ScriptedAgent, ScriptedSimulator, mock
 
 
 @pytest.fixture
@@ -144,6 +144,52 @@ def test_c3_uses_the_simulator_not_the_real_output(patched, tmp_path):
     assert steps[0]["observation"] == "INVENTED"           # the agent saw the simulator's output
     assert steps[0]["result"]["output"] == "REAL pytest"   # the real output is still recorded (shadow)
     assert s.store["CodingEpisode:simulator_calls"][0]["raw"] == "<think>t</think>\nINVENTED"
+
+
+class Recording(ScriptedSimulator):
+    """A scripted simulator that keeps every input it was given."""
+
+    def __init__(self, outputs):
+        super().__init__(outputs)
+        self.inputs = []
+
+    def __call__(self, input, tools, tool_choice, config):
+        self.inputs.append(input)
+        return super().__call__(input, tools, tool_choice, config)
+
+
+@pytest.mark.parametrize("condition", ["C0", "C1", "C2", "C3"])
+def test_session_start_is_read_on_the_box_before_the_first_turn(patched, tmp_path, condition):
+    # Harness work in every condition: `date` on the real box after it starts and before the
+    # agent's first command, recorded in the store. Only C2 and C3 show it to the simulator,
+    # in the snapshot's facts block.
+    patched["run_outputs"] = [("REAL", 0)]
+    agent = ScriptedAgent([[("bash", {"command": "ls"})]], done="x")
+    sim = Recording(["OUT"]) if condition != "C0" else None
+    s, score = run(agent, patched, condition=condition, sim=sim, tmp=tmp_path)
+    assert s.store["CodingEpisode:session_start"] == FAKE_DATE
+    events = patched["machine"].events
+    assert events.index("start") < events.index("exec:date") < events.index("run:ls")
+    assert patched["machine"].commands == ["ls"]  # never an agent command
+    line = f"- Date and time when the session started: {FAKE_DATE}"
+    if sim is not None:
+        system = sim.inputs[0][0].text
+        assert (line in system) == (condition in ("C2", "C3"))
+        if condition in ("C2", "C3"):
+            assert system.index("- Time zone: ") < system.index(line) < system.index("\n\nRepository ")
+
+
+def test_unreadable_date_is_a_machine_error(patched, tmp_path, monkeypatch):
+    def factory(scenario, deadline):
+        patched["machine"] = FakeMachine(date="")
+        return patched["machine"]
+
+    monkeypatch.setitem(machine_mod.MACHINES, "fake", factory)
+    logs = eval(coding(condition="C0", scenarios=["pricing_cap"], max_turns=2, machine="fake"),
+                model=mock(ScriptedAgent([], done="x"), "mockllm/agent"), limit=1, display="none",
+                log_dir=str(tmp_path))
+    s = logs[0].samples[0]
+    assert s.error is not None and "date" in s.error.message
 
 
 def test_simulator_truncation_flags_the_episode(patched, tmp_path):

@@ -16,7 +16,7 @@ from simtest.coding.scenario import load_scenario
 from simtest.coding.scorer import SCORER_NAME
 from simtest.coding.snapshot import check as check_snapshot
 from simtest.coding.task import coding
-from coding_helpers import ScriptedAgent, docker_available, mock
+from coding_helpers import ScriptedAgent, ScriptedSimulator, docker_available, mock
 
 pytestmark = [pytest.mark.docker,
               pytest.mark.skipif(not docker_available(), reason="Docker not available")]
@@ -201,3 +201,31 @@ def test_warning_text_does_not_decide_test_outcome(tmp_path):
     raw = s.store["CodingEpisode:checks_raw"]["original"]
     assert "skipped" in raw["output"] and raw["exit_code"] == 0
     assert md["metrics"]["tests_pass_original"] is True
+
+
+def test_session_start_matches_the_box_date_and_reaches_the_c3_simulator(tmp_path):
+    # The harness reads `date` on the box (docker exec) at the start; the agent's own `date`
+    # (over SSH, a login shell) must print the same format and zone, and the C3 simulator gets
+    # the start time in the snapshot's facts block.
+    import re
+
+    class Recording(ScriptedSimulator):
+        inputs: list = []
+
+        def __call__(self, input, tools, tool_choice, config):
+            self.inputs.append(input)
+            return super().__call__(input, tools, tool_choice, config)
+
+    sim = Recording(["Thu Oct 29 10:15:09 CET 2026"])
+    logs = eval(coding(condition="C3", scenarios=["pricing_cap"], max_turns=4, deadline=30, simulator="mock"),
+                model=mock(ScriptedAgent([[("bash", {"command": "date"})]]), "mockllm/agent"),
+                model_roles={"simulator": mock(sim, "mockllm/sim")}, limit=1, display="none",
+                log_dir=str(tmp_path))
+    s = logs[0].samples[0]
+    started = s.store["CodingEpisode:session_start"]
+    real = s.store["CodingEpisode:steps"][0]["result"]["output"].strip()
+    shape = r"[A-Z][a-z]{2} [A-Z][a-z]{2} [ 0-9]\d \d\d:\d\d:\d\d (CET|CEST) \d{4}"
+    assert re.fullmatch(shape, started) and re.fullmatch(shape, real), (started, real)
+    assert started.split()[-2] == real.split()[-2]  # same zone abbreviation
+    system = sim.inputs[0][0].text
+    assert f"- Time zone: Europe/Madrid\n- Date and time when the session started: {started}\n" in system

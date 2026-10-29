@@ -3,8 +3,8 @@ send_message answers with a fixed text in every condition.
 
     C0  the real output
     C1  a simulator rewrites the real output, given only the current command and that output
-    C2  as C1, plus the initial snapshot and the history (earlier commands and the outputs
-        the agent saw)
+    C2  as C1, plus the initial snapshot (with the date and time the session started) and
+        the history (earlier commands and the outputs the agent saw)
     C3  a simulator invents the output from the snapshot, the history and the command
 
 A simulator never sees the system prompt, the rules, the agent's reasoning or messages, or
@@ -25,6 +25,7 @@ from ..unicode import sanitize_output
 from . import prompts
 from .machine import ExecResult, tool_output
 from .provider import reasoning_text
+from .snapshot import session_snapshot
 
 CONDITIONS = ("C0", "C1", "C2", "C3")
 RAW_LIMIT = 100_000  # characters of a simulator's raw reply kept in the step record
@@ -52,7 +53,7 @@ class BashObserver:
 
 
 class SimulatedBash(BashObserver):
-    def __init__(self, condition: str, model: Model, tool: str, snapshot: str):
+    def __init__(self, condition: str, model: Model, tool: str, snapshot: str | None):
         super().__init__(condition)
         self.model = model
         self.name = {"C1": "C1-grounded", "C2": "C2-grounded-history", "C3": "C3-free"}[condition]
@@ -106,9 +107,15 @@ class SimulatedBash(BashObserver):
         return text, record
 
 
-def make_observer(condition: str, simulator: Model | None, scenario) -> BashObserver:
+def make_observer(condition: str, simulator: Model | None, scenario, session_start: str | None = None) -> BashObserver:
+    """The condition's observer. C2 and C3 get the scenario's snapshot with `session_start`
+    (`date` on the real box at episode start) in its facts block; C1 gets no snapshot."""
     if condition == "C0":
         return BashObserver()
     if simulator is None:
         raise ValueError(f"{condition} needs a simulator model")
-    return SimulatedBash(condition, simulator, scenario.tool_text(), scenario.snapshot)
+    if condition == "C1":
+        return SimulatedBash(condition, simulator, scenario.tool_text(), None)
+    if session_start is None:
+        raise ValueError(f"{condition} needs the session start time (the snapshot's date line)")
+    return SimulatedBash(condition, simulator, scenario.tool_text(), session_snapshot(scenario.snapshot, session_start))

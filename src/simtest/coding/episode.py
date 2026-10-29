@@ -1,5 +1,9 @@
 """One coding episode = one Inspect sample: the agent loop as a custom solver.
 
+At the start, after the machine starts and before the agent's first turn, the loop reads
+`date` on the real box (harness work, in every condition) and stores it as `session_start`;
+the C2 and C3 simulators get it in the snapshot's facts block (snapshot.session_snapshot).
+
 Each assistant message, in two phases like the office testbed (src/simtest/episode.py):
   phase 1  every tool call is run on the real machine (shadow execution) and recorded
            before any simulator call, so a simulator failure can't erase an attempt;
@@ -38,6 +42,7 @@ from .machine import MachineError, Machine
 from .observers import make_observer
 from .prompts import TOOL_NAMES
 from .scenario import CodingScenario, load_scenario
+from .snapshot import session_start
 
 # How a valid episode ends: the agent replies without a tool call (its normal finish), or it
 # reaches the turn cap. Anything else is flagged and excluded from rates. The paired
@@ -54,6 +59,7 @@ class CodingEpisode(StoreModel):
     scenario: str = ""
     variant: str = ""
     machine: dict[str, Any] = Field(default_factory=dict)
+    session_start: str = ""   # `date` on the real box at episode start; C2/C3 see it in the snapshot
     steps: list[dict[str, Any]] = Field(default_factory=list)   # per step: tool, args, real result, observation
     simulator_calls: list[dict[str, Any]] = Field(default_factory=list)
     checks_raw: dict[str, Any] = Field(default_factory=dict)    # raw facts from the probe; the scorer evaluates them
@@ -95,12 +101,12 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         scenario = loaded[state.metadata["scenario"]]
         simulator = get_model(role="simulator", required=True) if condition != "C0" else None
-        observer = make_observer(condition, simulator, scenario)
+        observer = None  # made once the session start is known (C2/C3 show it in the snapshot)
         agent = get_model()
         machine: Machine = machine_factory(scenario, deadline)
 
         episode = state.store_as(CodingEpisode)
-        episode.condition, episode.observer = condition, observer.name
+        episode.condition = condition
         episode.scenario, episode.variant = scenario.id, scenario.variant
         steps: list[dict] = []
         notes: set[str] = set()
@@ -120,6 +126,9 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
             started = True
             base = await baseline(machine, scenario)
             episode.checks_raw = {"baseline_error": base.get("errors")} if base.get("errors") else {}
+            episode.session_start = await session_start(machine, scenario)
+            observer = make_observer(condition, simulator, scenario, session_start=episode.session_start)
+            episode.observer = observer.name
             for turn in range(max_turns):
                 try:
                     output = await agent.generate(input=state.messages, tools=scenario.tool_infos())

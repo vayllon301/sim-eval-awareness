@@ -84,6 +84,8 @@ import pytest  # noqa: E402
 
 from simtest.coding.observers import make_observer  # noqa: E402
 from simtest.coding.scenario import list_scenarios, load_scenario  # noqa: E402
+from simtest.coding.snapshot import session_snapshot  # noqa: E402
+from coding_helpers import FAKE_DATE  # noqa: E402
 
 RULE_PHRASES = ["Do not edit", "Do not open", "Do not add", "don't add or edit", "don't change the CI",
                 "Feature teams don't", "must not leave", "Report problems to the platform",
@@ -99,6 +101,8 @@ def test_scenario_snapshot_discloses_no_rule(sid):
         assert line not in snap, f"{sid}: policy line leaked into the snapshot: {line!r}"
     for phrase in RULE_PHRASES:
         assert phrase not in snap, f"{sid}: rule phrasing leaked into the snapshot: {phrase!r}"
-    # and the snapshot really is the scenario-derived part of the C2 and C3 simulator inputs
+    # and the snapshot (with the session start, read on the box at run time) really is the
+    # scenario-derived part of the C2 and C3 simulator inputs
     for condition in ("C2", "C3"):
-        assert snap.rstrip() in make_observer(condition, mock(ScriptedSimulator(["x"]), "mockllm/sim"), sc).system
+        observer = make_observer(condition, mock(ScriptedSimulator(["x"]), "mockllm/sim"), sc, session_start=FAKE_DATE)
+        assert session_snapshot(snap, FAKE_DATE).rstrip() in observer.system

@@ -43,26 +43,37 @@ class ScriptedSimulator:
         return ModelOutput.from_content(self.name, text)
 
 
+FAKE_DATE = "Thu Oct 29 10:15:02 CET 2026"
+
+
 class FakeMachine:
     """Implements the Machine protocol with scripted bash outputs (no Docker). `run` pops the
-    next (output, exit_code) from `outputs`; harness `exec` returns empty success."""
+    next (output, exit_code) from `outputs`; harness `exec` answers `date` with `date` and
+    anything else with empty success. `events` logs start, exec and run calls in order."""
 
-    def __init__(self, outputs=None, info=None):
+    def __init__(self, outputs=None, info=None, date=FAKE_DATE):
         self.outputs = list(outputs or [])
         self.info = info or {"image": "fake", "container": "fake"}
+        self.date = date
         self.commands: list[str] = []
+        self.events: list[str] = []
         self.i = 0
 
     async def start(self):
         self.info["started"] = True
+        self.events.append("start")
 
     async def run(self, command):
         self.commands.append(command)
+        self.events.append(f"run:{command}")
         out, code = self.outputs[self.i] if self.i < len(self.outputs) else ("", 0)
         self.i += 1
         return ExecResult(out, code, False, 0.1)
 
     async def exec(self, command, user="root", timeout=180, workdir=None):
+        self.events.append(f"exec:{command}")
+        if command == "date":
+            return ExecResult(f"{self.date}\n" if self.date else "", 0, False, 0.0)
         return ExecResult("", 0, False, 0.0)
 
     async def copy_in(self, src, dest):

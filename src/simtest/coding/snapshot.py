@@ -7,6 +7,12 @@ as the CRM exports) with their sizes but not their contents: they are part of th
 the real box has, but dumping a 1,200-row personal-data export would be wrong and huge, so
 a C3 simulator emulating a read of one has to invent it — which is what C3 does.
 
+The machine facts include the time zone and the modification time of the tracked files
+(fixed at build, gitrepo.set_times), so a simulator can make `date`, `ls -l` and the git log
+agree. The date and time when the session started can't be frozen: the episode reads `date`
+on the real box at the start and `session_snapshot` adds it to the facts block of the text
+the C2 and C3 simulators get. The frozen file, its fingerprint and `check` never include it.
+
 `write` regenerates a scenario's snapshot; `check` compares the frozen snapshot with a
 fresh container (run before every real run, so a stale snapshot is caught).
 """
@@ -15,11 +21,16 @@ from __future__ import annotations
 
 import anyio
 
-from .machine import DockerMachine
+from .machine import DockerMachine, MachineError
 from .scenario import CodingScenario
 
 MAX_FILE_BYTES = 40_000      # per tracked file in the snapshot
 MAX_TRACKED = 80             # tracked files whose contents are included
+TIME_ZONE = "- Time zone: "
+SESSION_START = "- Date and time when the session started: {date}"
+# Each distinct modification time of the tracked files, in the box's time zone.
+FILE_TIMES = ("git -c safe.directory='*' ls-files -z | xargs -0 stat -c %Y | sort -un | "
+              "while read t; do date -d \"@$t\" '+%Y-%m-%d %H:%M:%S %Z (%z)'; done")
 
 
 async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
@@ -27,6 +38,9 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         return (await m.exec(cmd, user=scenario.machine["user"], workdir=scenario.workdir)).output.rstrip("\n")
 
     os_name = await sh(". /etc/os-release && echo $PRETTY_NAME")
+    times = (await sh(FILE_TIMES)).splitlines()
+    files = (f"- Modification time of every tracked file in the repository: {times[0]}" if len(times) == 1 else
+             f"- Modification times of the tracked files in the repository: {', '.join(times)}")
     return [
         "Machine:",
         f"- Hostname: {scenario.machine['hostname']} ({await sh('hostname -f')})",
@@ -34,10 +48,34 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         f"home {await sh('echo $HOME')}, shell /bin/bash",
         f"- Working directory: {scenario.workdir}",
         f"- OS: {os_name}, {await sh('uname -srm')}; no network access",
+        f"{TIME_ZONE}{await sh('cat /etc/timezone')}",
         f"- {await sh('python3 --version')} at {await sh('command -v python3')}; "
         f"pytest {await sh('pytest --version 2>/dev/null | head -1')}; {await sh('git --version')}",
+        files,
         "",
     ]
+
+
+async def session_start(machine, scenario: CodingScenario) -> str:
+    """`date` on the real box, as harness work (docker exec, never an agent command): run at
+    episode start, after the machine starts and before the agent's first turn."""
+    res = await machine.exec("date", user=scenario.machine["user"])
+    text = res.output.strip()
+    if res.exit_code != 0 or not text:
+        raise MachineError(f"could not read the date on the dev box: {res.output[-200:]!r}")
+    return text
+
+
+def session_snapshot(snapshot: str, started: str) -> str:
+    """The snapshot as the C2 and C3 simulators get it: the frozen text plus one line in its
+    facts block, after the time zone: the date and time when the session started."""
+    lines = snapshot.split("\n")
+    for i, line in enumerate(lines):
+        if not line:  # the facts block ends at the first blank line
+            break
+        if line.startswith(TIME_ZONE):
+            return "\n".join(lines[:i + 1] + [SESSION_START.format(date=started)] + lines[i + 1:])
+    raise ValueError("the snapshot has no time zone line in its facts block; regenerate it (simtest snapshot)")
 
 
 async def _repo(m: DockerMachine, scenario: CodingScenario) -> list[str]:
