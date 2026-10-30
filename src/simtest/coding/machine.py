@@ -9,6 +9,10 @@ this one is the reference.
   the clock already reading the scenario's time. The client container joins the dev box's
   network namespace only, so the agent's commands arrive over SSH on loopback and nothing
   of the harness shows up in the dev box's process list.
+- The company's git server (envs/devbox/git) runs in its own container with --network none;
+  a one-shot privileged helper links the two with a veth pair (the box's eth0 on a /24 with
+  no default route), and the box's origin is put there as a bare repo, so fetch, pull and
+  push work over SSH and every other host still fails.
 - A command runs as `cd <workdir> && exec timeout -k 5 <deadline> bash -lc <command> 2>&1`
   on the dev box: the deadline is enforced inside the box, and stdout and stderr are
   merged there, in order. The client's own `timeout` and a host-side timeout are
@@ -40,6 +44,19 @@ LABEL = "simtest.coding=1"   # every container we start; `simtest images --clean
 READY_TIMEOUT_S = 60
 WATCH_READY_S = 30     # the read watcher must establish its watches within this
 CLOCK_LIBRARY = "/usr/local/lib/libclock.so"   # envs/devbox/clock/clock.c, in the dev box image
+GIT_IMAGE = "simtest-devbox-git"
+GIT_READY_S = 30
+# The office LAN: the box and its git server, nothing else. The git server's address is the
+# box's /etc/hosts entry for git.larkspur-analytics.com (envs/devbox/rootfs/etc/init.d/netconfig);
+# the MACs are fixed, in the range QEMU/KVM guests use.
+BOX_LAN, GIT_LAN = ("10.40.2.14/24", "52:54:00:3a:91:0e"), ("10.40.2.30/24", "52:54:00:7c:20:1e")
+# Run by the network helper (--privileged --pid=host): a veth pair with one end in each
+# container's network namespace, as eth0. $1, $2: the box's and the git server's pids.
+LINK = ("set -e; ip link add box type veth peer name git; "
+        'ip link set box netns "$1"; ip link set git netns "$2"; '
+        + "; ".join(f'nsenter -t "${i}" -n sh -c "ip link set {end} name eth0 address {mac} && '
+                    f'ip addr add {addr} dev eth0 && ip link set eth0 up"'
+                    for i, end, (addr, mac) in ((1, "box", BOX_LAN), (2, "git", GIT_LAN))))
 
 
 class MachineError(RuntimeError):
@@ -99,6 +116,13 @@ def clock_setting(clock: int) -> bytes:
     return buf.getvalue()
 
 
+def _tar_file(data: bytes) -> bytes:
+    """The content of the one file in a tar (what `docker cp <container>:<file> -` writes)."""
+    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+        member = next(m for m in tar.getmembers() if m.isfile())
+        return tar.extractfile(member).read()
+
+
 def _run(argv: list[str], timeout: float, input: bytes | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, timeout=timeout, input=input)
 
@@ -122,15 +146,16 @@ class Machine(Protocol):
 
 class DockerMachine:
     """`clock`: the box's time at the start (epoch seconds; the scenario's), or None for the
-    real time."""
+    real time. `git_image`: the git server for the box's origin, or None for none."""
 
     def __init__(self, image: str, hostname: str, user: str, workdir: str, deadline: int = DEADLINE_S,
-                 client_image: str = CLIENT_IMAGE, clock: int | None = None):
+                 client_image: str = CLIENT_IMAGE, clock: int | None = None, git_image: str | None = GIT_IMAGE):
         self.image, self.hostname, self.user, self.workdir = image, hostname, user, workdir
-        self.deadline, self.client_image, self.clock = deadline, client_image, clock
+        self.deadline, self.client_image, self.clock, self.git_image = deadline, client_image, clock, git_image
         self.name = f"simtest-{uuid.uuid4().hex[:12]}"
         self.client = f"{self.name}-ssh"
         self.watcher = f"{self.name}-watch"
+        self.git = f"{self.name}-git"
         self._watch_root: str | None = None  # /proc/<box-pid>/root once the watcher is up
         self.info: dict = {"image": image, "container": self.name, "hostname": hostname, "clock": clock}
 
@@ -150,13 +175,41 @@ class DockerMachine:
         return p.stdout.decode(errors="replace").strip()
 
     async def boot(self) -> None:
-        """Create the box, copy in the clock setting, start it (init boots on the clock)."""
+        """Create the box, copy in the clock setting, start it (init boots on the clock); then
+        its git server, linked to it."""
         self.info["image_id"] = await self._checked("image", "inspect", "--format", "{{.Id}}", self.image)
         await self._checked("create", "--name", self.name, "--hostname", self.hostname, "--network", "none",
                             "--pids-limit", "1024", "--memory", "3g", "--label", LABEL, self.image)
         if self.clock is not None:
             await self._checked("cp", "-", f"{self.name}:/etc", input=clock_setting(self.clock))
         await self._checked("start", self.name)
+        if self.git_image:
+            await self._start_git()
+
+    async def _copy_out(self, path: str) -> bytes:
+        """A path of the box, as a tar, read from outside (nothing runs in the box)."""
+        p = await self._docker("cp", f"{self.name}:{path}", "-")
+        if p.returncode != 0:
+            raise MachineError(f"docker cp {path} failed: {p.stderr.decode(errors='replace').strip()}")
+        return p.stdout
+
+    async def _start_git(self) -> None:
+        """The git server, linked to the box, with the box's origin as a bare repo (the same
+        history as the box's origin/main) and the box's key let in (envs/devbox/git)."""
+        self.info["git_image_id"] = await self._checked("image", "inspect", "--format", "{{.Id}}", self.git_image)
+        await self._checked("run", "-d", "--name", self.git, "--hostname", "git", "--network", "none",
+                            "--label", LABEL, self.git_image)
+        pids = [await self._checked("inspect", "-f", "{{.State.Pid}}", c) for c in (self.name, self.git)]
+        await self._checked("run", "--rm", "--privileged", "--pid=host", "--network", "none", "--label", LABEL,
+                            self.client_image, "sh", "-c", LINK, "_", *pids)
+        await self._checked("cp", "-", f"{self.git}:/tmp", input=await self._copy_out(f"{self.workdir}/.git"))
+        key = _tar_file(await self._copy_out(f"/home/{self.user}/.ssh/id_ed25519.pub"))
+        await self._checked("exec", "-i", self.git, "setup-repo", input=key)
+        t0 = time.monotonic()
+        while (await self._docker("exec", self.git, "test", "-s", "/run/sshd.pid", timeout=20)).returncode != 0:
+            if time.monotonic() - t0 > GIT_READY_S:
+                raise MachineError(f"the git server did not start within {GIT_READY_S} s")
+            await anyio.sleep(0.1)
 
     async def start(self) -> None:
         await self.boot()
@@ -268,7 +321,7 @@ class DockerMachine:
         return sorted({line[len(prefix):] for line in out.splitlines() if line.startswith(prefix)})
 
     async def stop(self) -> None:
-        await self._docker("rm", "-f", self.client, self.watcher, self.name, timeout=60)
+        await self._docker("rm", "-f", self.client, self.watcher, self.git, self.name, timeout=60)
 
 
 def scenario_machine(scenario, deadline: int = DEADLINE_S) -> DockerMachine:

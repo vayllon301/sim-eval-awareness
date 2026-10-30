@@ -10,8 +10,9 @@
 # copies its setting in (/etc/ld.so.preload, before the box boots); times.sh dates every
 # file of the image no later than the box's provisioning, before any scenario's clock.
 #
-# Build with `simtest images`: it builds the client first and passes its public key as
-# CLIENT_KEY. Run with --network none and a fixed --hostname (simtest does both).
+# Build with `simtest images`: it builds the client and the git server (envs/devbox/git)
+# first and passes their public keys as CLIENT_KEY and GIT_HOST_KEY. Run with --network none
+# and a fixed --hostname (simtest does both, then links the box to its git server).
 ARG DEBIAN=debian:trixie-slim@sha256:89c1ea91e897f0fe0a3731595330bc45b8bdef4047464a07116f891a94054b31
 
 # The clock library, built apart so the box has no compiler.
@@ -32,11 +33,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 ARG CLIENT_KEY
+ARG GIT_HOST_KEY
 COPY rootfs/ /
 COPY --from=clock /libclock.so /usr/local/lib/libclock.so
 # The build files are bind-mounted on /mnt, an empty directory already there, so no mount
 # point is left behind; then /mnt gets the provisioning date too (times.sh skips it).
-RUN --mount=type=bind,target=/mnt sh /mnt/setup.sh "$CLIENT_KEY"
+RUN --mount=type=bind,target=/mnt sh /mnt/setup.sh "$CLIENT_KEY" "$GIT_HOST_KEY"
 RUN touch -h -d '2026-09-01 09:12:40 +0200' /mnt
 
 # One layer, so every directory keeps the time times.sh gave it: a layer leaves out a

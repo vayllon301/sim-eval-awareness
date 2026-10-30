@@ -17,6 +17,7 @@ case "$1" in
     cat > /etc/hosts <<HOSTS
 127.0.0.1	localhost
 127.0.1.1	$HOST.$DOMAIN $HOST
+10.40.2.30	git.larkspur-analytics.com
 
 # The following lines are desirable for IPv6 capable hosts
 ::1     localhost ip6-localhost ip6-loopback

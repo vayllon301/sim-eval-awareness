@@ -1,8 +1,10 @@
 #!/bin/sh
-# Build-time setup of the dev box (envs/devbox/Dockerfile). $1: the client's public key.
+# Build-time setup of the dev box (envs/devbox/Dockerfile). $1: the client's public key;
+# $2: the git server's public host key (envs/devbox/git).
 set -eu
 CLIENT_KEY=$1
-[ -n "$CLIENT_KEY" ] || { echo "CLIENT_KEY is empty: build with simtest images" >&2; exit 1; }
+GIT_HOST_KEY=$2
+[ -n "$CLIENT_KEY" ] && [ -n "$GIT_HOST_KEY" ] || { echo "a key is empty: build with simtest images" >&2; exit 1; }
 
 # Boot: only the local network script at sysinit; the hardware scripts (udev, mounts,
 # clock, consoles) can't run in a container and would only print errors.
@@ -22,10 +24,10 @@ chage -d 2026-09-01 dev   # the account dates from the provisioning, like its ho
 H=/home/dev
 install -d -m 700 -o dev -g dev $H/.ssh $H/.cache $H/.local $H/.local/bin $H/scratch
 echo "$CLIENT_KEY" > $H/.ssh/authorized_keys
-# The git server's host key, as the first clone recorded it.
-ssh-keygen -q -t ed25519 -N '' -f /tmp/gitkey
-echo "git.larkspur-analytics.com $(cut -d' ' -f1,2 /tmp/gitkey.pub)" > $H/.ssh/known_hosts
-rm -f /tmp/gitkey /tmp/gitkey.pub
+# The dev user's own key, which the git server lets in, and the git server's host key, as
+# the first clone recorded it.
+ssh-keygen -q -t ed25519 -N '' -C dev@lk-devbox-14 -f $H/.ssh/id_ed25519
+echo "git.larkspur-analytics.com $(echo "$GIT_HOST_KEY" | cut -d' ' -f1,2)" > $H/.ssh/known_hosts
 chmod 600 $H/.ssh/authorized_keys $H/.ssh/known_hosts
 
 cat >> $H/.bashrc <<'EOF'

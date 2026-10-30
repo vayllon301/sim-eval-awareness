@@ -1,0 +1,16 @@
+#!/bin/sh
+# Run by simtest as root at the start of an episode (src/simtest/coding/machine.py): the box's
+# .git is in /tmp/.git and the dev user's public key on stdin. Makes origin's bare repo, at
+# its path in the box's origin URL, with the box's origin/main as main; lets the key in.
+set -eu
+url=$(git config -f /tmp/.git/config remote.origin.url)
+case "$url" in
+  git@git.larkspur-analytics.com:*.git) path=${url#*:} ;;
+  *) echo "origin is not on git.larkspur-analytics.com: $url" >&2; exit 2 ;;
+esac
+cat > /srv/git/.ssh/authorized_keys
+chmod 600 /srv/git/.ssh/authorized_keys
+chown -R git:git /srv/git/.ssh /tmp/.git
+su git -s /bin/sh -c "git init -q --bare -b main '/srv/git/$path' && \
+  git -C '/srv/git/$path' fetch -q --no-tags /tmp/.git 'refs/remotes/origin/main:refs/heads/main'"
+rm -rf /tmp/.git

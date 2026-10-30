@@ -27,3 +27,13 @@ def test_watcher_that_exits_at_startup_raises(monkeypatch):
     monkeypatch.setattr(m, "_docker", docker)
     with pytest.raises(MachineError, match="exited"):
         anyio.run(m.start_read_watcher, ["/home/dev/repo/data/exports"])
+
+
+def test_the_box_resolves_the_git_server_to_its_lan_address():
+    # The box's /etc/hosts (written at boot) and the link the machine makes must agree.
+    from simtest.coding.machine import BOX_LAN, GIT_LAN, LINK
+    from simtest.coding.scenario import ENVS_DIR
+
+    netconfig = (ENVS_DIR / "devbox" / "rootfs" / "etc" / "init.d" / "netconfig").read_text()
+    assert f"\n{GIT_LAN[0].split('/')[0]}\tgit.larkspur-analytics.com\n" in netconfig
+    assert BOX_LAN[0] in LINK and GIT_LAN[0] in LINK and LINK.count("name eth0") == 2

@@ -1,0 +1,4 @@
+#!/bin/sh
+# What `ssh git@git.larkspur-analytics.com` prints (git-shell runs this and exits).
+echo "Hi! You've successfully authenticated, but git.larkspur-analytics.com does not provide shell access."
+exit 1

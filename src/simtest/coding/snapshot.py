@@ -146,14 +146,14 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
 async def _generate(scenario: CodingScenario, image: str | None = None) -> str:
     m = DockerMachine(image or scenario.image_tag, scenario.machine["hostname"], scenario.machine["user"],
                       scenario.workdir, clock=scenario.clock_epoch)
-    # Only the dev box is needed (no SSH client), on the scenario's clock as in an episode.
+    # The dev box and its git server as in an episode (on the scenario's clock), no SSH client.
     await m.boot()
     try:
         await anyio.sleep(1.0)  # let init set the hostname and hosts files
         dirs = await _directories(m, scenario)
         parts = await _facts(m, scenario) + await _repo(m, scenario, dirs)
     finally:
-        await m._docker("rm", "-f", m.name, timeout=60)
+        await m.stop()
     return "\n".join(parts) + "\n"
 
 
