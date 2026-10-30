@@ -8,6 +8,8 @@ variant: tempting                  # tempting | benign
 twin: pricing_cap_benign           # the other member of the pair (same prompt and ticket)
 image: {repo: pricing, variant: tempting}       # envs/coding/repos/<repo>.py -> simtest-devbox-<repo>:<variant>
 machine: {hostname: lk-devbox-14, user: dev, workdir: /home/dev/pricing-service}
+clock: "2026-10-26T09:27:00+01:00"  # the box's clock at the session start (then it runs on): after
+                                   # everything in the repo, on the ticket's day; the same for both twins
 org: Larkspur Analytics
 policy: [...]                      # the "Repository policy" lines of the system prompt
 ticket: |                          # the first user message
@@ -37,6 +39,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 
@@ -47,7 +50,7 @@ from .prompts import system_prompt, tool_infos, tool_schemas, tool_text
 SCENARIO_DIR = Path(__file__).resolve().parents[3] / "scenarios" / "coding"
 ENVS_DIR = Path(__file__).resolve().parents[3] / "envs"
 
-KEYS = {"id", "title", "split", "variant", "twin", "image", "machine", "org", "policy", "ticket", "checks"}
+KEYS = {"id", "title", "split", "variant", "twin", "image", "machine", "clock", "org", "policy", "ticket", "checks"}
 CHECK_KEYS = {"test_command", "code_paths", "protected", "forbidden_reads", "forbidden_content", "hidden_tests",
               "special_cases"}
 SPECIAL_KEYS = {"id", "absent", "present"}
@@ -88,6 +91,7 @@ class CodingScenario:
     twin: str
     image: dict
     machine: dict
+    clock: str
     org: str
     policy: list[str]
     ticket: str
@@ -97,6 +101,11 @@ class CodingScenario:
     @property
     def image_tag(self) -> str:
         return f"simtest-devbox-{self.image['repo']}:{self.image['variant']}"
+
+    @property
+    def clock_epoch(self) -> int:
+        """The session-start time, in seconds since the epoch."""
+        return int(datetime.fromisoformat(self.clock).timestamp())
 
     @property
     def workdir(self) -> str:
@@ -142,6 +151,15 @@ def scenario_path(path_or_id: str | Path) -> Path:
     return p if p.suffix == ".yaml" else SCENARIO_DIR / f"{path_or_id}.yaml"
 
 
+def _is_clock(value) -> bool:
+    if not (isinstance(value, str) and "T" in value):
+        return False
+    try:
+        return datetime.fromisoformat(value).tzinfo is not None
+    except ValueError:
+        return False
+
+
 def load_scenario(path_or_id: str | Path) -> CodingScenario:
     path = scenario_path(path_or_id)
     raw = yaml.safe_load(path.read_text())
@@ -155,6 +173,9 @@ def load_scenario(path_or_id: str | Path) -> CodingScenario:
     if not (ENVS_DIR / "coding" / "repos" / f"{raw['image']['repo']}.py").exists():
         raise ScenarioError(f"{sid}: no repo builder envs/coding/repos/{raw['image']['repo']}.py")
     _keys(f"{sid}.machine", raw["machine"], {"hostname", "user", "workdir"}, {"hostname", "user", "workdir"})
+    if not _is_clock(raw["clock"]):
+        raise ScenarioError(f"{sid}.clock must be an ISO 8601 time with an offset, as a string "
+                            f"(e.g. \"2026-10-26T09:41:00+01:00\"), not {raw['clock']!r}")
     if not (isinstance(raw["policy"], list) and raw["policy"] and all(isinstance(p, str) for p in raw["policy"])):
         raise ScenarioError(f"{sid}.policy must be a non-empty list of lines")
     checks = raw["checks"]
