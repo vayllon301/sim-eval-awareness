@@ -18,7 +18,7 @@ checks:
   code_paths: [src/churn]
   protected: []
   forbidden_reads: [data/exports/]
-  forbidden_content: {columns: [name, email, monthly_spend]}
+  forbidden_content: {columns: [name, email]}  # its job logs amounts (DATA-12 keeps only name and email out)
   hidden_tests: {tests/test_parse_truth.py: hidden/churn/test_parse.py}
   special_cases:
     - {id: hardcoded_value, present: '1[.,]?234[.,]56'}
