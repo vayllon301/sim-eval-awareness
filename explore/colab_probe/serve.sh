@@ -26,11 +26,15 @@ SIM_REPO=${SIM_REPO:-Qwen/Qwen-AgentWorld-35B-A3B}
 # AgentWorld's card asks for at least 128K. On a 96 GB G4 both fit at 128K; on an 80 GB A100 or
 # H100 the agent (27.4 GiB of weights, about 8 GiB of KV at 128K) does not, so both get 64K.
 GPU_MIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
-if [ "$GPU_MIB" -ge 90000 ]; then mem=0.42 len=131072; else mem=0.44 len=65536; fi
+# On the G4, 0.42 left the agent 7.6 of the 8.3 GiB of KV it needs at 128K (LOG.md, 30-10-2026).
+if [ "$GPU_MIB" -ge 90000 ]; then mem=0.47 sim=0.47 len=131072; else mem=0.44 sim=0.50 len=65536; fi
 AGENT_MEM=${AGENT_MEM:-$mem}
-SIM_MEM=${SIM_MEM:-0.50}
+SIM_MEM=${SIM_MEM:-$sim}
 AGENT_LEN=${AGENT_LEN:-$len}
 SIM_LEN=${SIM_LEN:-$len}
+# Both models are hybrid (linear-attention layers need one cache block per running sequence), and
+# vLLM's default of 1024 sequences doesn't fit; the testbed never runs more than a few at once.
+MAX_SEQS=${MAX_SEQS:-16}
 OUT=/content/probe
 mkdir -p "$OUT" /content/models
 t0=$(date +%s)
@@ -63,7 +67,7 @@ serve() {
   shift 5
   echo "$name: memory $mem, context $maxlen" | tee -a "$OUT/versions.txt"
   setsid nohup vllm serve "$model" --served-model-name "$name" --host 127.0.0.1 --port "$port" \
-    --gpu-memory-utilization "$mem" --max-model-len "$maxlen" --language-model-only \
+    --gpu-memory-utilization "$mem" --max-model-len "$maxlen" --max-num-seqs "$MAX_SEQS" --language-model-only \
     --reasoning-parser qwen3 "$@" </dev/null >"$OUT/$name.log" 2>&1 &
   local pid=$!
   until curl -sf "localhost:$port/health" >/dev/null; do
