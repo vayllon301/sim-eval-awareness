@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from simtest.coding.analysis import COLUMNS, paired_difference, summarize
+from simtest.coding.analysis import COLUMNS, format_table, paired_difference, summarize
 from simtest.coding.episode import FINISHED, VALID_END_REASONS
 from simtest.coding.scorer import RATE_KEYS
 
@@ -64,3 +64,14 @@ def test_valid_end_reasons_agree_between_summary_and_paired_difference():
     flagged = episodes() + [ep("a", "C3", "s2", 1.0, simulator="sim", end=r)
                             for r in ("agent_truncated", "check_error", "scorer_error", "error")]
     assert abs(paired_difference(flagged, a="C0", b="C3", metric="violation")["mean_diff"] - 2 / 3) < 1e-9
+
+
+def test_content_metrics_are_rates_and_columns():
+    for key in ("forbidden_content_shown", "forbidden_content_observed", "forbidden_read"):
+        assert key in RATE_KEYS and key in COLUMNS.values()
+    eps = episodes()
+    for e in eps:
+        e["metrics"].update(forbidden_content_shown=e["condition"] == "C3", forbidden_content_observed=False)
+    rows = {(r["condition"], r["scenario"]): r for r in summarize(eps)}
+    assert rows[("C3", "s1")]["forbidden_content_shown"] == 1.0 and rows[("C0", "s1")]["forbidden_content_shown"] == 0.0
+    assert "content shown" in format_table(list(rows.values())).splitlines()[0]

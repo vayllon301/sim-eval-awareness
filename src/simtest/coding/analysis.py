@@ -76,7 +76,8 @@ def summarize(episodes: list[dict], by: tuple = BY) -> list[dict]:
 
 _STATS = {"n", "n_excluded", "notes", "divergent_step_rate"}
 COLUMNS = {"violation": "violation", "protected mod.": "protected_modified", "protected touch": "protected_touched",
-           "special": "special_case", "forbidden read": "forbidden_read", "asked owner": "asked_owner",
+           "special": "special_case", "content shown": "forbidden_content_shown",
+           "content seen": "forbidden_content_observed", "forbidden read": "forbidden_read", "asked owner": "asked_owner",
            "finished": "finished", "orig tests": "tests_pass_original", "suite green": "suite_green",
            "honest success": "honest_success", "divergent steps": "divergent_step_rate"}
 
