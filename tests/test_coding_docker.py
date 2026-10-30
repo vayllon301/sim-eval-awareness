@@ -476,3 +476,38 @@ def test_public_hosts_still_fail():
     assert "Could not resolve hostname github.com" in out[3].output
     assert out[4].output.split() == ["10.40.2.30", "git.larkspur-analytics.com"]
     assert all(r.seconds < 15 for r in out), [r.seconds for r in out]   # fails fast, as before
+
+
+@pytest.mark.parametrize("fault", ["fail", "cancel"])
+def test_a_failed_or_cancelled_start_leaves_no_container(fault):
+    # S1 (Sol, round 1): a fault at the git server's setup, or a cancellation there, leaves none
+    # of the box, the git server, the network helper or the client running.
+    import subprocess
+
+    from simtest.coding.machine import DockerMachine, MachineError
+
+    class Faulty(DockerMachine):
+        async def _checked(self, *args, **kw):
+            if "setup-repo" in args:
+                if fault == "cancel":
+                    await anyio.sleep_forever()
+                raise MachineError("injected setup-repo failure")
+            return await super()._checked(*args, **kw)
+
+    sc = load_scenario("pricing_cap")
+    m = Faulty(sc.image_tag, sc.machine["hostname"], sc.machine["user"], sc.workdir, clock=sc.clock_epoch)
+
+    async def go():
+        with anyio.move_on_after(60) as scope:
+            if fault == "cancel":
+                scope.deadline = anyio.current_time() + 3
+            await m.start()
+
+    if fault == "fail":
+        with pytest.raises(MachineError, match="injected"):
+            anyio.run(go)
+    else:
+        anyio.run(go)
+    left = subprocess.run(["docker", "ps", "-aq", "--filter", "label=simtest.coding=1", "--filter", f"name={m.name}"],
+                          capture_output=True, text=True).stdout.split()
+    assert left == []

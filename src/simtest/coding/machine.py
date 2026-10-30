@@ -156,6 +156,7 @@ class DockerMachine:
         self.client = f"{self.name}-ssh"
         self.watcher = f"{self.name}-watch"
         self.git = f"{self.name}-git"
+        self.net = f"{self.name}-net"   # the one-shot network helper
         self._watch_root: str | None = None  # /proc/<box-pid>/root once the watcher is up
         self.info: dict = {"image": image, "container": self.name, "hostname": hostname, "clock": clock}
 
@@ -174,9 +175,25 @@ class DockerMachine:
             raise MachineError(f"docker {' '.join(args[:2])} failed: {p.stderr.decode(errors='replace').strip()}")
         return p.stdout.decode(errors="replace").strip()
 
+    async def _removing_on_failure(self, steps) -> None:
+        """Run start steps; if they raise or are cancelled, remove whatever they started (the
+        caller only stops a machine that started), shielded from the cancellation."""
+        try:
+            await steps()
+        except BaseException:
+            with anyio.CancelScope(shield=True):
+                try:
+                    await self.stop()
+                except Exception:
+                    pass  # the start's own error is the one to report
+            raise
+
     async def boot(self) -> None:
         """Create the box, copy in the clock setting, start it (init boots on the clock); then
-        its git server, linked to it."""
+        its git server, linked to it. On failure, nothing is left running."""
+        await self._removing_on_failure(self._boot)
+
+    async def _boot(self) -> None:
         self.info["image_id"] = await self._checked("image", "inspect", "--format", "{{.Id}}", self.image)
         await self._checked("create", "--name", self.name, "--hostname", self.hostname, "--network", "none",
                             "--pids-limit", "1024", "--memory", "3g", "--label", LABEL, self.image)
@@ -200,8 +217,8 @@ class DockerMachine:
         await self._checked("run", "-d", "--name", self.git, "--hostname", "git", "--network", "none",
                             "--label", LABEL, self.git_image)
         pids = [await self._checked("inspect", "-f", "{{.State.Pid}}", c) for c in (self.name, self.git)]
-        await self._checked("run", "--rm", "--privileged", "--pid=host", "--network", "none", "--label", LABEL,
-                            self.client_image, "sh", "-c", LINK, "_", *pids)
+        await self._checked("run", "--rm", "--name", self.net, "--privileged", "--pid=host", "--network", "none",
+                            "--label", LABEL, self.client_image, "sh", "-c", LINK, "_", *pids)
         await self._checked("cp", "-", f"{self.git}:/tmp", input=await self._copy_out(f"{self.workdir}/.git"))
         key = _tar_file(await self._copy_out(f"/home/{self.user}/.ssh/id_ed25519.pub"))
         await self._checked("exec", "-i", self.git, "setup-repo", input=key)
@@ -212,6 +229,9 @@ class DockerMachine:
             await anyio.sleep(0.1)
 
     async def start(self) -> None:
+        await self._removing_on_failure(self._start)
+
+    async def _start(self) -> None:
         await self.boot()
         await self._checked("run", "-d", "--name", self.client, "--network", f"container:{self.name}",
                             "--label", LABEL, self.client_image)
@@ -321,7 +341,7 @@ class DockerMachine:
         return sorted({line[len(prefix):] for line in out.splitlines() if line.startswith(prefix)})
 
     async def stop(self) -> None:
-        await self._docker("rm", "-f", self.client, self.watcher, self.git, self.name, timeout=60)
+        await self._docker("rm", "-f", self.client, self.watcher, self.net, self.git, self.name, timeout=60)
 
 
 def scenario_machine(scenario, deadline: int = DEADLINE_S) -> DockerMachine:

@@ -979,7 +979,9 @@ remove leftovers from a crashed run.
 **Start.** `DockerMachine.boot` creates the box, copies the clock setting in, starts it,
 then starts its git server and links them; `start` adds the client and waits for SSH. All of
 it takes about a second, so the box's first `date` reads the scenario's clock within a
-second or two. The snapshot's box is booted the same way.
+second or two. The snapshot's box is booted the same way. If a step fails or is cancelled,
+`boot` and `start` remove every container they started (box, git server, network helper,
+client), shielded from the cancellation, since the episode only stops a machine that started.
 
 ### The box's clock
 
