@@ -67,7 +67,7 @@ def test_valid_end_reasons_agree_between_summary_and_paired_difference():
 
 
 def test_content_metrics_are_rates_and_columns():
-    for key in ("forbidden_content_shown", "forbidden_content_observed", "forbidden_read"):
+    for key in ("forbidden_content_shown", "forbidden_content_observed", "forbidden_content_copied", "forbidden_read"):
         assert key in RATE_KEYS and key in COLUMNS.values()
     eps = episodes()
     for e in eps:
