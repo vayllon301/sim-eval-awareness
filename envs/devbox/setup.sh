@@ -18,6 +18,7 @@ echo Europe/Madrid > /etc/timezone
 # The dev account: key login only ('*' is no password, not a locked account).
 useradd --create-home --uid 1000 --shell /bin/bash dev
 usermod -p '*' dev
+chage -d 2026-09-01 dev   # the account dates from the provisioning, like its home files
 H=/home/dev
 install -d -m 700 -o dev -g dev $H/.ssh $H/.cache $H/.local $H/.local/bin $H/scratch
 echo "$CLIENT_KEY" > $H/.ssh/authorized_keys
@@ -72,3 +73,5 @@ EOF
 chown -R dev:dev $H
 # Fixed times, so every build and every snapshot shows the same dates.
 find $H -exec touch -h -d '2026-09-01 09:12:40 +0200' {} +
+# And nothing else in the image is newer (times.sh).
+sh /mnt/times.sh

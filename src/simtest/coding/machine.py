@@ -4,10 +4,11 @@ Every condition runs every agent command here (shadow execution): in C0 the agen
 this output; in C1/C2 a simulator rewrites it; in C3 the simulator invents an output and
 this one is the reference.
 
-- `docker run --network none --hostname <scenario's>`: sysvinit boots runlevel 2 (rsyslog,
-  cron, sshd). The client container joins the dev box's network namespace only, so the
-  agent's commands arrive over SSH on loopback and nothing of the harness shows up in the
-  dev box's process list.
+- `docker create --network none --hostname <scenario's>`, then the clock setting is copied in
+  (`clock_setting`) and the box starts: sysvinit boots runlevel 2 (rsyslog, cron, sshd) with
+  the clock already reading the scenario's time. The client container joins the dev box's
+  network namespace only, so the agent's commands arrive over SSH on loopback and nothing
+  of the harness shows up in the dev box's process list.
 - A command runs as `cd <workdir> && exec timeout -k 5 <deadline> bash -lc <command> 2>&1`
   on the dev box: the deadline is enforced inside the box, and stdout and stderr are
   merged there, in order. The client's own `timeout` and a host-side timeout are
@@ -20,8 +21,10 @@ Blocking Docker calls run in a worker thread, so parallel episodes don't block e
 
 from __future__ import annotations
 
+import io
 import shlex
 import subprocess
+import tarfile
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -36,6 +39,7 @@ CLIENT_IMAGE = "simtest-devbox-client"
 LABEL = "simtest.coding=1"   # every container we start; `simtest images --clean` removes leftovers
 READY_TIMEOUT_S = 60
 WATCH_READY_S = 30     # the read watcher must establish its watches within this
+CLOCK_LIBRARY = "/usr/local/lib/libclock.so"   # envs/devbox/clock/clock.c, in the dev box image
 
 
 class MachineError(RuntimeError):
@@ -79,12 +83,28 @@ def tool_output(text: str) -> str:
     return cap(finalize(text))
 
 
+def clock_setting(clock: int) -> bytes:
+    """The box's /etc/ld.so.preload, as a tar for `docker cp -`: one line naming the clock
+    library, with the scenario's clock (epoch seconds) as its modification time. Copied in
+    before the box boots, so its change time is the real start; the library shifts the box's
+    wall clock by the difference (envs/devbox/clock/clock.c). No config file, no variable."""
+    data = f"{CLOCK_LIBRARY}\n".encode()
+    info = tarfile.TarInfo("ld.so.preload")
+    info.size, info.mtime, info.mode = len(data), clock, 0o644
+    info.uid = info.gid = 0
+    info.uname = info.gname = "root"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+        tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
 def _run(argv: list[str], timeout: float, input: bytes | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, timeout=timeout, input=input)
 
 
-async def _arun(argv: list[str], timeout: float) -> subprocess.CompletedProcess:
-    return await anyio.to_thread.run_sync(lambda: _run(argv, timeout))
+async def _arun(argv: list[str], timeout: float, input: bytes | None = None) -> subprocess.CompletedProcess:
+    return await anyio.to_thread.run_sync(lambda: _run(argv, timeout, input))
 
 
 class Machine(Protocol):
@@ -101,35 +121,45 @@ class Machine(Protocol):
 
 
 class DockerMachine:
+    """`clock`: the box's time at the start (epoch seconds; the scenario's), or None for the
+    real time."""
+
     def __init__(self, image: str, hostname: str, user: str, workdir: str, deadline: int = DEADLINE_S,
-                 client_image: str = CLIENT_IMAGE):
+                 client_image: str = CLIENT_IMAGE, clock: int | None = None):
         self.image, self.hostname, self.user, self.workdir = image, hostname, user, workdir
-        self.deadline, self.client_image = deadline, client_image
+        self.deadline, self.client_image, self.clock = deadline, client_image, clock
         self.name = f"simtest-{uuid.uuid4().hex[:12]}"
         self.client = f"{self.name}-ssh"
         self.watcher = f"{self.name}-watch"
         self._watch_root: str | None = None  # /proc/<box-pid>/root once the watcher is up
-        self.info: dict = {"image": image, "container": self.name, "hostname": hostname}
+        self.info: dict = {"image": image, "container": self.name, "hostname": hostname, "clock": clock}
 
-    async def _docker(self, *args: str, timeout: float = 120) -> subprocess.CompletedProcess:
+    async def _docker(self, *args: str, timeout: float = 120, input: bytes | None = None) -> subprocess.CompletedProcess:
         try:
-            p = await _arun(["docker", *args], timeout)
+            p = await _arun(["docker", *args], timeout, input)
         except subprocess.TimeoutExpired as exc:
             raise MachineError(f"docker {args[0]} timed out after {timeout} s") from exc
         except OSError as exc:
             raise MachineError(f"docker not available: {exc}") from exc
         return p
 
-    async def _checked(self, *args: str, timeout: float = 120) -> str:
-        p = await self._docker(*args, timeout=timeout)
+    async def _checked(self, *args: str, timeout: float = 120, input: bytes | None = None) -> str:
+        p = await self._docker(*args, timeout=timeout, input=input)
         if p.returncode != 0:
             raise MachineError(f"docker {' '.join(args[:2])} failed: {p.stderr.decode(errors='replace').strip()}")
         return p.stdout.decode(errors="replace").strip()
 
-    async def start(self) -> None:
+    async def boot(self) -> None:
+        """Create the box, copy in the clock setting, start it (init boots on the clock)."""
         self.info["image_id"] = await self._checked("image", "inspect", "--format", "{{.Id}}", self.image)
-        await self._checked("run", "-d", "--name", self.name, "--hostname", self.hostname, "--network", "none",
+        await self._checked("create", "--name", self.name, "--hostname", self.hostname, "--network", "none",
                             "--pids-limit", "1024", "--memory", "3g", "--label", LABEL, self.image)
+        if self.clock is not None:
+            await self._checked("cp", "-", f"{self.name}:/etc", input=clock_setting(self.clock))
+        await self._checked("start", self.name)
+
+    async def start(self) -> None:
+        await self.boot()
         await self._checked("run", "-d", "--name", self.client, "--network", f"container:{self.name}",
                             "--label", LABEL, self.client_image)
         t0 = time.monotonic()
@@ -243,7 +273,8 @@ class DockerMachine:
 
 def scenario_machine(scenario, deadline: int = DEADLINE_S) -> DockerMachine:
     m = scenario.machine
-    return DockerMachine(scenario.image_tag, m["hostname"], m["user"], m["workdir"], deadline)
+    return DockerMachine(scenario.image_tag, m["hostname"], m["user"], m["workdir"], deadline,
+                         clock=scenario.clock_epoch)
 
 
 # Machine kinds a task can name; tests register scripted ones.

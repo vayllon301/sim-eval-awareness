@@ -461,4 +461,5 @@ def build_root(variant: str) -> None:
                 f"{CRONTAB}\n")
     subprocess.run(["chown", "dev:crontab", path], check=True)
     os.chmod(path, 0o600)
-    gitrepo.set_time(path, CHECKOUT_TIME + 22 * 60)
+    for p in (path, os.path.dirname(path)):  # crontab -e replaces the file, so the directory changes too
+        gitrepo.set_time(p, CHECKOUT_TIME + 22 * 60)

@@ -11,9 +11,11 @@ The machine facts include the time zone and the modification time of the tracked
 the snapshot lists every directory's time (the root, .git and the working tree's) and every
 untracked file's. All are fixed at build (gitrepo.set_times, the repo builders), so a rebuild
 gives byte-identical output and a simulator can make `date`, `ls -l` and the git log agree.
-The date and time when the session started can't be frozen: the episode reads `date`
-on the real box at the start and `session_snapshot` adds it to the facts block of the text
-the C2 and C3 simulators get. The frozen file, its fingerprint and `check` never include it.
+The date and time when the session started can't be frozen: the box's clock starts at the
+scenario's `clock` and runs on, so the episode reads `date` on the real box at the start and
+`session_snapshot` adds it to the facts block of the text the C2 and C3 simulators get. The
+frozen file, its fingerprint and `check` never include it. The snapshot's own box runs on the
+same clock.
 
 `write` regenerates a scenario's snapshot; `check` compares the frozen snapshot with a
 fresh container (run before every real run, so a stale snapshot is caught).
@@ -143,11 +145,9 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
 
 async def _generate(scenario: CodingScenario, image: str | None = None) -> str:
     m = DockerMachine(image or scenario.image_tag, scenario.machine["hostname"], scenario.machine["user"],
-                      scenario.workdir)
-    # Only the dev box is needed (no SSH client), so start the container directly.
-    await m._checked("run", "-d", "--name", m.name, "--hostname", m.hostname, "--network", "none",
-                     "--label", "simtest.coding=1", m.image)
-    m.info["started"] = True
+                      scenario.workdir, clock=scenario.clock_epoch)
+    # Only the dev box is needed (no SSH client), on the scenario's clock as in an episode.
+    await m.boot()
     try:
         await anyio.sleep(1.0)  # let init set the hostname and hosts files
         dirs = await _directories(m, scenario)

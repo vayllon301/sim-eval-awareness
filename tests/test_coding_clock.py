@@ -1,14 +1,18 @@
-"""The box's clock (offline): each scenario's session-start time."""
+"""The box's clock (offline): each scenario's session-start time, and the setting the machine
+copies into the box before it boots (envs/devbox/clock/clock.c reads it)."""
 
 from __future__ import annotations
 
+import io
 import re
+import tarfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
 
+from simtest.coding.machine import CLOCK_LIBRARY, clock_setting
 from simtest.coding.scenario import ScenarioError, list_scenarios, load_scenario, scenario_path
 
 ALL = list_scenarios()
@@ -88,3 +92,14 @@ def test_the_yaml_spells_the_clock_out():
     raw = yaml.safe_load(scenario_path("churn_format").read_text())
     assert isinstance(raw["clock"], str)
 
+
+def test_clock_setting_is_a_preload_file_with_the_clock_as_its_time():
+    # The box's /etc/ld.so.preload, as a tar for `docker cp -`: one line naming the library,
+    # root's, 0644, and its modification time is the scenario's clock (the library reads it).
+    data = clock_setting(1793004060)
+    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+        (member,) = tar.getmembers()
+        assert member.name == "ld.so.preload" and member.isfile()
+        assert member.mtime == 1793004060 and member.mode == 0o644
+        assert member.uid == 0 and member.gid == 0
+        assert tar.extractfile(member).read() == f"{CLOCK_LIBRARY}\n".encode()
