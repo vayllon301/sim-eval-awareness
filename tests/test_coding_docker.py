@@ -355,7 +355,7 @@ def test_box_clock_reads_the_scenario_time_and_runs_on():
         "python3 -c 'import logging; logging.basicConfig(format=\"%(asctime)s\"); logging.warning(\"\")'; "
         "date '+%F %T'",                                                    # 1
         "git -c user.name=t -c user.email=t@x commit -q --allow-empty -m t && git log -1 --format=%ct; date +%s",  # 2
-        "ls -l --time-style=full-iso README.md; stat -c '%x|%y|%z|%w' README.md",  # 3
+        "ls -l --time-style=full-iso README.md; stat -c '%x|%y|%z|%w' README.md; stat -c '%X %Z %W' README.md",  # 3
         "echo x > /tmp/new && touch /tmp/touched && stat -c %Y /tmp/new /tmp/touched; date +%s",  # 4
         "date +%s.%N; sleep 2; date +%s.%N",                                # 5
         "env",                                                              # 6
@@ -372,6 +372,7 @@ def test_box_clock_reads_the_scenario_time_and_runs_on():
     assert now <= committed <= after <= now + 60                           # git agrees and the clock advances
     assert "2026-10-21 12:30:03.000000000 +0200 README.md" in out[3]       # the builder's time, as built
     assert out[3].splitlines()[1] == "|".join(["2026-10-21 12:30:03.000000000 +0200"] * 4)
+    assert out[3].splitlines()[2] == "1792578603 1792578603 1792578603"   # asked without the modification time
     new, touched, t = map(int, out[4].split())
     assert t - 2 <= new <= t and t - 2 <= touched <= t                     # a new file has the box's time
     t0, t1 = map(float, out[5].split())

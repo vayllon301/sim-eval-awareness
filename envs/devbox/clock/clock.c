@@ -159,7 +159,8 @@ int statx(int d, const char *restrict p, int fl, unsigned int mask, struct statx
     if (!g) return NOREAL;
     int r = g(d, p, fl, mask, b);
     if (r == 0 && off) {
-        int64_t m = shown(xns(&b->stx_mtime), 0, 1);
+        /* A band time is shown as the modification time; without one, as the clock. */
+        int64_t m = b->stx_mask & STATX_MTIME ? shown(xns(&b->stx_mtime), 0, 1) : clock0;
         if (b->stx_mask & STATX_ATIME) xput(&b->stx_atime, shown(xns(&b->stx_atime), m, 0));
         if (b->stx_mask & STATX_CTIME) xput(&b->stx_ctime, shown(xns(&b->stx_ctime), m, 0));
         if (b->stx_mask & STATX_BTIME) xput(&b->stx_btime, shown(xns(&b->stx_btime), m, 0));
