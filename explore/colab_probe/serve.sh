@@ -26,7 +26,7 @@ SIM_REPO=${SIM_REPO:-Qwen/Qwen-AgentWorld-35B-A3B}
 # AgentWorld's card asks for at least 128K. On a 96 GB G4 both fit at 128K; on an 80 GB A100 or
 # H100 the agent (27.4 GiB of weights, about 8 GiB of KV at 128K) does not, so both get 64K.
 GPU_MIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
-# On the G4, 0.42 left the agent 7.6 of the 8.3 GiB of KV it needs at 128K (LOG.md, 30-10-2026).
+# On the G4, 0.42 left the agent 7.6 of the 8.3 GiB of KV it needs at 128K (LOG.md, 29-10-2026).
 if [ "$GPU_MIB" -ge 90000 ]; then mem=0.47 sim=0.47 len=131072; else mem=0.44 sim=0.50 len=65536; fi
 AGENT_MEM=${AGENT_MEM:-$mem}
 SIM_MEM=${SIM_MEM:-$sim}

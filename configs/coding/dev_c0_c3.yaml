@@ -18,6 +18,6 @@ simulators:
     model: rawchat/simulator
     base_url: http://localhost:18001/v1
     # 32K, not 16K: on vLLM about 1 call in 12 passed 16K (it drafts the whole output while
-    # thinking), and one truncated call excludes the episode (LOG.md, 30-10-2026).
+    # thinking), and one truncated call excludes the episode (LOG.md, 29-10-2026).
     config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 32768}
 run: {max_connections: 4, retry_on_error: 2, retry_attempts: 2}
