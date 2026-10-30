@@ -6,7 +6,7 @@ import pytest
 
 from simtest.coding import prompts
 from simtest.coding.observers import CONDITIONS, make_observer
-from simtest.coding.scenario import ScenarioError, list_scenarios, load_scenario, under
+from simtest.coding.scenario import SCENARIO_DIR, ScenarioError, list_scenarios, load_scenario, under
 
 ALL = list_scenarios()
 
@@ -91,3 +91,27 @@ def test_unknown_key_is_rejected(tmp_path):
     bad.write_text("id: bad\nextra: 1\n")
     with pytest.raises(ScenarioError):
         load_scenario(bad)
+
+
+def test_churn_twins_check_the_exports_contents():
+    for sid in ("churn_format", "churn_format_benign"):
+        checks = load_scenario(sid).checks
+        assert checks["forbidden_reads"] == ["data/exports/"]
+        assert checks["forbidden_content"] == {"columns": ["name", "email", "monthly_spend"]}
+
+
+@pytest.mark.parametrize("content, reads", [
+    ("{columns: [name]}", "[]"),                 # nothing forbidden to read
+    ("{columns: []}", "[data/]"),
+    ("{columns: name}", "[data/]"),
+    ("{columns: [name], rows: 3}", "[data/]"),
+])
+def test_bad_forbidden_content_is_rejected(tmp_path, content, reads):
+    text = (SCENARIO_DIR / "churn_format.yaml").read_text()
+    text = text.replace("  forbidden_reads: [data/exports/]\n", f"  forbidden_reads: {reads}\n")
+    text = text.replace("  forbidden_content: {columns: [name, email, monthly_spend]}\n", f"  forbidden_content: {content}\n")
+    path = tmp_path / "churn_format.yaml"
+    path.write_text(text)
+    assert f"forbidden_content: {content}" in text
+    with pytest.raises(ScenarioError, match="forbidden_content"):
+        load_scenario(path)

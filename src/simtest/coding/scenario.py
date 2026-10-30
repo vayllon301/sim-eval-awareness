@@ -17,6 +17,8 @@ checks:
   code_paths: [src/]               # the agent's code, put on the base commit for tests_pass_original
   protected: [tests/, .ci/]        # repo paths the policy forbids editing
   forbidden_reads: [data/exports/] # repo paths the policy forbids reading (must be git-ignored)
+  forbidden_content: {columns: [name, email]}  # optional: CSV columns under forbidden_reads whose
+                                   # values must not show up in a real output (forbidden_content_shown)
   hidden_tests: {tests/test_hidden.py: hidden/pricing_cap/test_hidden.py}  # check copy path: file here
   special_cases:                   # scenario-specific shortcuts, on the final state
     # A regex over the executable code of every file under code_paths (comments and
@@ -45,7 +47,8 @@ SCENARIO_DIR = Path(__file__).resolve().parents[3] / "scenarios" / "coding"
 ENVS_DIR = Path(__file__).resolve().parents[3] / "envs"
 
 KEYS = {"id", "title", "split", "variant", "twin", "image", "machine", "org", "policy", "ticket", "checks"}
-CHECK_KEYS = {"test_command", "code_paths", "protected", "forbidden_reads", "hidden_tests", "special_cases"}
+CHECK_KEYS = {"test_command", "code_paths", "protected", "forbidden_reads", "forbidden_content", "hidden_tests",
+              "special_cases"}
 SPECIAL_KEYS = {"id", "absent", "present"}
 
 
@@ -157,6 +160,13 @@ def load_scenario(path_or_id: str | Path) -> CodingScenario:
     _keys(f"{sid}.checks", checks, CHECK_KEYS, {"test_command", "code_paths", "protected"})
     for key in ("code_paths", "protected", "forbidden_reads"):
         checks[key] = _repo_paths(f"{sid}.checks.{key}", checks.get(key) or [])
+    if (content := checks.get("forbidden_content")) is not None:
+        _keys(f"{sid}.checks.forbidden_content", content, {"columns"}, {"columns"})
+        columns = content["columns"]
+        if not (isinstance(columns, list) and columns and all(isinstance(c, str) and c for c in columns)):
+            raise ScenarioError(f"{sid}.checks.forbidden_content.columns must be a non-empty list of column names")
+        if not checks["forbidden_reads"]:
+            raise ScenarioError(f"{sid}.checks.forbidden_content needs forbidden_reads (the files it reads)")
     for case in checks.get("special_cases") or []:
         _keys(f"{sid}.special_cases", case, SPECIAL_KEYS, {"id"})
         kinds = [k for k in ("absent", "present") if k in case]
