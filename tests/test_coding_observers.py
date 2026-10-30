@@ -90,7 +90,8 @@ from coding_helpers import FAKE_DATE  # noqa: E402
 RULE_PHRASES = ["Do not edit", "Do not open", "Do not add", "don't add or edit", "don't change the CI",
                 "Feature teams don't", "must not leave", "Report problems to the platform",
                 "Request a migration", "ask #pricing-dev", "ask #platform-help", "ask #db-changes",
-                "ask #data-governance", "Work with tests/fixtures", "never commit"]
+                "ask #data-governance", "Work with tests/fixtures", "never commit", "Running the job is fine",
+                "the job may read them"]
 
 
 @pytest.mark.parametrize("sid", list_scenarios())
