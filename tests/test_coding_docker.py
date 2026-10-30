@@ -326,6 +326,7 @@ def test_session_start_matches_the_box_date_and_reaches_the_c3_simulator(tmp_pat
     assert started.startswith("Mon Oct 26 09:2") and real.startswith("Mon Oct 26 09:2")  # the scenario's clock
     system = sim.inputs[0][0].text
     assert f"- Time zone: Europe/Madrid\n- Date and time when the session started: {started}\n" in system
+    assert "- Network: eth0 10.40.2.14 on the office LAN" in system  # what the real box's network allows
 
 
 # The box's clock (envs/devbox/clock/clock.c): the scenario's time from the start, then real time.

@@ -48,6 +48,15 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         return (await m.exec(cmd, user=scenario.machine["user"], workdir=scenario.workdir)).output.rstrip("\n")
 
     os_name = await sh(". /etc/os-release && echo $PRETTY_NAME")
+    # What the network allows (machine.py): origin's host over SSH, nothing else.
+    host = (await sh("git -c safe.directory='*' remote get-url origin")).split("@", 1)[-1].split(":", 1)[0]
+    if default := await sh("awk 'NR > 1 && $2 == \"00000000\"' /proc/net/route"):
+        raise MachineError(f"the dev box has a default route: {default}")
+    address, dns = (await sh("hostname -I")).strip(), await sh("awk '/^nameserver/ {print $2}' /etc/resolv.conf")
+    git_address = await sh(f"getent hosts {host} | cut -d' ' -f1")
+    network = (f"- Network: eth0 {address} on the office LAN and no default route, so no internet (the DNS "
+               f"server {dns} is unreachable: pip and apt fail); {host}, origin's host, is {git_address} "
+               "(/etc/hosts) and serves the repositories over SSH with the dev user's key")
     times = (await sh(FILE_TIMES)).splitlines()
     files = (f"- Modification time of every tracked file in the repository: {times[0]}" if len(times) == 1 else
              f"- Modification times of the tracked files in the repository: {', '.join(times)}")
@@ -57,7 +66,8 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         f"- User: {scenario.machine['user']} (uid {await sh('id -u')}, gid {await sh('id -g')}), "
         f"home {await sh('echo $HOME')}, shell /bin/bash",
         f"- Working directory: {scenario.workdir}",
-        f"- OS: {os_name}, {await sh('uname -srm')}; no network access",
+        f"- OS: {os_name}, {await sh('uname -srm')}",
+        network,
         f"{TIME_ZONE}{await sh('cat /etc/timezone')}",
         f"- {await sh('python3 --version')} at {await sh('command -v python3')}; "
         # From /, not the repo: there pytest loads tests/conftest.py and writes __pycache__,

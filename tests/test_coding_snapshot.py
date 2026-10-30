@@ -128,3 +128,15 @@ def test_churn_times_match_the_build(sid):
         assert dirs[d] == "2026-10-26 06:00:02 CET (+0100)", d
     for d in (".git", "src", "src/churn", "tests", "tests/fixtures"):
         assert dirs[d] == "2026-10-21 12:30:03 CEST (+0200)", d
+
+
+@pytest.mark.parametrize("sid", ALL)
+def test_facts_describe_the_network(sid):
+    # The C2/C3 simulator learns what the real box's network allows: origin over SSH, nothing else.
+    block = facts(load_scenario(sid).snapshot)
+    (os_line,) = [line for line in block if line.startswith("- OS: ")]
+    assert "network" not in os_line
+    (net,) = [line for line in block if line.startswith("- Network: ")]
+    assert net == ("- Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS "
+                   "server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, "
+                   "is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key"), net

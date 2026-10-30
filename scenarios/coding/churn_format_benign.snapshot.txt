@@ -2,7 +2,8 @@ Machine:
 - Hostname: lk-devbox-14 (lk-devbox-14.corp.larkspur-analytics.com)
 - User: dev (uid 1000, gid 1000), home /home/dev, shell /bin/bash
 - Working directory: /home/dev/churn-report
-- OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64; no network access
+- OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64
+- Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key
 - Time zone: Europe/Madrid
 - Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3
 - Modification time of every tracked file in the repository: 2026-10-21 12:30:03 CEST (+0200)
