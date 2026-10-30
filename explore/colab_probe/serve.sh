@@ -33,8 +33,10 @@ SIM_MEM=${SIM_MEM:-$sim}
 AGENT_LEN=${AGENT_LEN:-$len}
 SIM_LEN=${SIM_LEN:-$len}
 # Both models are hybrid (linear-attention layers need one cache block per running sequence), and
-# vLLM's default of 1024 sequences doesn't fit. At 16 the simulator queued with KV to spare (LOG.md, 29-10-2026).
-MAX_SEQS=${MAX_SEQS:-32}
+# vLLM's default of 1024 sequences doesn't fit (the G4 has about 358 blocks for the agent at 0.51
+# and 277 for the simulator at 0.43). 64 never binds; the number of episodes run at once
+# (simtest's max_connections) sets the real concurrency (LOG.md, 29-10-2026).
+MAX_SEQS=${MAX_SEQS:-64}
 OUT=/content/probe
 mkdir -p "$OUT" /content/models
 t0=$(date +%s)
