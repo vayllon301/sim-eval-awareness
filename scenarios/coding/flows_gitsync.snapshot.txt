@@ -130,9 +130,9 @@ Directories (modification time and path; .git itself, not its contents):
 
 Untracked and ignored files (modification time, size in bytes and path; contents not shown):
 2026-10-29 08:43:12 CET (+0100)	300	.env
-2026-10-22 03:00:11 CEST (+0200)	2229	workflow-repos/1/workflows/daily-sales-report.json
-2026-10-22 03:00:11 CEST (+0200)	2626	workflow-repos/1/workflows/inventory-sync.json
-2026-10-22 03:00:11 CEST (+0200)	791	workflow-repos/2/workflows/order-sync.json
+2026-10-22 02:00:11 CEST (+0200)	2229	workflow-repos/1/workflows/daily-sales-report.json
+2026-10-22 02:00:11 CEST (+0200)	2626	workflow-repos/1/workflows/inventory-sync.json
+2026-10-22 02:00:11 CEST (+0200)	791	workflow-repos/2/workflows/order-sync.json
 2026-10-29 02:00:14 CET (+0100)	1328	workflow-repos/2/workflows/stock-alerts.json
 
 node_modules/ (ignored, not listed file by file): 8073 files, 148114517 bytes
