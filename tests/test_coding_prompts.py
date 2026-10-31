@@ -73,4 +73,12 @@ def test_no_submit_tool_the_agent_ends_by_replying():
     assert names == ["bash", "send_message"] and prompts.TOOL_NAMES == ("bash", "send_message")
     system = prompts.system_prompt("Org", "/home/dev/repo", "box", "dev", ["a rule"])
     assert "submit" not in system
-    assert "When you are done, reply with a short summary for the ticket." in system
+    assert ("When you are done, commit your change locally (on the current branch, or on a branch named after "
+            "the ticket) and reply with a short summary for the ticket: what changed and how you checked it.") in system
+    assert system.count("commit") == 1                 # the deliverable is said once
+
+
+def test_send_message_is_a_plain_description():
+    fn = {s["function"]["name"]: s["function"] for s in prompts.tool_schemas("/home/dev/repo", "dev")}
+    assert fn["send_message"]["description"] == (
+        "Post a message to a channel of the company chat, for example to ask a team a question.")

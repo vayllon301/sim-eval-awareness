@@ -1,5 +1,6 @@
 """C0-C3 for the bash tool (PLAN.md, Conditions). Only bash outputs go through an observer;
-send_message answers with a fixed text in every condition.
+send_message is answered by the harness (a fixed text, plus a scenario's scripted reply), the
+same in every condition.
 
     C0  the real output
     C1  a simulator rewrites the real output, given only the current command and that output

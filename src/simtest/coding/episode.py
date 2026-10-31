@@ -11,7 +11,10 @@ Each assistant message, in two phases like the office testbed (src/simtest/episo
            agent sees C0's real output or the simulator's.
 
 bash runs on the shadow machine in every condition; send_message is recorded and answered
-locally (nothing is sent anywhere). There is no submit tool: as in a real coding agent, the
+locally (nothing is sent anywhere): `Message sent.`, and on the first post to a channel with a
+scripted reply (scenario `chat`, an owner channel) that reply too, stamped with the box's time
+(`date +%H:%M`, harness work). The harness answers it, never a simulator, so it is the same in
+every condition; the step records it. There is no submit tool: as in a real coding agent, the
 episode ends when the agent replies without a tool call (end reason `no_tool_call`, the
 normal finish), and that reply's visible text is stored as `final_message`, its summary for
 the ticket. A call to any other tool (a hallucinated `submit` included) is answered as an
@@ -27,6 +30,7 @@ isn't a clean finish is kept and flagged, like the office testbed.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from inspect_ai.log import transcript
@@ -51,6 +55,7 @@ from .snapshot import session_start
 FINISHED, MAX_TURNS = "no_tool_call", "max_turns"
 VALID_END_REASONS = frozenset({FINISHED, MAX_TURNS})
 MESSAGE_SENT = "Message sent."
+REPLY = "[{channel} {time}] {text}"   # a scripted reply as the agent sees it, after MESSAGE_SENT
 
 
 class CodingEpisode(StoreModel):
@@ -110,6 +115,7 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
         episode.scenario, episode.variant = scenario.id, scenario.variant
         steps: list[dict] = []
         notes: set[str] = set()
+        replied: set[str] = set()   # the channels whose scripted reply was given
 
         def save(end_reason: str = "", error: str | None = None, status: int | None = None) -> None:
             episode.machine = clean(machine.info)
@@ -167,6 +173,11 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
                     real = None
                     if call.function == "send_message":
                         step.update(executed=True, result={"ok": arg_error is None, "error": arg_error})
+                        reply = scenario.chat_reply((args or {}).get("channel")) if not arg_error else None
+                        if reply and reply[0] not in replied:
+                            replied.add(reply[0])
+                            step["reply"] = {"channel": reply[0], "time": await _box_time(machine, scenario),
+                                             "text": reply[1]}
                     elif call.function == "bash":
                         command = (args or {}).get("command")
                         if arg_error or not isinstance(command, str):
@@ -246,9 +257,21 @@ def _safe_args(args) -> dict:
     return clean(args) if isinstance(args, dict) else {"_value": clean(repr(args))}
 
 
+async def _box_time(machine, scenario: CodingScenario) -> str:
+    """The box's time as HH:MM (harness work, like session_start), for a scripted reply."""
+    res = await machine.exec("date +%H:%M", user=scenario.machine["user"])
+    text = res.output.strip()
+    if res.exit_code != 0 or not re.fullmatch(r"\d\d:\d\d", text):
+        raise MachineError(f"could not read the time on the dev box: {res.output[-200:]!r}")
+    return text
+
+
 async def _answer(observer, call, step, args, arg_error, real, notes: set[str]) -> str:
     if call.function == "send_message":
-        return f"Error: {arg_error}" if arg_error else MESSAGE_SENT
+        if arg_error:
+            return f"Error: {arg_error}"
+        reply = step.get("reply")
+        return MESSAGE_SENT + ("\n" + REPLY.format(**reply) if reply else "")
     if call.function != "bash":
         return f"Error: {step['result'].get('error', 'unknown tool')}"
     if real is None:

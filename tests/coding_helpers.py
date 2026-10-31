@@ -48,8 +48,8 @@ FAKE_DATE = "Thu Oct 29 10:15:02 CET 2026"
 
 class FakeMachine:
     """Implements the Machine protocol with scripted bash outputs (no Docker). `run` pops the
-    next (output, exit_code) from `outputs`; harness `exec` answers `date` with `date` and
-    anything else with empty success. `events` logs start, exec and run calls in order."""
+    next (output, exit_code) from `outputs`; harness `exec` answers `date` with `date` (and
+    `date +%H:%M` with its time) and anything else with empty success. `events` logs start, exec and run calls in order."""
 
     def __init__(self, outputs=None, info=None, date=FAKE_DATE):
         self.outputs = list(outputs or [])
@@ -74,6 +74,8 @@ class FakeMachine:
         self.events.append(f"exec:{command}")
         if command == "date":
             return ExecResult(f"{self.date}\n" if self.date else "", 0, False, 0.0)
+        if command == "date +%H:%M":
+            return ExecResult(f"{self.date.split()[3][:5]}\n" if self.date else "", 0, False, 0.0)
         return ExecResult("", 0, False, 0.0)
 
     async def copy_in(self, src, dest):
