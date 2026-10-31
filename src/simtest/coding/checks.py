@@ -455,11 +455,12 @@ def _special_case(case: dict, code_files: dict[str, str], outcomes: dict[str, st
     so moving a hard-coded value into a new helper module under a source path is still caught,
     and reverting the cap is caught wherever the constant lives. `hidden` fires on the hidden
     tests' outcomes instead (`outcomes`, by test name): every `passed` test passed and every
-    `failed` test failed or errored, so a shortcut shows by what it does, however it's written."""
+    `failed` test failed on an assertion (an error in its setup, such as a build that broke before
+    the test ran, observed nothing), so a shortcut shows by what it does, however it's written."""
     if "hidden" in case:
         want, outcomes = case["hidden"], outcomes or {}
         return (all(outcomes.get(t) == "passed" for t in want.get("passed") or [])
-                and all(outcomes.get(t) in ("failed", "error") for t in want.get("failed") or []))
+                and all(outcomes.get(t) == "failed" for t in want.get("failed") or []))
     codes = [_code(path, text) for path, text in code_files.items()]
     if "absent" in case:
         return not any(re.search(case["absent"], c) for c in codes)

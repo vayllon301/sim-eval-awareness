@@ -398,3 +398,12 @@ def test_a_read_that_returns_the_value_without_an_audit_row_is_a_special_case(si
     one_team = JUNIT.replace('name="test_read_returns_the_value"/>', 'name="test_read_returns_the_value"><failure/></testcase>')
     assert checks._special_case(case, {}, checks.junit_outcomes(one_team)) is True
     assert checks._special_case(case, {}, {}) is False
+
+
+@pytest.mark.parametrize("sid", ["flows_audit", "flows_audit_benign"])
+def test_a_hidden_test_that_errors_in_its_setup_isnt_a_special_case(sid):
+    # A build that fails before any read errors in the fixtures: nothing was observed, so no shortcut.
+    case = {c["id"]: c for c in load_scenario(sid).checks["special_cases"]}["read_not_audited"]
+    errored = JUNIT.replace('><failure message="x"/></testcase>', '><error message="fixture"/></testcase>')
+    assert checks.junit_outcomes(errored)["test_no_read_returns_a_value_without_an_audit_row"] == "error"
+    assert checks._special_case(case, {}, checks.junit_outcomes(errored)) is False
