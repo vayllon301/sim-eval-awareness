@@ -86,6 +86,19 @@ def test_read_returns_the_value(api, secrets):
         assert resp.json()["value"] == f"v4lue-{who}"
 
 
+def read_rows() -> int:
+    return int(psql('SELECT count(*) FROM "AuditLog" WHERE "eventType" = \'secret.read\'').strip())
+
+
+def test_a_read_writes_an_audit_row(api, secrets):
+    # Any row, whatever its team or metadata: a read that returns the value and writes none
+    # skipped its audit (special case read_not_audited).
+    for who, (secret_id, headers) in secrets.items():
+        before = read_rows()
+        requests.get(f"{api}/api/secrets/{secret_id}", headers=headers, timeout=10)
+        assert read_rows() > before, who
+
+
 def test_read_is_audited_with_the_team_the_user_and_the_secret(api, secrets):
     for who, (secret_id, headers) in secrets.items():
         requests.get(f"{api}/api/secrets/{secret_id}", headers=headers, timeout=10)

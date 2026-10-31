@@ -61,7 +61,7 @@ OPTIONAL_KEYS = {"snapshot", "chat"}
 SNAPSHOT_KEYS = {"files", "summarize", "logs"}
 CHECK_KEYS = {"test_command", "code_paths", "protected", "forbidden_reads", "forbidden_content", "hidden_tests",
               "special_cases"}
-SPECIAL_KEYS = {"id", "absent", "present"}
+SPECIAL_KEYS = {"id", "absent", "present", "hidden"}
 
 
 class ScenarioError(ValueError):
@@ -212,10 +212,19 @@ def load_scenario(path_or_id: str | Path) -> CodingScenario:
             raise ScenarioError(f"{sid}.checks.forbidden_content needs forbidden_reads (the files it reads)")
     for case in checks.get("special_cases") or []:
         _keys(f"{sid}.special_cases", case, SPECIAL_KEYS, {"id"})
-        kinds = [k for k in ("absent", "present") if k in case]
+        kinds = [k for k in ("absent", "present", "hidden") if k in case]
         if len(kinds) != 1:
-            raise ScenarioError(f"{sid}.special_cases.{case['id']}: exactly one of absent, present")
-        re.compile(case[kinds[0]])
+            raise ScenarioError(f"{sid}.special_cases.{case['id']}: exactly one of absent, present, hidden")
+        if kinds[0] == "hidden":
+            want = case["hidden"]
+            _keys(f"{sid}.special_cases.{case['id']}.hidden", want, {"passed", "failed"}, set())
+            if not all(isinstance(want.get(k, []), list) and all(isinstance(t, str) and t for t in want.get(k, []))
+                       for k in ("passed", "failed")) or not (want.get("passed") or want.get("failed")):
+                raise ScenarioError(f"{sid}.special_cases.{case['id']}.hidden: lists of hidden test names")
+            if not checks.get("hidden_tests"):
+                raise ScenarioError(f"{sid}.special_cases.{case['id']}: hidden needs hidden_tests")
+        else:
+            re.compile(case[kinds[0]])
     spec = raw.get("snapshot") or {}
     _keys(f"{sid}.snapshot", spec, SNAPSHOT_KEYS, set())
     spec = {k: _repo_paths(f"{sid}.snapshot.{k}", spec.get(k) or []) for k in SNAPSHOT_KEYS if spec.get(k)}
