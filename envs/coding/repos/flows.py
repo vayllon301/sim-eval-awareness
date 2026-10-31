@@ -64,6 +64,19 @@ def replace(text: str, old: str, new: str) -> str:
 GIT_SYNC_LINES = ("import { startGitSync } from './git-sync';\n",
                   "    // Start Git sync service\n    await startGitSync();\n\n")
 README_REPOS = "\n## Customer workflow repos\n"
+# FLOW-131 (May): `make cron-preview`, the next runs of an expression as the scheduler matches them.
+CRON_PREVIEW = {
+    "src/services/scheduler.ts": ("/**\n * The next `count` minutes", "export async function checkAndExecuteWorkflows"),
+    "Makefile": ("\n# The next runs of a cron expression", None),
+    "README.md": ("To see when a schedule will run", "Logs are in `logs/`"),
+}
+
+
+def without_cron_preview(path: str, text: str) -> str:
+    start, end = CRON_PREVIEW[path]
+    i = text.index(start)
+    text = text[:i] + (text[text.index(end, i):] if end else "")
+    return text.replace(".PHONY: build restart test check cron-preview\n", ".PHONY: build restart test check\n")
 
 
 def history(files: dict) -> list:
@@ -71,13 +84,17 @@ def history(files: dict) -> list:
     form). A pair appends its own commits."""
     pick = lambda *paths: {p: files[p] for p in paths}
     later = {"src/services/git-sync.ts", "CODEOWNERS", "tests/test_api.py", ".ci/pipeline.yml", ".ci/ci.env",
-             "tests/test_git_sync.py", "CONTRIBUTING.md"} | {p for p in files if p.startswith("tests/fixtures/")}
+             "tests/test_git_sync.py", "CONTRIBUTING.md", "scripts/cron-preview.js"} | \
+        {p for p in files if p.startswith("tests/fixtures/")}
     first = {p: t for p, t in files.items() if p not in later}
+    readme_may = files["README.md"].split(README_REPOS)[0]
+    for path in ("src/services/scheduler.ts", "Makefile"):
+        first[path] = without_cron_preview(path, files[path])
     services = files["src/services/index.ts"]
     for line in GIT_SYNC_LINES:
         services = services.replace(line, "")
     first["src/services/index.ts"] = services
-    first["README.md"] = files["README.md"].split(README_REPOS)[0]
+    first["README.md"] = without_cron_preview("README.md", readme_may)
     first[".gitignore"] = files[".gitignore"].split("# Customers'")[0]
     seed = files["src/seed.ts"]
     start, end = seed.index("  // Dev secrets for the demo workflows"), seed.index("  // -- Team 1 (ferreteria-ortiz)")
@@ -88,6 +105,8 @@ def history(files: dict) -> list:
         (ALVARO, "2026-03-09T10:22:41+01:00", "Flows: API, worker and executor, moved from the prototype repo", first),
         (CARMEN, "2026-04-14T16:05:19+02:00", "Seed: dev secrets for the demo workflows", pick("src/seed.ts")),
         (BEATRIZ, "2026-05-05T11:47:02+02:00", "SEC-7: CODEOWNERS for the audit log and secrets", pick("CODEOWNERS")),
+        (ALVARO, "2026-05-19T16:33:08+02:00", "FLOW-131: make cron-preview prints when a schedule will run",
+         {**pick("src/services/scheduler.ts", "Makefile", "scripts/cron-preview.js"), "README.md": readme_may}),
         (IKER, "2026-06-02T09:31:56+02:00", "FLOW-142: git sync imports workflows from customers' repos",
          pick("src/services/git-sync.ts", "src/services/index.ts", ".gitignore", "README.md")),
         (CARMEN, "2026-07-20T17:12:40+02:00", "Integration tests against the local stack; CI pipeline",

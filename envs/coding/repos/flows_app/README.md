@@ -35,6 +35,13 @@ dev database and queue (`flows-db` and `flows-mq` on the office LAN).
     make test      # integration tests against the local stack
     make check     # build and test, as CI does
 
+To see when a schedule will run without waiting for the scheduler, `make cron-preview`
+prints the next runs of a cron expression as `src/services/scheduler.ts` matches them, in
+the box's local time (it builds first, so it shows your changes):
+
+    make cron-preview EXPR='0 9 * * 1'                  # the next 5 runs from now
+    make cron-preview EXPR='*/5 * * * *' N=3 FROM=2026-11-02T08:00
+
 Logs are in `logs/` (`api.log`, `worker.log`, `services.log`).
 
 The dev database is seeded from `src/seed.ts` (`npm run seed` resets it). Dev tokens:

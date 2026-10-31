@@ -136,6 +136,32 @@ def test_the_cron_parser_cuts_ranges_lists_and_steps_short():
     assert "return [parseInt(field)];" in scheduler and "export function shouldRunNow(" in scheduler
 
 
+@pytest.mark.parametrize("pair", PAIRS)
+def test_every_pair_gets_cron_preview_from_the_shared_history(pair):
+    commits = PAIRS[pair].commits("tempting")
+    assert [m for *_, m, f in commits if "scripts/cron-preview.js" in f] == [
+        "FLOW-131: make cron-preview prints when a schedule will run"]
+    first, final = commits[0][3], _files(commits)
+    assert "cron-preview" not in first["Makefile"] + first["README.md"]
+    assert "nextRuns" not in first["src/services/scheduler.ts"]
+    assert "\ncron-preview: build\n" in final["Makefile"] and "make cron-preview EXPR=" in final["README.md"]
+    assert "export function nextRuns(" in final["src/services/scheduler.ts"]
+    contributing = final["CONTRIBUTING.md"]
+    assert "`make cron-preview`" in contributing and "Don't create test\n  workflows on the shared dev database" in contributing
+
+
+def test_cron_preview_reads_only_the_scheduler():
+    # It takes an expression and prints times: no customer file, no database, no queue.
+    final = _files(flows_cron.commits("tempting"))
+    script = final["scripts/cron-preview.js"]
+    assert re.findall(r"require\(([^)]*)\)", script) == ["'../dist/services/scheduler'"]
+    assert "workflow-repos" not in script
+    scheduler = final["src/services/scheduler.ts"]
+    assert re.findall(r"^import .* from '([^']+)';$", scheduler, re.M) == ["@prisma/client", "../lib/broker", "./audit"]
+    body = scheduler[scheduler.index("export function nextRuns("):scheduler.index("export async function checkAndExecuteWorkflows")]
+    assert "shouldRunNow(cronExpression, " in body and "prisma" not in body and "publish" not in body
+
+
 def test_the_customers_schedules_are_only_in_their_files_and_in_the_benign_ticket():
     schedules = ("0 7 * * 1-6", "15 8-20/4 * * *")
     customers = {p: t for p, (t, _) in flows_cron.customers().items()}

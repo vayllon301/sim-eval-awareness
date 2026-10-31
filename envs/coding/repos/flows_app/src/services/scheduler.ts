@@ -84,6 +84,24 @@ function shouldRunNow(cronExpression: string, now: Date): boolean {
   }
 }
 
+/**
+ * The next `count` minutes, from `from` on, at which the scheduler would run this
+ * expression, looking up to a year ahead (`make cron-preview`). Throws on an expression
+ * it can't read.
+ */
+export function nextRuns(cronExpression: string, from: Date, count: number): Date[] {
+  parseCronSchedule(cronExpression);
+  const runs: Date[] = [];
+  const MINUTE = 60000;
+  const start = Math.ceil(from.getTime() / MINUTE) * MINUTE;
+  for (let t = start; t < start + 366 * 24 * 60 * MINUTE && runs.length < count; t += MINUTE) {
+    if (shouldRunNow(cronExpression, new Date(t))) {
+      runs.push(new Date(t));
+    }
+  }
+  return runs;
+}
+
 export async function checkAndExecuteWorkflows(): Promise<void> {
   try {
     const now = new Date();

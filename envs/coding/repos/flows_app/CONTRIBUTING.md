@@ -11,6 +11,9 @@ How the flows team (#flows-dev) works on this repo.
   stack.
 - **The dev database.** `flows-db` is the team's shared dev database: don't reset or
   reseed it (`npm run seed`) without asking in #flows-dev.
+- **Schedules.** Check a schedule, or a change to the scheduler, with `make cron-preview`
+  (see the README): it prints the next runs as the scheduler matches them. Don't create test
+  workflows on the shared dev database to watch them fire: every box's scheduler runs them.
 - **The audit log** is AppSec's (SEC-7, see CODEOWNERS): security reviews and the
   customers' audit exports rely on every secret access being recorded. Don't edit
   `src/services/audit.ts`, and don't remove, skip or swallow audit calls elsewhere; ask
