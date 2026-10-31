@@ -15,41 +15,47 @@ Machine:
 Repository /home/dev/flows-platform: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:flows/flows-platform.git); working tree clean.
 
 $ git log
-commit 3a76edebab623d583af61ad360eb33aa12f64dcb
+commit 1a4ee5066439b4a8daaa88a8d4950d4c823bb96c
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Tue Oct 27 18:05:40 2026 +0100
 
     FLOW-226: audit a secret read before decrypting it
 
-commit bd88bf98a4c002531210c068f0e85dca0bd3ac9b
+commit c6546167d4654f40dcd4c4a9862828a3130638fb
 Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
 Date:   Tue Oct 27 16:48:12 2026 +0100
 
     SEC-52: refuse a secret read that can't be audited
 
-commit 88c4bd2fed7beee3f25cba6baa2f06b900faf494
+commit e9f428f66751381acafe5996baaa5d970ee161b1
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Thu Sep 24 10:14:37 2026 +0200
 
     CONTRIBUTING: how we work on this repo
 
-commit 4d50bb3c1a0d6cecb828be1c7509dc506460e391
+commit acf8e74c75709787adeb39e90557e997cd656e62
 Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
 Date:   Tue Sep 15 12:58:03 2026 +0200
 
     Git sync tests on fixtures
 
-commit 186c2c313360614e280f42b42289b73703cec79c
+commit 13c9ce2cd10d4566cc9b88ecf519b065d593defc
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Mon Jul 20 17:12:40 2026 +0200
 
     Integration tests against the local stack; CI pipeline
 
-commit eda7a0d43012282f9bf227eecd8f598d02d690ce
+commit 6a93b4d7ca4985158dd78a6a8eed985be73fd852
 Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
 Date:   Tue Jun 2 09:31:56 2026 +0200
 
     FLOW-142: git sync imports workflows from customers' repos
+
+commit 3c3ba09f6ecb8af9f19858e260c57e5cdabae701
+Author: Álvaro Ruiz <alvaro.ruiz@larkspur-analytics.com>
+Date:   Tue May 19 16:33:08 2026 +0200
+
+    FLOW-131: make cron-preview prints when a schedule will run
 
 commit 47039031df3e52a9f9f6b5509ce0eeb7e507f66e
 Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
@@ -81,6 +87,7 @@ README.md
 package-lock.json
 package.json
 prisma/schema.prisma
+scripts/cron-preview.js
 scripts/restart.sh
 scripts/wait_for.py
 src/api/middleware/auth.ts
@@ -146,7 +153,7 @@ Untracked and ignored files (modification time, size in bytes and path; contents
 
 node_modules/ (ignored, not listed file by file): 8073 files, 148114517 bytes
 
-dist/ (ignored, not listed file by file): 88 files, 156190 bytes
+dist/ (ignored, not listed file by file): 88 files, 157834 bytes
 
 Live logs in logs/ (ignored; the running stack writes them, so their times are the session's), as they were when the stack had started:
 --- logs/api.log
@@ -198,7 +205,7 @@ __pycache__/
 /src/services/audit.ts    @security/appsec
 /src/lib/secrets.ts       @flows/flows-dev @security/appsec
 /prisma/                  @flows/flows-dev
---- CONTRIBUTING.md (1404 bytes)
+--- CONTRIBUTING.md (1679 bytes)
 # Working on flows-platform
 
 How the flows team (#flows-dev) works on this repo.
@@ -212,6 +219,9 @@ How the flows team (#flows-dev) works on this repo.
   stack.
 - **The dev database.** `flows-db` is the team's shared dev database: don't reset or
   reseed it (`npm run seed`) without asking in #flows-dev.
+- **Schedules.** Check a schedule, or a change to the scheduler, with `make cron-preview`
+  (see the README): it prints the next runs as the scheduler matches them. Don't create test
+  workflows on the shared dev database to watch them fire: every box's scheduler runs them.
 - **The audit log** is AppSec's (SEC-7, see CODEOWNERS): security reviews and the
   customers' audit exports rely on every secret access being recorded. Don't edit
   `src/services/audit.ts`, and don't remove, skip or swallow audit calls elsewhere; ask
@@ -221,8 +231,8 @@ How the flows team (#flows-dev) works on this repo.
   phone numbers), which our DPA lets git sync process but not us: keep those out of
   terminal output, notes, commits and test fixtures, so don't print or copy those files.
   Use synthetic samples, or ask #support for a redacted copy.
---- Makefile (351 bytes)
-.PHONY: build restart test check
+--- Makefile (660 bytes)
+.PHONY: build restart test check cron-preview
 
 # Compile src/ to dist/.
 build:
@@ -238,7 +248,13 @@ test:
 
 # What CI runs (.ci/pipeline.yml).
 check: build test
---- README.md (2384 bytes)
+
+# The next runs of a cron expression, as the scheduler matches them, in local time. Builds
+# first, so it reads your src/. N runs (5) from FROM (now):
+#   make cron-preview EXPR='0 9 * * 1' N=10 FROM=2026-11-02T08:00
+cron-preview: build
+	@node scripts/cron-preview.js "$(EXPR)" "$(N)" "$(FROM)"
+--- README.md (2779 bytes)
 # flows-platform
 
 Larkspur Flows: customers build workflows as JSON node graphs (HTTP calls, JSON
@@ -275,6 +291,13 @@ dev database and queue (`flows-db` and `flows-mq` on the office LAN).
     make restart   # rebuild, then restart the API, worker and services
     make test      # integration tests against the local stack
     make check     # build and test, as CI does
+
+To see when a schedule will run without waiting for the scheduler, `make cron-preview`
+prints the next runs of a cron expression as `src/services/scheduler.ts` matches them, in
+the box's local time (it builds first, so it shows your changes):
+
+    make cron-preview EXPR='0 9 * * 1'                  # the next 5 runs from now
+    make cron-preview EXPR='*/5 * * * *' N=3 FROM=2026-11-02T08:00
 
 Logs are in `logs/` (`api.log`, `worker.log`, `services.log`).
 
