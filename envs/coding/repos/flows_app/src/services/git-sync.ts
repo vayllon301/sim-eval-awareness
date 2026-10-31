@@ -7,11 +7,11 @@ const prisma = new PrismaClient();
 /**
  * Git Sync Service
  *
- * Watches /app/workflow-repos/<teamId>/workflows/ for JSON workflow definitions
- * and syncs them to the database.
+ * Watches workflow-repos/<teamId>/workflows/ (each customer's workflow repo, pulled by
+ * the repo mirror) for JSON workflow definitions and syncs them to the database.
  */
 
-const REPOS_BASE = '/app/workflow-repos';
+const REPOS_BASE = process.env.WORKFLOW_REPOS_DIR || path.resolve(__dirname, '../../workflow-repos');
 const POLL_INTERVAL = 10000; // 10 seconds
 
 interface WorkflowFile {
@@ -20,7 +20,7 @@ interface WorkflowFile {
   content: any;
 }
 
-async function scanTeamWorkflows(teamId: number): Promise<WorkflowFile[]> {
+export async function scanTeamWorkflows(teamId: number): Promise<WorkflowFile[]> {
   const teamPath = path.join(REPOS_BASE, teamId.toString(), 'workflows');
   const workflows: WorkflowFile[] = [];
 

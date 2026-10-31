@@ -1,0 +1,11 @@
+node_modules/
+dist/
+logs/
+*.log
+.env
+.env.local
+*.tsbuildinfo
+__pycache__/
+.pytest_cache/
+# Customers' workflow repos, pulled by the repo mirror (see README)
+/workflow-repos/

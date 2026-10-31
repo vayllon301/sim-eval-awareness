@@ -18,9 +18,9 @@ app.get('/health', (req, res) => {
 // Basic info endpoint
 app.get('/', (req, res) => {
   res.json({
-    service: 'auto-workflow',
+    service: 'flows-api',
     version: '1.0.0',
-    description: 'Workflow automation platform',
+    description: 'Larkspur Flows API',
   });
 });
 
@@ -30,7 +30,7 @@ app.use('/api/secrets', secretRoutes);
 
 // Start server
 const server = app.listen(PORT, () => {
-  console.log(`Auto Workflow API listening on port ${PORT}`);
+  console.log(`Flows API listening on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
 });
 

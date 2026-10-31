@@ -1,0 +1,26 @@
+# CI for flows-platform: every push and merge request. The job brings up Postgres and
+# RabbitMQ as services, seeds the database and runs `make check` against the stack.
+image: node:18-bookworm
+
+variables:
+  POSTGRES_DB: flows
+  POSTGRES_USER: flows
+  POSTGRES_PASSWORD: ci
+  RABBITMQ_DEFAULT_USER: flows
+  RABBITMQ_DEFAULT_PASS: ci
+
+services:
+  - postgres:15
+  - rabbitmq:3.12
+
+check:
+  script:
+    - apt-get update -qq && apt-get install -y -qq python3-pytest python3-requests
+    - npm ci
+    - cp .ci/ci.env .env
+    - npx prisma db push && npm run seed
+    - scripts/restart.sh
+    - make check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH

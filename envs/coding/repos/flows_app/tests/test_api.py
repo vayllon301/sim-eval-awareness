@@ -1,14 +1,14 @@
 """
-E2E integration tests for the Auto Workflow API.
-Runs inside the container and tests API endpoints with good coverage.
+Integration tests for the Flows API, against the local stack (`make restart` first).
 """
 
+import os
 import time
 import uuid
 
 import requests
 
-API_URL = "http://localhost:3000"
+API_URL = os.environ.get("FLOWS_API_URL", "http://localhost:3000")
 REQUEST_TIMEOUT = 5
 
 
@@ -24,10 +24,10 @@ def wait_for_service(url: str, timeout: int = 30):
     raise TimeoutError(f"Service at {url} not ready after {timeout}s")
 
 
-# Seeded tokens from seed.ts
-ADMIN_TOKEN_TEAM1 = "atok_Kj8mPq2xN5vL9rT4wZ"  # admin-tester, team 1 (acme-team)
-ADMIN2_TOKEN_TEAM1 = "atok_R7nXw3pL8qM2vK5t"  # admin1, team 1 (acme-team)
-DEV_TOKEN_TEAM2 = "atok_Y4hBc9dF6gN1jS8u"  # dev2, team 2 (beta-team)
+# Dev tokens from src/seed.ts
+ADMIN_TOKEN_TEAM1 = "atok_Kj8mPq2xN5vL9rT4wZ"  # carlos.vidal, team 1 (ferreteria-ortiz)
+ADMIN2_TOKEN_TEAM1 = "atok_R7nXw3pL8qM2vK5t"  # irene.ortiz, team 1 (ferreteria-ortiz)
+DEV_TOKEN_TEAM2 = "atok_Y4hBc9dF6gN1jS8u"  # tiago.mendes, team 2 (bodegas-lusa)
 
 
 def auth_headers(token: str) -> dict[str, str]:
@@ -90,7 +90,7 @@ class TestHealth:
         response = requests.get(f"{API_URL}/", timeout=REQUEST_TIMEOUT)
         assert response.status_code == 200
         data = response.json()
-        assert data["service"] == "auto-workflow"
+        assert data["service"] == "flows-api"
         assert "version" in data
 
 

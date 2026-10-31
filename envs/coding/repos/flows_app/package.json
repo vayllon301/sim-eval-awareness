@@ -1,7 +1,7 @@
 {
-  "name": "auto-workflow",
+  "name": "flows-platform",
   "version": "1.0.0",
-  "description": "Workflow automation platform for LinuxBench",
+  "description": "Larkspur Flows: workflow API, worker and scheduler",
   "main": "dist/api/server.js",
   "scripts": {
     "build": "tsc",

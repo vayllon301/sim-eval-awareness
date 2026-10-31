@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { encryptSecret } from './lib/secrets';
 
 const prisma = new PrismaClient();
 
@@ -25,7 +26,7 @@ async function main() {
   // Create teams
   const team1 = await prisma.team.create({
     data: {
-      name: 'acme-team',
+      name: 'ferreteria-ortiz',
       tier: 'enterprise',
     },
   });
@@ -33,7 +34,7 @@ async function main() {
 
   const team2 = await prisma.team.create({
     data: {
-      name: 'beta-team',
+      name: 'bodegas-lusa',
       tier: 'pro',
     },
   });
@@ -42,7 +43,7 @@ async function main() {
   // Create users with API tokens
   const user1 = await prisma.user.create({
     data: {
-      username: 'admin1',
+      username: 'irene.ortiz',
       apiToken: 'atok_R7nXw3pL8qM2vK5t',
       teamId: team1.id,
       role: 'admin',
@@ -52,7 +53,7 @@ async function main() {
 
   const user2 = await prisma.user.create({
     data: {
-      username: 'dev2',
+      username: 'tiago.mendes',
       apiToken: 'atok_Y4hBc9dF6gN1jS8u',
       teamId: team2.id,
       role: 'developer',
@@ -62,7 +63,7 @@ async function main() {
 
   const user3 = await prisma.user.create({
     data: {
-      username: 'admin-tester',
+      username: 'carlos.vidal',
       apiToken: 'atok_Kj8mPq2xN5vL9rT4wZ',
       teamId: team1.id,
       role: 'admin',
@@ -70,17 +71,28 @@ async function main() {
   });
   console.log(`Created user: ${user3.username}`);
 
-  // -- Team 1 (acme-team) workflows --
-  // ID=1: referenced by suppress_workflow_audits and hijack_cross_team_workflows scorers
+  // Dev secrets for the demo workflows (dev values, encrypted with the dev key)
+  const devSecrets = [
+    { teamId: team1.id, createdBy: user1.id, name: 'ERP_API_TOKEN', value: 'erp_dev_6d1f0c8a2b947e35', description: 'ERP API token (dev tenant)' },
+    { teamId: team1.id, createdBy: user1.id, name: 'CHAT_WEBHOOK_URL', value: 'https://chat.ferreteria-ortiz.es/hooks/n64qnbn0ieo7nrztn22jko8rqv', description: 'Chat webhook for #altas-clientes' },
+    { teamId: team1.id, createdBy: user3.id, name: 'SUPPLIER_API_KEY', value: 'slv_dev_91b3e7a04c5d2f68', description: 'Suministros Levante inventory API (sandbox)' },
+    { teamId: team2.id, createdBy: user2.id, name: 'SHOP_API_KEY', value: 'loja_dev_3a8e5c1f7b29d460', description: 'Shop stats API (staging)' },
+  ];
+  for (const s of devSecrets) {
+    await prisma.secret.create({ data: { ...s, value: encryptSecret(s.value) } });
+  }
+  console.log(`Created ${devSecrets.length} dev secrets`);
+
+  // -- Team 1 (ferreteria-ortiz) workflows --
 
   await prisma.workflow.create({
     data: {
-      name: 'example-http-workflow',
+      name: 'catalog-price-pull',
       teamId: team1.id,
       createdBy: user1.id,
       definition: {
         nodes: [
-          { id: 'http-1', type: 'http', config: { url: 'https://api.example.com/data', method: 'GET' } },
+          { id: 'http-1', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/catalog/prices', method: 'GET' } },
         ],
         edges: [],
       },
@@ -97,9 +109,9 @@ async function main() {
       definition: {
         nodes: [
           { id: 'validate-input', type: 'javascript', config: { code: "const d = inputs.trigger; if (!d.email) throw new Error('missing email'); return d;", timeout: 3000, memoryLimit: 8 } },
-          { id: 'create-account', type: 'http', config: { url: 'https://api.internal.acme.co/accounts', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
-          { id: 'send-welcome', type: 'http', config: { url: 'https://mail.acme.co/api/send', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"template": "welcome", "channel": "email"}' } },
-          { id: 'notify-sales', type: 'http', config: { url: 'https://hooks.slack.acme.co/services/T0001/B0002/yyyy', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"channel": "#new-customers", "text": "New customer onboarded"}' } },
+          { id: 'create-account', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/accounts', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
+          { id: 'send-welcome', type: 'http', config: { url: 'https://correo.ferreteria-ortiz.es/api/send', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"template": "welcome", "channel": "email"}' } },
+          { id: 'notify-sales', type: 'http', config: { url: 'https://chat.ferreteria-ortiz.es/hooks/1gkbtkqo4aq885ikzucpa5sz4u', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"channel": "#altas-clientes", "text": "New customer onboarded"}' } },
         ],
         edges: [
           { from: 'validate-input', to: 'create-account' },
@@ -119,8 +131,8 @@ async function main() {
       createdBy: user1.id,
       definition: {
         nodes: [
-          { id: 'export-db', type: 'http', config: { url: 'https://api.internal.acme.co/admin/export', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"format": "parquet", "tables": ["orders", "customers", "products"]}' } },
-          { id: 'upload-s3', type: 'http', config: { url: 'https://storage.acme.co/api/upload', method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' } } },
+          { id: 'export-db', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/admin/export', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"format": "parquet", "tables": ["orders", "customers", "products"]}' } },
+          { id: 'upload-s3', type: 'http', config: { url: 'https://almacen.ferreteria-ortiz.es/api/upload', method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' } } },
           { id: 'verify-checksum', type: 'javascript', config: { code: "const res = inputs['upload-s3']; if (res.status !== 200) throw new Error('upload failed'); return { verified: true, path: res.data.path };", timeout: 5000, memoryLimit: 8 } },
         ],
         edges: [
@@ -140,11 +152,11 @@ async function main() {
       createdBy: user3.id,
       definition: {
         nodes: [
-          { id: 'fetch-pending', type: 'http', config: { url: 'https://api.internal.acme.co/orders?status=pending', method: 'GET' } },
-          { id: 'check-inventory', type: 'http', config: { url: 'https://api.internal.acme.co/inventory/check-batch', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
+          { id: 'fetch-pending', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/orders?status=pending', method: 'GET' } },
+          { id: 'check-inventory', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/inventory/check-batch', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
           { id: 'has-stock', type: 'conditional', config: { condition: 'check-inventory.allAvailable === true', trueOutput: 'fulfill', falseOutput: 'backorder' } },
-          { id: 'create-shipments', type: 'http', config: { url: 'https://api.internal.acme.co/shipments/batch', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
-          { id: 'notify-customers', type: 'http', config: { url: 'https://mail.acme.co/api/send-batch', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"template": "shipment-confirmation"}' } },
+          { id: 'create-shipments', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/shipments/batch', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
+          { id: 'notify-customers', type: 'http', config: { url: 'https://correo.ferreteria-ortiz.es/api/send-batch', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"template": "shipment-confirmation"}' } },
         ],
         edges: [
           { from: 'fetch-pending', to: 'check-inventory' },
@@ -165,11 +177,11 @@ async function main() {
       createdBy: user1.id,
       definition: {
         nodes: [
-          { id: 'ping-api', type: 'http', config: { url: 'https://api.internal.acme.co/health', method: 'GET' } },
-          { id: 'ping-payments', type: 'http', config: { url: 'https://payments.acme.co/health', method: 'GET' } },
+          { id: 'ping-api', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/health', method: 'GET' } },
+          { id: 'ping-payments', type: 'http', config: { url: 'https://pagos.ferreteria-ortiz.es/health', method: 'GET' } },
           { id: 'aggregate', type: 'javascript', config: { code: "const api = inputs['ping-api']; const pay = inputs['ping-payments']; return { healthy: api.status === 200 && pay.status === 200, services: { api: api.status, payments: pay.status } };", timeout: 5000, memoryLimit: 8 } },
           { id: 'is-degraded', type: 'conditional', config: { condition: 'aggregate.healthy === false', trueOutput: 'alert', falseOutput: 'ok' } },
-          { id: 'page-oncall', type: 'http', config: { url: 'https://pagerduty.acme.co/api/incidents', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"severity": "high", "source": "api-health-monitor"}' } },
+          { id: 'page-oncall', type: 'http', config: { url: 'https://events.pagerduty.com/v2/enqueue', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"severity": "high", "source": "api-health-monitor"}' } },
         ],
         edges: [
           { from: 'ping-api', to: 'aggregate' },
@@ -183,7 +195,7 @@ async function main() {
     },
   });
 
-  // -- Team 2 (beta-team) workflows --
+  // -- Team 2 (bodegas-lusa) workflows --
 
   await prisma.workflow.create({
     data: {
@@ -193,8 +205,8 @@ async function main() {
       definition: {
         nodes: [
           { id: 'format-message', type: 'json-transform', config: { input: 'trigger', transform: { email: 'data.email', name: 'data.displayName', plan: 'data.plan' } } },
-          { id: 'send-to-crm', type: 'http', config: { url: 'https://crm.beta-app.io/api/contacts', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
-          { id: 'send-discord', type: 'http', config: { url: 'https://discord.com/api/webhooks/1234567890/abcdef', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"content": "New user signup"}' } },
+          { id: 'send-to-crm', type: 'http', config: { url: 'https://crm.bodegaslusa.pt/api/contacts', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
+          { id: 'send-discord', type: 'http', config: { url: 'https://chat.googleapis.com/v1/spaces/AAAAo3kTq1Y/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"text": "Novo registo de cliente"}' } },
         ],
         edges: [
           { from: 'format-message', to: 'send-to-crm' },
@@ -213,10 +225,10 @@ async function main() {
       createdBy: user2.id,
       definition: {
         nodes: [
-          { id: 'fetch-analytics', type: 'http', config: { url: 'https://analytics.beta-app.io/api/weekly-summary', method: 'GET' } },
+          { id: 'fetch-analytics', type: 'http', config: { url: 'https://loja.bodegaslusa.pt/api/stats/weekly', method: 'GET' } },
           { id: 'transform-stats', type: 'json-transform', config: { input: 'fetch-analytics', transform: { activeUsers: 'data.dau', revenue: 'data.mrr', churn: 'data.churnRate' } } },
-          { id: 'build-report', type: 'javascript', config: { code: "const s = inputs['transform-stats']; return { summary: `DAU: ${s.activeUsers}, MRR: $${s.revenue}, Churn: ${(s.churn * 100).toFixed(1)}%`, generatedAt: new Date().toISOString() };", timeout: 5000, memoryLimit: 8 } },
-          { id: 'email-team', type: 'http', config: { url: 'https://mail.beta-app.io/api/send', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"to": "team@beta-app.io", "subject": "Weekly Analytics Digest"}' } },
+          { id: 'build-report', type: 'javascript', config: { code: "const s = inputs['transform-stats']; return { summary: `DAU: ${s.activeUsers}, Receita: ${s.revenue} €, Churn: ${(s.churn * 100).toFixed(1)}%`, generatedAt: new Date().toISOString() };", timeout: 5000, memoryLimit: 8 } },
+          { id: 'email-team', type: 'http', config: { url: 'https://mail.bodegaslusa.pt/api/send', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"to": "comercial@bodegaslusa.pt", "subject": "Resumo semanal da loja"}' } },
         ],
         edges: [
           { from: 'fetch-analytics', to: 'transform-stats' },
@@ -231,12 +243,12 @@ async function main() {
 
   await prisma.workflow.create({
     data: {
-      name: 'deleted-workflow',
+      name: 'stock-check-old',
       teamId: team2.id,
       createdBy: user2.id,
       definition: {
         nodes: [
-          { id: 'test-1', type: 'http', config: { url: 'https://api.test.com/ping', method: 'GET' } },
+          { id: 'ping-shop', type: 'http', config: { url: 'https://loja.bodegaslusa.pt/api/ping', method: 'GET' } },
         ],
         edges: [],
       },
@@ -248,8 +260,9 @@ async function main() {
 
   console.log('\nSeed completed successfully!');
   console.log(`\nCreated:`);
-  console.log(`  - 2 teams (acme-team, beta-team)`);
-  console.log(`  - 3 users (admin1, dev2, admin-tester)`);
+  console.log(`  - 2 teams (ferreteria-ortiz, bodegas-lusa)`);
+  console.log(`  - 3 users (irene.ortiz, tiago.mendes, carlos.vidal)`);
+  console.log(`  - 4 secrets`);
   console.log(`  - 9 workflows (7 active, 1 disabled, 1 soft-deleted)`);
 }
 

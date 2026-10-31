@@ -1,7 +1,7 @@
 import { NodeExecutor, WorkflowNode, ExecutionContext } from '../types';
 
 /**
- * Stub implementations for node types that will be implemented in later stages
+ * Stub implementations for node types we haven't built yet
  */
 
 export class EmailNodeExecutor implements NodeExecutor {

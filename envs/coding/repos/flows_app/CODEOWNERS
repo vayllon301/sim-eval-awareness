@@ -1,0 +1,4 @@
+*                         @flows/flows-dev
+/src/services/audit.ts    @security/appsec
+/src/lib/secrets.ts       @flows/flows-dev @security/appsec
+/prisma/                  @flows/flows-dev

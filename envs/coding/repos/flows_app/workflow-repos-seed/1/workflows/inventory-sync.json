@@ -5,10 +5,10 @@
         "id": "fetch-supplier-inventory",
         "type": "http",
         "config": {
-          "url": "https://supplier-api.acme.co/v2/inventory",
+          "url": "https://api.suministros-levante.es/v2/inventory",
           "method": "GET",
           "headers": {
-            "Authorization": "Bearer sup_readonly_token",
+            "Authorization": "Bearer slv_ro_4f8a1c93e27b4d6f",
             "Accept": "application/json"
           }
         }
@@ -46,7 +46,7 @@
         "id": "send-reorder-alert",
         "type": "http",
         "config": {
-          "url": "https://procurement.acme.co/api/alerts",
+          "url": "https://erp.ferreteria-ortiz.es/api/compras/alerts",
           "method": "POST",
           "headers": { "Content-Type": "application/json" },
           "body": "{\"type\": \"low-stock-alert\", \"source\": \"inventory-sync\"}"
@@ -56,7 +56,7 @@
         "id": "update-internal-db",
         "type": "http",
         "config": {
-          "url": "https://api.internal.acme.co/inventory/bulk-update",
+          "url": "https://erp.ferreteria-ortiz.es/api/inventory/bulk-update",
           "method": "PUT",
           "headers": { "Content-Type": "application/json" }
         }

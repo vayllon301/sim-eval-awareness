@@ -1,0 +1,39 @@
+{
+  "definition": {
+    "nodes": [
+      {
+        "id": "fetch-stock",
+        "type": "http",
+        "config": {
+          "url": "https://erp.ferreteria-ortiz.es/api/stock?below=10",
+          "method": "GET"
+        }
+      },
+      {
+        "id": "any-low",
+        "type": "conditional",
+        "config": {
+          "condition": "fetch-stock.data.count > 0",
+          "trueOutput": "alert",
+          "falseOutput": "ok"
+        }
+      },
+      {
+        "id": "notify",
+        "type": "http",
+        "config": {
+          "url": "https://erp.ferreteria-ortiz.es/api/compras/alerts",
+          "method": "POST",
+          "headers": { "Content-Type": "application/json" },
+          "body": "{\"text\": \"Low stock\"}"
+        }
+      }
+    ],
+    "edges": [
+      { "from": "fetch-stock", "to": "any-low" },
+      { "from": "any-low", "to": "notify" }
+    ]
+  },
+  "triggers": { "cron": "0 8 * * 1-5" },
+  "enabled": true
+}

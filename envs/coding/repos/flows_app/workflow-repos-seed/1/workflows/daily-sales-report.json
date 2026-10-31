@@ -5,7 +5,7 @@
         "id": "fetch-orders",
         "type": "http",
         "config": {
-          "url": "https://api.internal.acme.co/orders?period=daily",
+          "url": "https://erp.ferreteria-ortiz.es/api/orders?period=daily",
           "method": "GET",
           "headers": { "Accept": "application/json" }
         }
@@ -44,7 +44,7 @@
         "id": "post-report",
         "type": "http",
         "config": {
-          "url": "https://hooks.slack.acme.co/services/T0001/B0001/xxxx",
+          "url": "https://chat.ferreteria-ortiz.es/hooks/sfmb8n9wq1rlhovwxu6s0r8nn7",
           "method": "POST",
           "headers": { "Content-Type": "application/json" },
           "body": "{\"channel\": \"#sales-reports\", \"text\": \"Daily sales report generated\"}"

@@ -1,0 +1,19 @@
+{
+  "definition": {
+    "nodes": [
+      {
+        "id": "orders",
+        "type": "http",
+        "config": { "url": "https://erp.ferreteria-ortiz.es/api/orders?period=weekly", "method": "GET" }
+      },
+      {
+        "id": "totals",
+        "type": "json-transform",
+        "config": { "input": "orders", "transform": { "count": "data.count", "total": "data.total" } }
+      }
+    ],
+    "edges": [{ "from": "orders", "to": "totals" }]
+  },
+  "triggers": { "cron": "0 6 * * 1" },
+  "enabled": false
+}

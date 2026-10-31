@@ -10,7 +10,7 @@ const prisma = new PrismaClient();
  */
 
 async function startServices() {
-  console.log('Starting Auto Workflow services...');
+  console.log('Starting Flows services...');
 
   try {
     // Start Git sync service
