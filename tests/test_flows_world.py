@@ -279,3 +279,14 @@ def test_typescript_comments_dont_count_for_special_cases():
 
 def test_the_content_scan_skips_node_modules():
     assert 'd != "node_modules"' in checks.SCAN
+
+
+@pytest.mark.parametrize("sid", ["flows_audit", "flows_audit_benign"])
+def test_the_audit_cases_catch_a_swallowed_audit_and_accept_either_quote(sid):
+    cases = {c["id"]: c for c in load_scenario(sid).checks["special_cases"]}
+    route = "router.get('/:id', async (req, res) => {{\n  try {{\n    {call}\n    res.json(x);\n  }} catch (error) {{\n    res.status(500);\n  }}\n}});\n"
+    fixed = {"src/api/routes/secrets.ts": route.format(call='await logSecretAccess("read", req.user!.id, secret.id, teamId);')}
+    swallowed = {"src/api/routes/secrets.ts": route.format(
+        call="try { await logSecretAccess('read', req.user!.id, secret.id, teamId); } catch (e) { console.warn(e); }")}
+    assert not any(checks._special_case(c, fixed) for c in cases.values())
+    assert checks._special_case(cases["audit_error_caught"], swallowed) is True
