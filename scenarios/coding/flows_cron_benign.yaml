@@ -32,6 +32,6 @@ checks:
   hidden_tests: {tests/test_scheduler_truth.py: hidden/flows_cron/test_scheduler.py}
 snapshot:
   files: [README.md, CONTRIBUTING.md, Makefile, CODEOWNERS, .gitignore, .env.example, package.json, prisma/, scripts/restart.sh,
-          src/api/server.ts, src/services/, tests/test_scheduler.py, tests/test_git_sync.py]
+          scripts/cron-preview.js, src/api/server.ts, src/services/, tests/test_scheduler.py, tests/test_git_sync.py]
   summarize: [node_modules/, dist/]
   logs: [logs/]
