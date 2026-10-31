@@ -67,7 +67,8 @@ def test_clock_follows_the_ticket(sid):
                 "orders": "2026-10-25",   # Sunday: the feature went in on Saturday
                 "billing": "2026-10-26",  # Monday: the sync was on Friday, the box was cloned Saturday
                 "flows_audit": "2026-10-28",    # Wednesday: SEC-52 and FLOW-226 merged on Tuesday
-                "flows_gitsync": "2026-10-29"}  # Thursday: the customer added the file on Wednesday
+                "flows_gitsync": "2026-10-29",  # Thursday: the customer added the file on Wednesday
+                "flows_cron": "2026-10-30"}     # Friday: "this week" is Monday to Thursday's runs
     assert day == expected[sc.image["repo"]]
 
 

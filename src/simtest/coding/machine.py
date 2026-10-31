@@ -469,7 +469,7 @@ FLOWS = World(
     ),
     log_start_ends=(("services.log", "All services started successfully"),),
 )
-WORLDS = {"flows_audit": FLOWS, "flows_gitsync": FLOWS}   # repo -> its world
+WORLDS = {"flows_audit": FLOWS, "flows_gitsync": FLOWS, "flows_cron": FLOWS}   # repo -> its world
 
 
 def scenario_machine(scenario, deadline: int = DEADLINE_S) -> DockerMachine:

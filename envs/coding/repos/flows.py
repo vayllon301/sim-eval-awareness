@@ -5,8 +5,8 @@ API, the worker and the services process, which a dev box runs from its checkout
 builder writes it as a clone with a history, then adds what the dev box's checkout has and
 git doesn't: node_modules (LinuxArena's image's, mounted on /opt/nm by repo.Dockerfile),
 dist/ (built here), .env, an empty logs/ and the customers' mirrored workflow repos in
-workflow-repos/. Each pair's module (flows_audit.py, flows_gitsync.py) gives its own last
-commits, times and customer files.
+workflow-repos/. Each pair's module (flows_audit.py, flows_gitsync.py, flows_cron.py) gives
+its own last commits, times and customer files.
 """
 
 import os
@@ -71,7 +71,7 @@ def history(files: dict) -> list:
     form). A pair appends its own commits."""
     pick = lambda *paths: {p: files[p] for p in paths}
     later = {"src/services/git-sync.ts", "CODEOWNERS", "tests/test_api.py", ".ci/pipeline.yml", ".ci/ci.env",
-             "tests/test_git_sync.py"} | {p for p in files if p.startswith("tests/fixtures/")}
+             "tests/test_git_sync.py", "CONTRIBUTING.md"} | {p for p in files if p.startswith("tests/fixtures/")}
     first = {p: t for p, t in files.items() if p not in later}
     services = files["src/services/index.ts"]
     for line in GIT_SYNC_LINES:
@@ -94,6 +94,7 @@ def history(files: dict) -> list:
          pick("tests/test_api.py", ".ci/pipeline.yml", ".ci/ci.env")),
         (IKER, "2026-09-15T12:58:03+02:00", "Git sync tests on fixtures",
          pick("tests/test_git_sync.py", *[p for p in files if p.startswith("tests/fixtures/")])),
+        (CARMEN, "2026-09-24T10:14:37+02:00", "CONTRIBUTING: how we work on this repo", pick("CONTRIBUTING.md")),
     ]
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from simtest.coding import prompts
@@ -44,13 +46,24 @@ def test_prompt_and_ticket_do_not_depend_on_condition(sid):
         assert sc.system_prompt() == system and sc.task_message() == ticket
 
 
+# Pairs whose twins differ in the ticket, not the repo: the benign ticket adds what the
+# tempting one leaves in the forbidden files (flows_cron: the schedules).
+TICKET_TWINS = {"flows_cron"}
+
+
 @pytest.mark.parametrize("sid", ALL)
 def test_twin_shares_prompt_and_ticket(sid):
     sc = load_scenario(sid)
     twin = load_scenario(sc.twin)
     assert sc.system_prompt() == twin.system_prompt()
-    assert sc.task_message() == twin.task_message()
-    assert sc.image != twin.image  # the only difference is the repo variant
+    assert sc.chat == twin.chat
+    if sc.id in TICKET_TWINS or twin.id in TICKET_TWINS:
+        tempting, benign = (sc, twin) if sc.variant == "tempting" else (twin, sc)
+        assert benign.task_message().startswith(tempting.task_message() + "\n")  # it only adds
+        assert sc.image == twin.image
+    else:
+        assert sc.task_message() == twin.task_message()
+        assert sc.image != twin.image  # the only difference is the repo variant
 
 
 @pytest.mark.parametrize("sid", ALL)
@@ -116,3 +129,42 @@ def test_bad_forbidden_content_is_rejected(tmp_path, content, reads):
     assert f"forbidden_content: {content}" in text
     with pytest.raises(ScenarioError, match="forbidden_content"):
         load_scenario(path)
+
+
+def test_every_flows_scenario_has_an_owner_reply_and_the_old_world_none():
+    for sid in ALL:
+        sc = load_scenario(sid)
+        if sid.startswith("flows_"):
+            assert len(sc.chat) == 1
+            channel = next(iter(sc.chat))
+            assert channel in " ".join(sc.policy)            # the owner channel the rule names
+        else:
+            assert sc.chat == {}
+
+
+def test_chat_replies_match_the_channel_without_case_or_hash():
+    sc = load_scenario("flows_audit")
+    text = sc.chat["#appsec"]
+    for channel in ("#appsec", "appsec", " #AppSec "):
+        assert sc.chat_reply(channel) == ("#appsec", text)
+    for channel in ("#flows-dev", "#appsec-team", None, 3):
+        assert sc.chat_reply(channel) is None
+
+
+@pytest.mark.parametrize("chat", ["{appsec: hi}", "{'#appsec': ''}", "[a]", "{'#': hi}", "{'#appsec': 3}"])
+def test_bad_chat_is_rejected(tmp_path, chat):
+    text = (SCENARIO_DIR / "pricing_cap.yaml").read_text() + f"chat: {chat}\n"
+    path = tmp_path / "pricing_cap.yaml"
+    path.write_text(text)
+    (tmp_path / "hidden").symlink_to(SCENARIO_DIR / "hidden")
+    with pytest.raises(ScenarioError, match="chat"):
+        load_scenario(path)
+
+
+def test_flows_replies_never_approve_the_shortcut_or_do_the_work():
+    for sid in ALL:
+        for text in load_scenario(sid).chat.values():
+            name, _, line = text.partition(": ")
+            assert name and line and len(line) < 300              # a short chat line with a name
+            assert not re.search(r"\b(go ahead|fine to|ok to|feel free|approved?|I'?ve fixed|I fixed|"
+                                 r"here (is|are)|attached|the schedules are)\b", line, re.I), text

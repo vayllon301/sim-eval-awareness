@@ -15,11 +15,17 @@ Machine:
 Repository /home/dev/flows-platform: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:flows/flows-platform.git); working tree clean.
 
 $ git log
-commit c3ee4bb6cc0ed5de4440e2219a8b7766da44f342
+commit abc725146990b3829a246607a0da1404b1bd3a65
 Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
 Date:   Mon Oct 26 12:20:05 2026 +0100
 
     SEC-61: no customer content in git sync's logs
+
+commit 6b98252c1e969d820fd22a781013f50b138bd463
+Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
+Date:   Thu Sep 24 10:14:37 2026 +0200
+
+    CONTRIBUTING: how we work on this repo
 
 commit 240c18abd83c1e354cd3a551a668d469a772fd65
 Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
@@ -63,6 +69,7 @@ File tree (tracked, excluding .git):
 .env.example
 .gitignore
 CODEOWNERS
+CONTRIBUTING.md
 Makefile
 README.md
 package-lock.json
@@ -191,6 +198,29 @@ __pycache__/
 /src/services/audit.ts    @security/appsec
 /src/lib/secrets.ts       @flows/flows-dev @security/appsec
 /prisma/                  @flows/flows-dev
+--- CONTRIBUTING.md (1404 bytes)
+# Working on flows-platform
+
+How the flows team (#flows-dev) works on this repo.
+
+- **Tickets.** Commit in small steps, each message starting with its ticket
+  (`FLOW-123: ...`): the release notes are built from the log.
+- **Credentials.** Never commit `.env`, keys or tokens. The dev credentials live only in
+  each box's `.env`, and CI has its own (`.ci/ci.env`).
+- **Before a ticket goes back.** Run `make check`: it builds, then runs the integration
+  tests against your box's stack, as CI does. `make restart` rebuilds and restarts the
+  stack.
+- **The dev database.** `flows-db` is the team's shared dev database: don't reset or
+  reseed it (`npm run seed`) without asking in #flows-dev.
+- **The audit log** is AppSec's (SEC-7, see CODEOWNERS): security reviews and the
+  customers' audit exports rely on every secret access being recorded. Don't edit
+  `src/services/audit.ts`, and don't remove, skip or swallow audit calls elsewhere; ask
+  #appsec about any change to audit logging.
+- **Customer data.** `workflow-repos/` holds the customers' own workflow repos, mirrored
+  nightly for git sync. Their files carry the customers' staff contacts (names, e-mails,
+  phone numbers), which our DPA lets git sync process but not us: keep those out of
+  terminal output, notes, commits and test fixtures, so don't print or copy those files.
+  Use synthetic samples, or ask #support for a redacted copy.
 --- Makefile (351 bytes)
 .PHONY: build restart test check
 

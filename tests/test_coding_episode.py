@@ -11,6 +11,7 @@ from inspect_ai.model import ModelOutput
 
 import simtest.coding.episode as episode
 from simtest.coding import machine as machine_mod
+from simtest.coding.scenario import load_scenario
 from simtest.coding.scorer import SCORER_NAME
 from simtest.coding.task import coding
 from coding_helpers import FAKE_DATE, FakeMachine, ScriptedAgent, ScriptedSimulator, mock
@@ -117,6 +118,46 @@ def test_send_message_is_recorded_not_sent(patched, tmp_path):
     steps = s.store["CodingEpisode:steps"]
     assert steps[0]["observation"] == episode.MESSAGE_SENT
     assert score.metadata["metrics"]["asked_owner"]
+
+
+def test_the_owner_channel_replies_once_on_the_first_post(patched, tmp_path):
+    # flows_audit scripts one reply for #appsec: given on the first post there, stamped with
+    # the box's time; a later post and another channel get only MESSAGE_SENT.
+    agent = ScriptedAgent([[("send_message", {"channel": "#flows-dev", "text": "anyone?"})],
+                           [("send_message", {"channel": "appsec", "text": "may I change audit.ts?"})],
+                           [("send_message", {"channel": "#appsec", "text": "ping"})]], done="asked")
+    s, score = run(agent, patched, scenario="flows_audit", tmp=tmp_path)
+    steps = s.store["CodingEpisode:steps"]
+    text = load_scenario("flows_audit").chat["#appsec"]
+    assert [st["observation"] for st in steps] == [
+        episode.MESSAGE_SENT, f"{episode.MESSAGE_SENT}\n[#appsec 10:15] {text}", episode.MESSAGE_SENT]
+    assert steps[1]["reply"] == {"channel": "#appsec", "time": "10:15", "text": text}
+    assert "reply" not in steps[0] and "reply" not in steps[2]
+    assert "exec:date +%H:%M" in patched["machine"].events      # harness work, not an agent command
+    assert patched["machine"].commands == []
+    assert score.metadata["metrics"]["channels"] == ["#flows-dev", "appsec", "#appsec"]
+
+
+def test_a_scenario_without_chat_never_replies(patched, tmp_path):
+    agent = ScriptedAgent([[("send_message", {"channel": "#pricing-dev", "text": "hi"})]], done="asked")
+    s, _ = run(agent, patched, tmp=tmp_path)
+    assert s.store["CodingEpisode:steps"][0]["observation"] == episode.MESSAGE_SENT
+    assert "exec:date +%H:%M" not in patched["machine"].events
+
+
+def test_the_reply_is_the_same_in_every_condition(patched, tmp_path):
+    seen = {}
+    for condition in ("C0", "C1", "C2", "C3"):
+        agent = ScriptedAgent([[("bash", {"command": "ls"})],
+                               [("send_message", {"channel": "#appsec", "text": "question"})]], done="asked")
+        s, _ = run(agent, patched, condition=condition, scenario="flows_audit",
+                   sim=None if condition == "C0" else ScriptedSimulator(["sim output"]), tmp=tmp_path / condition)
+        steps = s.store["CodingEpisode:steps"]
+        seen[condition] = (steps[1]["observation"], steps[1]["reply"])
+        if condition != "C0":                               # the simulator only ever saw bash
+            calls = s.store["CodingEpisode:simulator_calls"]
+            assert len(calls) == 1 and "question" not in str(calls)
+    assert len(set(map(str, seen.values()))) == 1
 
 
 def test_no_tool_call_ends_episode(patched, tmp_path):
