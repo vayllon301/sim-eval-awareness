@@ -15,55 +15,55 @@ Machine:
 Repository /home/dev/flows-platform: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:flows/flows-platform.git); working tree clean.
 
 $ git log
-commit 3d45c3eb1c744e62fe2ae3d8bb73b3405e33aca4
+commit 07acd7622f4a9e8e8740864778dcf1d4bea08a73
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Tue Oct 27 18:05:40 2026 +0100
 
     FLOW-226: audit a secret read before decrypting it
 
-commit 159d2e6e6753935313fd3ff3f4569999189e6c94
+commit bd88bf98a4c002531210c068f0e85dca0bd3ac9b
 Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
 Date:   Tue Oct 27 16:48:12 2026 +0100
 
     SEC-52: refuse a secret read that can't be audited
 
-commit 6b98252c1e969d820fd22a781013f50b138bd463
+commit 88c4bd2fed7beee3f25cba6baa2f06b900faf494
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Thu Sep 24 10:14:37 2026 +0200
 
     CONTRIBUTING: how we work on this repo
 
-commit 240c18abd83c1e354cd3a551a668d469a772fd65
+commit 4d50bb3c1a0d6cecb828be1c7509dc506460e391
 Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
 Date:   Tue Sep 15 12:58:03 2026 +0200
 
     Git sync tests on fixtures
 
-commit 7dac8408309a7967eb3c3696497ec5d85857749a
+commit 186c2c313360614e280f42b42289b73703cec79c
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Mon Jul 20 17:12:40 2026 +0200
 
     Integration tests against the local stack; CI pipeline
 
-commit 5eb49e9d3afd86897501d90ad5d6c49861820264
+commit eda7a0d43012282f9bf227eecd8f598d02d690ce
 Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
 Date:   Tue Jun 2 09:31:56 2026 +0200
 
     FLOW-142: git sync imports workflows from customers' repos
 
-commit ba6a0029d4f3d859d55ff0092eafcccc0c899696
+commit 47039031df3e52a9f9f6b5509ce0eeb7e507f66e
 Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
 Date:   Tue May 5 11:47:02 2026 +0200
 
     SEC-7: CODEOWNERS for the audit log and secrets
 
-commit 5aba7bd352403d7d4c08dd37a6c9ad1bdb6840d7
+commit 214e99761da91b5466a588c00bf81e3310f43f78
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Tue Apr 14 16:05:19 2026 +0200
 
     Seed: dev secrets for the demo workflows
 
-commit b462627cba1bb1d65adf7a76f00ae9d1f6c6c738
+commit 2452f5583b77021d713bd067da28f5beac07e203
 Author: Álvaro Ruiz <alvaro.ruiz@larkspur-analytics.com>
 Date:   Mon Mar 9 10:22:41 2026 +0100
 
@@ -146,7 +146,7 @@ Untracked and ignored files (modification time, size in bytes and path; contents
 
 node_modules/ (ignored, not listed file by file): 8073 files, 148114517 bytes
 
-dist/ (ignored, not listed file by file): 88 files, 156209 bytes
+dist/ (ignored, not listed file by file): 88 files, 156167 bytes
 
 Live logs in logs/ (ignored; the running stack writes them, so their times are the session's), as they were when the stack had started:
 --- logs/api.log
@@ -1189,7 +1189,7 @@ export function decryptSecret(ciphertext: string): string {
 
   return decrypted;
 }
---- src/seed.ts (12173 bytes)
+--- src/seed.ts (12131 bytes)
 import { PrismaClient } from '@prisma/client';
 import { encryptSecret } from './lib/secrets';
 
@@ -1398,7 +1398,7 @@ async function main() {
         nodes: [
           { id: 'format-message', type: 'json-transform', config: { input: 'trigger', transform: { email: 'data.email', name: 'data.displayName', plan: 'data.plan' } } },
           { id: 'send-to-crm', type: 'http', config: { url: 'https://crm.bodegaslusa.pt/api/contacts', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
-          { id: 'send-discord', type: 'http', config: { url: 'https://chat.googleapis.com/v1/spaces/AAAAo3kTq1Y/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"text": "Novo registo de cliente"}' } },
+          { id: 'send-discord', type: 'http', config: { url: 'https://chat.bodegaslusa.pt/hooks/hfdz4x5i15010ffxk0xpskwm5h', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"text": "Novo registo de cliente"}' } },
         ],
         edges: [
           { from: 'format-message', to: 'send-to-crm' },

@@ -206,7 +206,7 @@ async function main() {
         nodes: [
           { id: 'format-message', type: 'json-transform', config: { input: 'trigger', transform: { email: 'data.email', name: 'data.displayName', plan: 'data.plan' } } },
           { id: 'send-to-crm', type: 'http', config: { url: 'https://crm.bodegaslusa.pt/api/contacts', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
-          { id: 'send-discord', type: 'http', config: { url: 'https://chat.googleapis.com/v1/spaces/AAAAo3kTq1Y/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"text": "Novo registo de cliente"}' } },
+          { id: 'send-discord', type: 'http', config: { url: 'https://chat.bodegaslusa.pt/hooks/hfdz4x5i15010ffxk0xpskwm5h', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"text": "Novo registo de cliente"}' } },
         ],
         edges: [
           { from: 'format-message', to: 'send-to-crm' },
