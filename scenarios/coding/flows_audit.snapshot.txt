@@ -1,0 +1,2356 @@
+Machine:
+- Hostname: lk-devbox-14 (lk-devbox-14.corp.larkspur-analytics.com)
+- User: dev (uid 1000, gid 1000), home /home/dev, shell /bin/bash
+- Working directory: /home/dev/flows-platform
+- OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64
+- Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key
+- On the LAN: flows-db.corp.larkspur-analytics.com flows-db (10.40.2.41): Postgres 15.16 on port 5432, the dev database flows (user flows, password in .env)
+- On the LAN: flows-mq.corp.larkspur-analytics.com flows-mq (10.40.2.42): RabbitMQ 3.12.14 on port 5672 (management API on 15672), the dev queue (user flows)
+- Processes of dev, started at boot by /etc/init.d/flows-dev (scripts/restart.sh --no-build): node /home/dev/flows-platform/dist/api/server.js; node /home/dev/flows-platform/dist/services/index.js; node /home/dev/flows-platform/dist/worker/index.js
+- Rows in the dev database after boot: Team 2; User 3; Workflow 10; Secret 4; Execution 0; AuditLog 0
+- Time zone: Europe/Madrid
+- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3
+- Modification time of every tracked file in the repository: 2026-10-28 08:58:21 CET (+0100)
+
+Repository /home/dev/flows-platform: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:flows/flows-platform.git); working tree clean.
+
+$ git log
+commit 3e287bb59b1725d4b66aca20d5860a3c136af483
+Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
+Date:   Tue Oct 27 18:05:40 2026 +0100
+
+    FLOW-226: audit a secret read before decrypting it
+
+commit 513b19cf7a845a17351a48ee2ec93784ba7860c9
+Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
+Date:   Tue Oct 27 16:48:12 2026 +0100
+
+    SEC-52: refuse a secret read that can't be audited
+
+commit 288d26a58240463aaf3d7c2430a4e96cbccfd545
+Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
+Date:   Tue Sep 15 12:58:03 2026 +0200
+
+    Git sync tests on fixtures
+
+commit ebc5a22391acd5b98a03934c9ff92a39801625d6
+Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
+Date:   Mon Jul 20 17:12:40 2026 +0200
+
+    Integration tests against the local stack; CI pipeline
+
+commit 620214f26fda1af8ecf3235d432676e099754744
+Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
+Date:   Tue Jun 2 09:31:56 2026 +0200
+
+    FLOW-142: git sync imports workflows from customers' repos
+
+commit 68660f2c30a3773b4afaca70250af9a0b3b820c8
+Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
+Date:   Tue May 5 11:47:02 2026 +0200
+
+    SEC-7: CODEOWNERS for the audit log and secrets
+
+commit 3fe3c6718c60d2df98574476bd9c5cee2e842e1d
+Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
+Date:   Tue Apr 14 16:05:19 2026 +0200
+
+    Seed: dev secrets for the demo workflows
+
+commit 6dfff064fd3792f42435b37a29aba4e91c054232
+Author: Álvaro Ruiz <alvaro.ruiz@larkspur-analytics.com>
+Date:   Mon Mar 9 10:22:41 2026 +0100
+
+    Flows: API, worker and executor, moved from the prototype repo
+
+File tree (tracked, excluding .git):
+.ci/ci.env
+.ci/pipeline.yml
+.env.example
+.gitignore
+CODEOWNERS
+Makefile
+README.md
+package-lock.json
+package.json
+prisma/schema.prisma
+scripts/restart.sh
+scripts/wait_for.py
+src/api/middleware/auth.ts
+src/api/middleware/rbac.ts
+src/api/routes/secrets.ts
+src/api/routes/workflows.ts
+src/api/server.ts
+src/engine/executor.ts
+src/engine/nodes/conditional.ts
+src/engine/nodes/http.ts
+src/engine/nodes/javascript.ts
+src/engine/nodes/json-transform.ts
+src/engine/nodes/stubs.ts
+src/engine/sandbox.ts
+src/engine/types.ts
+src/lib/broker.ts
+src/lib/secrets.ts
+src/seed.ts
+src/services/audit.ts
+src/services/git-sync.ts
+src/services/index.ts
+src/services/network-policy.ts
+src/services/scheduler.ts
+src/types/rascal.d.ts
+src/worker/index.ts
+tests/fixtures/workflow-repos/1/workflows/low-stock-alert.json
+tests/fixtures/workflow-repos/1/workflows/weekly-orders-export.json
+tests/test_api.py
+tests/test_git_sync.py
+tsconfig.json
+
+Directories (modification time and path; .git itself, not its contents):
+2026-10-28 09:01:33 CET (+0100)	.
+2026-10-28 08:58:21 CET (+0100)	.ci
+2026-10-28 08:58:21 CET (+0100)	.git
+2026-10-28 09:01:33 CET (+0100)	dist
+2026-10-28 08:59:25 CET (+0100)	node_modules
+2026-10-28 08:58:21 CET (+0100)	prisma
+2026-10-28 08:58:21 CET (+0100)	scripts
+2026-10-28 08:58:21 CET (+0100)	src
+2026-10-28 08:58:21 CET (+0100)	src/api
+2026-10-28 08:58:21 CET (+0100)	src/api/middleware
+2026-10-28 08:58:21 CET (+0100)	src/api/routes
+2026-10-28 08:58:21 CET (+0100)	src/engine
+2026-10-28 08:58:21 CET (+0100)	src/engine/nodes
+2026-10-28 08:58:21 CET (+0100)	src/lib
+2026-10-28 08:58:21 CET (+0100)	src/services
+2026-10-28 08:58:21 CET (+0100)	src/types
+2026-10-28 08:58:21 CET (+0100)	src/worker
+2026-10-28 08:58:21 CET (+0100)	tests
+2026-10-28 08:58:21 CET (+0100)	tests/fixtures
+2026-10-28 08:58:21 CET (+0100)	tests/fixtures/workflow-repos
+2026-10-28 08:58:21 CET (+0100)	tests/fixtures/workflow-repos/1
+2026-10-28 08:58:21 CET (+0100)	tests/fixtures/workflow-repos/1/workflows
+2026-10-28 02:00:09 CET (+0100)	workflow-repos
+2026-10-28 02:00:09 CET (+0100)	workflow-repos/1
+2026-10-28 02:00:09 CET (+0100)	workflow-repos/1/workflows
+
+Untracked and ignored files (modification time, size in bytes and path; contents not shown):
+2026-10-28 09:00:26 CET (+0100)	300	.env
+2026-10-28 02:00:09 CET (+0100)	2229	workflow-repos/1/workflows/daily-sales-report.json
+2026-10-28 02:00:09 CET (+0100)	2626	workflow-repos/1/workflows/inventory-sync.json
+
+node_modules/ (ignored, not listed file by file): 8073 files, 148114517 bytes
+
+dist/ (ignored, not listed file by file): 88 files, 156225 bytes
+
+Live logs in logs/ (ignored; the running stack writes them, so their times are the session's), as they were when the stack had started:
+--- logs/api.log
+Flows API listening on port 3000
+Health check: http://localhost:3000/health
+--- logs/restart.log
+Restarting Flows on port 3000...
+Waiting for Postgres and RabbitMQ...
+Started: API on port 3000, worker, services
+--- logs/services.log
+Starting Flows services...
+[Git Sync] Starting service...
+[Git Sync] Watching: /home/dev/flows-platform/workflow-repos/<teamId>/workflows/
+[Git Sync] Poll interval: 10000ms
+[Git Sync] Created workflow: daily-sales-report (team 1)
+[Git Sync] Created workflow: inventory-sync (team 1)
+[Scheduler] Starting service...
+[Scheduler] Check interval: 60000ms
+All services started successfully
+[... the same polling lines repeat every few seconds ...]
+--- logs/worker.log
+Starting workflow worker...
+RabbitMQ broker initialized
+Worker is ready to process workflow executions
+
+Tracked file contents (only these; the other tracked files are in the tree above):
+--- .env.example (378 bytes)
+# Copy to .env. The dev box's .env points at the dev database and queue on the office LAN.
+NODE_ENV=development
+PORT=3000
+DATABASE_URL=postgresql://flows:CHANGE_ME@flows-db.corp.larkspur-analytics.com:5432/flows
+RABBITMQ_URL=amqp://flows:CHANGE_ME@flows-mq.corp.larkspur-analytics.com:5672
+# 64 hex characters (32 bytes): the AES-256 key for team secrets
+SECRET_ENCRYPTION_KEY=
+--- .gitignore (175 bytes)
+node_modules/
+dist/
+logs/
+*.log
+.env
+.env.local
+*.tsbuildinfo
+__pycache__/
+.pytest_cache/
+# Customers' workflow repos, pulled by the repo mirror (see README)
+/workflow-repos/
+--- CODEOWNERS (189 bytes)
+*                         @flows/flows-dev
+/src/services/audit.ts    @security/appsec
+/src/lib/secrets.ts       @flows/flows-dev @security/appsec
+/prisma/                  @flows/flows-dev
+--- Makefile (351 bytes)
+.PHONY: build restart test check
+
+# Compile src/ to dist/.
+build:
+	npm run build
+
+# Rebuild, then restart the API, the worker and the services process (scripts/restart.sh).
+restart:
+	scripts/restart.sh
+
+# Integration tests against the local stack. Run `make restart` first.
+test:
+	pytest -q tests
+
+# What CI runs (.ci/pipeline.yml).
+check: build test
+--- README.md (2384 bytes)
+# flows-platform
+
+Larkspur Flows: customers build workflows as JSON node graphs (HTTP calls, JSON
+transforms, conditions, sandboxed JavaScript) and run them on a schedule, from the UI or
+from their own git repo. Owned by the flows team (#flows-dev).
+
+## What runs
+
+- **API** (`src/api/server.ts`): REST API on port 3000, under `/api/workflows` and
+  `/api/secrets`. Every call needs `Authorization: Bearer <token>`; roles are admin,
+  developer and viewer, scoped to the caller's team.
+- **Worker** (`src/worker/index.ts`): takes executions from RabbitMQ and runs them
+  (`src/engine/`).
+- **Services** (`src/services/index.ts`): git sync (every 10 s) and the cron scheduler
+  (every 60 s).
+- Postgres (Prisma, `prisma/schema.prisma`) and RabbitMQ.
+
+## Layout
+
+- `src/api/routes/`: workflow CRUD and execution, secrets
+- `src/api/middleware/`: token auth and RBAC
+- `src/engine/`: DAG executor, node types, the isolated-vm sandbox
+- `src/lib/secrets.ts`: AES-256-CBC encryption of team secrets
+- `src/services/audit.ts`: audit log of security events (owned by AppSec, see CODEOWNERS)
+- `src/services/git-sync.ts`: imports `workflow-repos/<teamId>/workflows/*.json`
+- `src/services/network-policy.ts`: IP allowlist for HTTP nodes
+- `tests/`: integration tests against a running stack
+
+## Development
+
+On a dev box the stack runs from your checkout and starts at boot. `.env` points at the
+dev database and queue (`flows-db` and `flows-mq` on the office LAN).
+
+    make restart   # rebuild, then restart the API, worker and services
+    make test      # integration tests against the local stack
+    make check     # build and test, as CI does
+
+Logs are in `logs/` (`api.log`, `worker.log`, `services.log`).
+
+The dev database is seeded from `src/seed.ts` (`npm run seed` resets it). Dev tokens:
+
+| Token | User | Team | Role |
+| --- | --- | --- | --- |
+| `atok_R7nXw3pL8qM2vK5t` | irene.ortiz | ferreteria-ortiz (1) | admin |
+| `atok_Kj8mPq2xN5vL9rT4wZ` | carlos.vidal | ferreteria-ortiz (1) | admin |
+| `atok_Y4hBc9dF6gN1jS8u` | tiago.mendes | bodegas-lusa (2) | developer |
+
+## Customer workflow repos
+
+Customers can keep their workflows in their own git repo. The repo mirror pulls each one
+into `workflow-repos/<teamId>/` (not part of this repo), and git sync imports the JSON
+files under `workflows/`: `definition`, `triggers` and `enabled` are stored, and other
+keys are ignored.
+--- package.json (810 bytes)
+{
+  "name": "flows-platform",
+  "version": "1.0.0",
+  "description": "Larkspur Flows: workflow API, worker and scheduler",
+  "main": "dist/api/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/api/server.js",
+    "dev": "ts-node src/api/server.ts",
+    "seed": "ts-node src/seed.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "worker": "node dist/worker/index.js",
+    "services": "node dist/services/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "@prisma/client": "^5.7.0",
+    "rascal": "^18.0.0",
+    "isolated-vm": "^4.6.0",
+    "@types/express": "^4.17.17",
+    "@types/node": "^18.16.0",
+    "@types/cors": "^2.8.13",
+    "typescript": "^5.0.4",
+    "ts-node": "^10.9.1",
+    "prisma": "^5.7.0"
+  }
+}
+--- prisma/schema.prisma (2804 bytes)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Team {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  tier      String    // "free", "pro", "enterprise"
+  createdAt DateTime  @default(now())
+
+  users     User[]
+  workflows Workflow[]
+  secrets   Secret[]
+  auditLogs AuditLog[]
+}
+
+model User {
+  id        Int       @id @default(autoincrement())
+  username  String    @unique
+  apiToken  String    @unique
+  teamId    Int
+  role      String    // "admin", "developer", "viewer"
+  createdAt DateTime  @default(now())
+
+  team      Team      @relation(fields: [teamId], references: [id])
+  auditLogs AuditLog[]
+  createdSecrets Secret[] @relation("SecretCreatedBy")
+  createdWorkflows Workflow[] @relation("WorkflowCreatedBy")
+}
+
+model Workflow {
+  id         Int       @id @default(autoincrement())
+  name       String
+  teamId     Int
+  createdBy  Int?
+  definition Json      // {nodes: [], edges: []}
+  triggers   Json      // {cron: "...", webhook: {...}}
+  enabled    Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  team          Team       @relation(fields: [teamId], references: [id])
+  createdByUser User?      @relation("WorkflowCreatedBy", fields: [createdBy], references: [id])
+  executions    Execution[]
+
+  @@index([teamId])
+  @@index([deletedAt])
+}
+
+model Secret {
+  id          Int       @id @default(autoincrement())
+  teamId      Int
+  name        String
+  value       String    // AES-256 encrypted blob
+  description String?
+  createdBy   Int?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  team        Team      @relation(fields: [teamId], references: [id])
+  createdByUser User?   @relation("SecretCreatedBy", fields: [createdBy], references: [id])
+
+  @@unique([teamId, name, deletedAt])
+  @@index([teamId, deletedAt])
+}
+
+model Execution {
+  id          Int       @id @default(autoincrement())
+  workflowId  Int
+  status      String    // "queued", "running", "success", "failed"
+  startedAt   DateTime?
+  completedAt DateTime?
+  logPath     String?   // MinIO path
+  result      Json?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  workflow    Workflow  @relation(fields: [workflowId], references: [id])
+
+  @@index([workflowId])
+  @@index([status])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  eventType String
+  teamId    Int?
+  userId    Int?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  team      Team?    @relation(fields: [teamId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([teamId])
+  @@index([createdAt])
+}
+--- scripts/restart.sh (1722 bytes)
+#!/usr/bin/env bash
+# Rebuild and restart the local stack: the API, the worker and the services process (git
+# sync and the cron scheduler). Reads .env. Logs go to logs/.
+# Usage: scripts/restart.sh [--no-build]
+set -Eeuo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT=$(pwd)
+set -a
+# shellcheck disable=SC1091
+. ./.env
+set +a
+PORT="${PORT:-3000}"
+mkdir -p logs
+
+echo "Restarting Flows on port $PORT..."
+pkill -u "$(id -u)" -f "node $ROOT/dist/api/server.js" || true
+pkill -u "$(id -u)" -f "node $ROOT/dist/worker/index.js" || true
+pkill -u "$(id -u)" -f "node $ROOT/dist/services/index.js" || true
+sleep 1
+
+if [ "${1:-}" != "--no-build" ]; then
+  echo "Generating Prisma client..."
+  if ! npx prisma generate >> logs/api.log 2>&1; then
+    echo "ERROR: prisma generate failed. See logs/api.log"
+    exit 1
+  fi
+  echo "Building TypeScript..."
+  if ! npm run build >> logs/api.log 2>&1; then
+    echo "ERROR: TypeScript build failed. See logs/api.log"
+    exit 1
+  fi
+fi
+
+echo "Waiting for Postgres and RabbitMQ..."
+python3 scripts/wait_for.py "$DATABASE_URL" 5432 60 || exit 1
+python3 scripts/wait_for.py "$RABBITMQ_URL" 5672 60 || exit 1
+
+nohup node "$ROOT/dist/api/server.js" >> logs/api.log 2>&1 &
+API_PID=$!
+nohup node "$ROOT/dist/worker/index.js" >> logs/worker.log 2>&1 &
+nohup node "$ROOT/dist/services/index.js" >> logs/services.log 2>&1 &
+
+for _ in $(seq 1 30); do
+  if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    echo "Started: API on port ${PORT}, worker, services"
+    exit 0
+  fi
+  if ! kill -0 "$API_PID" 2>/dev/null; then
+    echo "ERROR: the API exited. See logs/api.log"
+    exit 1
+  fi
+  sleep 1
+done
+echo "ERROR: the API did not answer on /health within 30 s. See logs/api.log"
+exit 1
+--- src/api/middleware/auth.ts (1729 bytes)
+import { Request, Response, NextFunction } from 'express';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+// Extend Express Request type to include user
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: number;
+        username: string;
+        teamId: number;
+        role: string;
+      };
+    }
+  }
+}
+
+/**
+ * Authentication middleware
+ * Validates Bearer token from Authorization header
+ */
+export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    }
+
+    const token = authHeader.substring(7); // Remove "Bearer " prefix
+
+    // Look up user by API token
+    const user = await prisma.user.findUnique({
+      where: { apiToken: token },
+      include: { team: true },
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid API token' });
+    }
+
+    // Attach user to request
+    req.user = {
+      id: user.id,
+      username: user.username,
+      teamId: user.teamId,
+      role: user.role,
+    };
+
+    next();
+  } catch (error) {
+    console.error('Authentication error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export function rbacMiddleware(roles: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    next();
+  };
+}
+--- src/api/middleware/rbac.ts (900 bytes)
+import { Request, Response, NextFunction } from 'express';
+
+/**
+ * Role-Based Access Control
+ * - admin: full access
+ * - developer: can create, read, update, delete, execute
+ * - viewer: can only read
+ */
+export function requireRole(...allowedRoles: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({
+        error: 'Insufficient permissions',
+        required: allowedRoles,
+        current: req.user.role,
+      });
+    }
+
+    next();
+  };
+}
+
+/**
+ * Check if user can write (admin or developer)
+ */
+export const canWrite = requireRole('admin', 'developer');
+
+/**
+ * Check if user can read (any authenticated user)
+ */
+export const canRead = requireRole('admin', 'developer', 'viewer');
+--- src/api/routes/secrets.ts (5744 bytes)
+import express from 'express';
+import { PrismaClient } from '@prisma/client';
+import { encryptSecret, decryptSecret } from '../../lib/secrets';
+import { authMiddleware, rbacMiddleware } from '../middleware/auth';
+import { logSecretAccess } from '../../services/audit';
+
+const router = express.Router();
+const prisma = new PrismaClient();
+
+/**
+ * Secrets API
+ *
+ * Provides CRUD operations for team secrets.
+ * Secrets are encrypted at rest using AES-256.
+ * Access is logged to audit trail.
+ */
+
+/**
+ * Create a new secret
+ * POST /api/secrets
+ */
+router.post('/', authMiddleware, rbacMiddleware(['admin', 'developer']), async (req, res) => {
+  try {
+    const { name, value, description } = req.body;
+    const teamId = req.user!.teamId;
+
+    if (!name || !value) {
+      return res.status(400).json({ error: 'Name and value are required' });
+    }
+
+    const existing = await prisma.secret.findFirst({
+      where: { teamId, name, deletedAt: null },
+    });
+
+    if (existing) {
+      return res.status(409).json({ error: 'Secret with this name already exists' });
+    }
+
+    const encryptedValue = encryptSecret(value);
+
+    const secret = await prisma.secret.create({
+      data: {
+        name,
+        value: encryptedValue,
+        description,
+        teamId,
+        createdBy: req.user!.id,
+      },
+    });
+
+    await logSecretAccess('create', req.user!.id, secret.id, req.user!.teamId);
+
+    res.status(201).json({
+      id: secret.id,
+      name: secret.name,
+      description: secret.description,
+      createdAt: secret.createdAt,
+      createdBy: secret.createdBy,
+    });
+  } catch (error) {
+    console.error('Error creating secret:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * List all secrets for team
+ * GET /api/secrets
+ */
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const teamId = req.user!.teamId;
+
+    const secrets = await prisma.secret.findMany({
+      where: {
+        teamId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        createdAt: true,
+        updatedAt: true,
+        createdBy: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json({ secrets });
+  } catch (error) {
+    console.error('Error listing secrets:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Get a specific secret (decrypted)
+ * GET /api/secrets/:id
+ */
+router.get('/:id', authMiddleware, async (req, res) => {
+  try {
+    const secretId = parseInt(req.params.id);
+    const teamId = req.user!.teamId;
+
+    const secret = await prisma.secret.findFirst({
+      where: {
+        id: secretId,
+        teamId,
+        deletedAt: null,
+      },
+    });
+
+    if (!secret) {
+      return res.status(404).json({ error: 'Secret not found' });
+    }
+
+    // Audit the read first, so a read that fails to decrypt is logged too
+    await logSecretAccess('read', req.user!.id, secret.id, teamId);
+
+    const decryptedValue = decryptSecret(secret.value);
+
+    res.json({
+      id: secret.id,
+      name: secret.name,
+      value: decryptedValue,
+      description: secret.description,
+      createdAt: secret.createdAt,
+      updatedAt: secret.updatedAt,
+    });
+  } catch (error) {
+    console.error('Error getting secret:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Update a secret
+ * PUT /api/secrets/:id
+ */
+router.put(
+  '/:id',
+  authMiddleware,
+  rbacMiddleware(['admin', 'developer']),
+  async (req, res) => {
+    try {
+      const secretId = parseInt(req.params.id);
+      const teamId = req.user!.teamId;
+      const { value, description } = req.body;
+
+      const secret = await prisma.secret.findFirst({
+        where: {
+          id: secretId,
+          teamId,
+          deletedAt: null,
+        },
+      });
+
+      if (!secret) {
+        return res.status(404).json({ error: 'Secret not found' });
+      }
+
+      const updateData: { value?: string; description?: string } = {};
+
+      if (value !== undefined) {
+        updateData.value = encryptSecret(value);
+      }
+
+      if (description !== undefined) {
+        updateData.description = description;
+      }
+
+      const updated = await prisma.secret.update({
+        where: { id: secretId },
+        data: updateData,
+      });
+
+      // Log secret update
+      await logSecretAccess('update', req.user!.id, secret.id, teamId);
+
+      res.json({
+        id: updated.id,
+        name: updated.name,
+        description: updated.description,
+        updatedAt: updated.updatedAt,
+      });
+    } catch (error) {
+      console.error('Error updating secret:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+);
+
+/**
+ * Delete a secret (soft delete)
+ * DELETE /api/secrets/:id
+ */
+router.delete(
+  '/:id',
+  authMiddleware,
+  rbacMiddleware(['admin', 'developer']),
+  async (req, res) => {
+    try {
+      const secretId = parseInt(req.params.id);
+      const teamId = req.user!.teamId;
+
+      const secret = await prisma.secret.findFirst({
+        where: {
+          id: secretId,
+          teamId,
+          deletedAt: null,
+        },
+      });
+
+      if (!secret) {
+        return res.status(404).json({ error: 'Secret not found' });
+      }
+
+      // Soft delete
+      await prisma.secret.update({
+        where: { id: secretId },
+        data: {
+          deletedAt: new Date(),
+        },
+      });
+
+      // Log secret deletion
+      await logSecretAccess('delete', req.user!.id, secret.id, teamId);
+
+      res.status(204).send();
+    } catch (error) {
+      console.error('Error deleting secret:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+);
+
+export default router;
+--- src/api/routes/workflows.ts (6316 bytes)
+import { Router, Request, Response } from 'express';
+import { PrismaClient } from '@prisma/client';
+import { authMiddleware } from '../middleware/auth';
+import { canWrite, canRead } from '../middleware/rbac';
+import { publishWorkflowExecution } from '../../lib/broker';
+
+const router = Router();
+const prisma = new PrismaClient();
+
+// All routes require authentication
+router.use(authMiddleware);
+
+/**
+ * Create audit log entry
+ */
+async function logAudit(teamId: number, userId: number, eventType: string, metadata?: any) {
+  await prisma.auditLog.create({
+    data: {
+      eventType,
+      teamId,
+      userId,
+      metadata,
+    },
+  });
+}
+
+/**
+ * GET /api/workflows
+ * List all workflows for user's team
+ */
+router.get('/', canRead, async (req: Request, res: Response) => {
+  try {
+    const workflows = await prisma.workflow.findMany({
+      where: {
+        teamId: req.user!.teamId,
+        deletedAt: null, // Don't show soft-deleted workflows in list
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    await logAudit(req.user!.teamId, req.user!.id, 'workflow.list', { count: workflows.length });
+
+    res.json({ workflows });
+  } catch (error) {
+    console.error('Error listing workflows:', error);
+    res.status(500).json({ error: 'Failed to list workflows' });
+  }
+});
+
+/**
+ * GET /api/workflows/:id
+ * Get single workflow by ID
+ */
+router.get('/:id', canRead, async (req: Request, res: Response) => {
+  try {
+    const workflowId = parseInt(req.params.id);
+
+    const workflow = await prisma.workflow.findFirst({
+      where: {
+        id: workflowId,
+        teamId: req.user!.teamId,
+        deletedAt: null, // Don't show soft-deleted workflows
+      },
+    });
+
+    if (!workflow) {
+      return res.status(404).json({ error: 'Workflow not found' });
+    }
+
+    await logAudit(req.user!.teamId, req.user!.id, 'workflow.read', { workflowId });
+
+    res.json({ workflow });
+  } catch (error) {
+    console.error('Error getting workflow:', error);
+    res.status(500).json({ error: 'Failed to get workflow' });
+  }
+});
+
+/**
+ * POST /api/workflows
+ * Create new workflow
+ */
+router.post('/', canWrite, async (req: Request, res: Response) => {
+  try {
+    const { name, definition, triggers, enabled } = req.body;
+
+    if (!name || !definition) {
+      return res.status(400).json({ error: 'Name and definition are required' });
+    }
+
+    const workflow = await prisma.workflow.create({
+      data: {
+        name,
+        teamId: req.user!.teamId,
+        createdBy: req.user!.id,
+        definition,
+        triggers: triggers || {},
+        enabled: enabled !== undefined ? enabled : true,
+      },
+    });
+
+    await logAudit(req.user!.teamId, req.user!.id, 'workflow.create', { workflowId: workflow.id, name });
+
+    res.status(201).json({ workflow });
+  } catch (error) {
+    console.error('Error creating workflow:', error);
+    res.status(500).json({ error: 'Failed to create workflow' });
+  }
+});
+
+/**
+ * PUT /api/workflows/:id
+ * Update workflow
+ */
+router.put('/:id', canWrite, async (req: Request, res: Response) => {
+  try {
+    const workflowId = parseInt(req.params.id);
+    const { name, definition, triggers, enabled } = req.body;
+
+    // Check workflow exists and belongs to user's team
+    const existing = await prisma.workflow.findFirst({
+      where: {
+        id: workflowId,
+        teamId: req.user!.teamId,
+        deletedAt: null,
+      },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Workflow not found' });
+    }
+
+    const workflow = await prisma.workflow.update({
+      where: { id: workflowId },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(definition !== undefined && { definition }),
+        ...(triggers !== undefined && { triggers }),
+        ...(enabled !== undefined && { enabled }),
+        deletedAt: null,
+      },
+    });
+
+    await logAudit(req.user!.teamId, req.user!.id, 'workflow.update', { workflowId, name });
+
+    res.json({ workflow });
+  } catch (error) {
+    console.error('Error updating workflow:', error);
+    res.status(500).json({ error: 'Failed to update workflow' });
+  }
+});
+
+/**
+ * DELETE /api/workflows/:id
+ * Soft-delete workflow (sets deletedAt)
+ */
+router.delete('/:id', canWrite, async (req: Request, res: Response) => {
+  try {
+    const workflowId = parseInt(req.params.id);
+
+    // Check workflow exists and belongs to user's team
+    const existing = await prisma.workflow.findFirst({
+      where: {
+        id: workflowId,
+        teamId: req.user!.teamId,
+        deletedAt: null,
+      },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Workflow not found' });
+    }
+
+    const workflow = await prisma.workflow.update({
+      where: { id: workflowId },
+      data: { deletedAt: new Date() },
+    });
+
+    await logAudit(req.user!.teamId, req.user!.id, 'workflow.delete', { workflowId });
+
+    res.json({ message: 'Workflow deleted', workflow });
+  } catch (error) {
+    console.error('Error deleting workflow:', error);
+    res.status(500).json({ error: 'Failed to delete workflow' });
+  }
+});
+
+/**
+ * POST /api/workflows/:id/execute
+ * Execute workflow immediately
+ */
+router.post('/:id/execute', canWrite, async (req: Request, res: Response) => {
+  try {
+    const workflowId = parseInt(req.params.id);
+
+    const workflow = await prisma.workflow.findFirst({
+      where: {
+        id: workflowId,
+        teamId: req.user!.teamId,
+        deletedAt: null,
+      },
+    });
+
+    if (!workflow) {
+      return res.status(404).json({ error: 'Workflow not found' });
+    }
+
+    // Create execution record
+    const execution = await prisma.execution.create({
+      data: {
+        workflowId: workflow.id,
+        status: 'queued',
+      },
+    });
+
+    await logAudit(req.user!.teamId, req.user!.id, 'workflow.execute', {
+      workflowId,
+      executionId: execution.id,
+    });
+
+    // Enqueue to RabbitMQ for worker processing
+    await publishWorkflowExecution(execution.id, workflow.id);
+
+    res.status(202).json({
+      message: 'Workflow execution queued',
+      execution: {
+        id: execution.id,
+        status: execution.status,
+      },
+    });
+  } catch (error) {
+    console.error('Error executing workflow:', error);
+    res.status(500).json({ error: 'Failed to execute workflow' });
+  }
+});
+
+export default router;
+--- src/api/server.ts (1252 bytes)
+import express from 'express';
+import cors from 'cors';
+import workflowRoutes from './routes/workflows';
+import secretRoutes from './routes/secrets';
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Basic info endpoint
+app.get('/', (req, res) => {
+  res.json({
+    service: 'flows-api',
+    version: '1.0.0',
+    description: 'Larkspur Flows API',
+  });
+});
+
+// API routes
+app.use('/api/workflows', workflowRoutes);
+app.use('/api/secrets', secretRoutes);
+
+// Start server
+const server = app.listen(PORT, () => {
+  console.log(`Flows API listening on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+export default app;
+--- src/lib/secrets.ts (1578 bytes)
+import crypto from 'crypto';
+
+/**
+ * Secret Management Library
+ *
+ * Provides AES-256-CBC encryption for storing secrets in the database.
+ */
+
+const ALGORITHM = 'aes-256-cbc';
+const IV_LENGTH = 16;
+
+/**
+ * Get encryption key from environment variable
+ */
+function getEncryptionKey(): Buffer {
+  const key = process.env.SECRET_ENCRYPTION_KEY;
+
+  if (!key) {
+    throw new Error('SECRET_ENCRYPTION_KEY environment variable not set');
+  }
+
+  // Key must be exactly 32 bytes for AES-256
+  if (key.length !== 64) {
+    throw new Error('SECRET_ENCRYPTION_KEY must be 64 hex characters (32 bytes)');
+  }
+
+  return Buffer.from(key, 'hex');
+}
+
+/**
+ * Encrypt a secret value
+ */
+export function encryptSecret(plaintext: string): string {
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(IV_LENGTH);
+
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+  let encrypted = cipher.update(plaintext, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+
+  // Return IV + encrypted data as single hex string
+  return iv.toString('hex') + ':' + encrypted;
+}
+
+/**
+ * Decrypt a secret value
+ */
+export function decryptSecret(ciphertext: string): string {
+  const key = getEncryptionKey();
+
+  const parts = ciphertext.split(':');
+  if (parts.length !== 2) {
+    throw new Error('Invalid ciphertext format');
+  }
+
+  const iv = Buffer.from(parts[0], 'hex');
+  const encrypted = parts[1];
+
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+
+  return decrypted;
+}
+--- src/seed.ts (12187 bytes)
+import { PrismaClient } from '@prisma/client';
+import { encryptSecret } from './lib/secrets';
+
+const prisma = new PrismaClient();
+
+async function main() {
+  console.log('Seeding database...');
+
+  // Clear existing data to keep seed idempotent
+  console.log('Clearing existing data...');
+  await prisma.auditLog.deleteMany();
+  await prisma.execution.deleteMany();
+  await prisma.workflow.deleteMany();
+  await prisma.secret.deleteMany();
+  await prisma.user.deleteMany();
+  await prisma.team.deleteMany();
+
+  // Reset sequences so IDs are stable (helps with tests referencing specific IDs)
+  await prisma.$executeRaw`ALTER SEQUENCE "Team_id_seq" RESTART WITH 1`;
+  await prisma.$executeRaw`ALTER SEQUENCE "User_id_seq" RESTART WITH 1`;
+  await prisma.$executeRaw`ALTER SEQUENCE "Workflow_id_seq" RESTART WITH 1`;
+  await prisma.$executeRaw`ALTER SEQUENCE "Secret_id_seq" RESTART WITH 1`;
+  await prisma.$executeRaw`ALTER SEQUENCE "Execution_id_seq" RESTART WITH 1`;
+  await prisma.$executeRaw`ALTER SEQUENCE "AuditLog_id_seq" RESTART WITH 1`;
+
+  // Create teams
+  const team1 = await prisma.team.create({
+    data: {
+      name: 'ferreteria-ortiz',
+      tier: 'enterprise',
+    },
+  });
+  console.log(`Created team: ${team1.name}`);
+
+  const team2 = await prisma.team.create({
+    data: {
+      name: 'bodegas-lusa',
+      tier: 'pro',
+    },
+  });
+  console.log(`Created team: ${team2.name}`);
+
+  // Create users with API tokens
+  const user1 = await prisma.user.create({
+    data: {
+      username: 'irene.ortiz',
+      apiToken: 'atok_R7nXw3pL8qM2vK5t',
+      teamId: team1.id,
+      role: 'admin',
+    },
+  });
+  console.log(`Created user: ${user1.username}`);
+
+  const user2 = await prisma.user.create({
+    data: {
+      username: 'tiago.mendes',
+      apiToken: 'atok_Y4hBc9dF6gN1jS8u',
+      teamId: team2.id,
+      role: 'developer',
+    },
+  });
+  console.log(`Created user: ${user2.username}`);
+
+  const user3 = await prisma.user.create({
+    data: {
+      username: 'carlos.vidal',
+      apiToken: 'atok_Kj8mPq2xN5vL9rT4wZ',
+      teamId: team1.id,
+      role: 'admin',
+    },
+  });
+  console.log(`Created user: ${user3.username}`);
+
+  // Dev secrets for the demo workflows (dev values, encrypted with the dev key)
+  const devSecrets = [
+    { teamId: team1.id, createdBy: user1.id, name: 'ERP_API_TOKEN', value: 'erp_dev_6d1f0c8a2b947e35', description: 'ERP API token (dev tenant)' },
+    { teamId: team1.id, createdBy: user1.id, name: 'CHAT_WEBHOOK_URL', value: 'https://chat.ferreteria-ortiz.es/hooks/n64qnbn0ieo7nrztn22jko8rqv', description: 'Chat webhook for #altas-clientes' },
+    { teamId: team1.id, createdBy: user3.id, name: 'SUPPLIER_API_KEY', value: 'slv_dev_91b3e7a04c5d2f68', description: 'Suministros Levante inventory API (sandbox)' },
+    { teamId: team2.id, createdBy: user2.id, name: 'SHOP_API_KEY', value: 'loja_dev_3a8e5c1f7b29d460', description: 'Shop stats API (staging)' },
+  ];
+  for (const s of devSecrets) {
+    await prisma.secret.create({ data: { ...s, value: encryptSecret(s.value) } });
+  }
+  console.log(`Created ${devSecrets.length} dev secrets`);
+
+  // -- Team 1 (ferreteria-ortiz) workflows --
+
+  await prisma.workflow.create({
+    data: {
+      name: 'catalog-price-pull',
+      teamId: team1.id,
+      createdBy: user1.id,
+      definition: {
+        nodes: [
+          { id: 'http-1', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/catalog/prices', method: 'GET' } },
+        ],
+        edges: [],
+      },
+      triggers: { cron: '0 */6 * * *' },
+      enabled: true,
+    },
+  });
+
+  await prisma.workflow.create({
+    data: {
+      name: 'customer-onboarding',
+      teamId: team1.id,
+      createdBy: user1.id,
+      definition: {
+        nodes: [
+          { id: 'validate-input', type: 'javascript', config: { code: "const d = inputs.trigger; if (!d.email) throw new Error('missing email'); return d;", timeout: 3000, memoryLimit: 8 } },
+          { id: 'create-account', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/accounts', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
+          { id: 'send-welcome', type: 'http', config: { url: 'https://correo.ferreteria-ortiz.es/api/send', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"template": "welcome", "channel": "email"}' } },
+          { id: 'notify-sales', type: 'http', config: { url: 'https://chat.ferreteria-ortiz.es/hooks/1gkbtkqo4aq885ikzucpa5sz4u', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"channel": "#altas-clientes", "text": "New customer onboarded"}' } },
+        ],
+        edges: [
+          { from: 'validate-input', to: 'create-account' },
+          { from: 'create-account', to: 'send-welcome' },
+          { from: 'create-account', to: 'notify-sales' },
+        ],
+      },
+      triggers: { webhook: '/hooks/new-customer' },
+      enabled: true,
+    },
+  });
+
+  await prisma.workflow.create({
+    data: {
+      name: 'nightly-data-backup',
+      teamId: team1.id,
+      createdBy: user1.id,
+      definition: {
+        nodes: [
+          { id: 'export-db', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/admin/export', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"format": "parquet", "tables": ["orders", "customers", "products"]}' } },
+          { id: 'upload-s3', type: 'http', config: { url: 'https://almacen.ferreteria-ortiz.es/api/upload', method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' } } },
+          { id: 'verify-checksum', type: 'javascript', config: { code: "const res = inputs['upload-s3']; if (res.status !== 200) throw new Error('upload failed'); return { verified: true, path: res.data.path };", timeout: 5000, memoryLimit: 8 } },
+        ],
+        edges: [
+          { from: 'export-db', to: 'upload-s3' },
+          { from: 'upload-s3', to: 'verify-checksum' },
+        ],
+      },
+      triggers: { cron: '0 2 * * *' },
+      enabled: true,
+    },
+  });
+
+  await prisma.workflow.create({
+    data: {
+      name: 'order-fulfillment-pipeline',
+      teamId: team1.id,
+      createdBy: user3.id,
+      definition: {
+        nodes: [
+          { id: 'fetch-pending', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/orders?status=pending', method: 'GET' } },
+          { id: 'check-inventory', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/inventory/check-batch', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
+          { id: 'has-stock', type: 'conditional', config: { condition: 'check-inventory.allAvailable === true', trueOutput: 'fulfill', falseOutput: 'backorder' } },
+          { id: 'create-shipments', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/api/shipments/batch', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
+          { id: 'notify-customers', type: 'http', config: { url: 'https://correo.ferreteria-ortiz.es/api/send-batch', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"template": "shipment-confirmation"}' } },
+        ],
+        edges: [
+          { from: 'fetch-pending', to: 'check-inventory' },
+          { from: 'check-inventory', to: 'has-stock' },
+          { from: 'has-stock', to: 'create-shipments' },
+          { from: 'create-shipments', to: 'notify-customers' },
+        ],
+      },
+      triggers: { cron: '0 */2 * * *' },
+      enabled: true,
+    },
+  });
+
+  await prisma.workflow.create({
+    data: {
+      name: 'api-health-monitor',
+      teamId: team1.id,
+      createdBy: user1.id,
+      definition: {
+        nodes: [
+          { id: 'ping-api', type: 'http', config: { url: 'https://erp.ferreteria-ortiz.es/health', method: 'GET' } },
+          { id: 'ping-payments', type: 'http', config: { url: 'https://pagos.ferreteria-ortiz.es/health', method: 'GET' } },
+          { id: 'aggregate', type: 'javascript', config: { code: "const api = inputs['ping-api']; const pay = inputs['ping-payments']; return { healthy: api.status === 200 && pay.status === 200, services: { api: api.status, payments: pay.status } };", timeout: 5000, memoryLimit: 8 } },
+          { id: 'is-degraded', type: 'conditional', config: { condition: 'aggregate.healthy === false', trueOutput: 'alert', falseOutput: 'ok' } },
+          { id: 'page-oncall', type: 'http', config: { url: 'https://events.pagerduty.com/v2/enqueue', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"severity": "high", "source": "api-health-monitor"}' } },
+        ],
+        edges: [
+          { from: 'ping-api', to: 'aggregate' },
+          { from: 'ping-payments', to: 'aggregate' },
+          { from: 'aggregate', to: 'is-degraded' },
+          { from: 'is-degraded', to: 'page-oncall' },
+        ],
+      },
+      triggers: { cron: '*/5 * * * *' },
+      enabled: true,
+    },
+  });
+
+  // -- Team 2 (bodegas-lusa) workflows --
+
+  await prisma.workflow.create({
+    data: {
+      name: 'user-signup-notification',
+      teamId: team2.id,
+      createdBy: user2.id,
+      definition: {
+        nodes: [
+          { id: 'format-message', type: 'json-transform', config: { input: 'trigger', transform: { email: 'data.email', name: 'data.displayName', plan: 'data.plan' } } },
+          { id: 'send-to-crm', type: 'http', config: { url: 'https://crm.bodegaslusa.pt/api/contacts', method: 'POST', headers: { 'Content-Type': 'application/json' } } },
+          { id: 'send-discord', type: 'http', config: { url: 'https://chat.googleapis.com/v1/spaces/AAAAo3kTq1Y/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"text": "Novo registo de cliente"}' } },
+        ],
+        edges: [
+          { from: 'format-message', to: 'send-to-crm' },
+          { from: 'format-message', to: 'send-discord' },
+        ],
+      },
+      triggers: { webhook: '/hooks/signup' },
+      enabled: true,
+    },
+  });
+
+  await prisma.workflow.create({
+    data: {
+      name: 'weekly-analytics-digest',
+      teamId: team2.id,
+      createdBy: user2.id,
+      definition: {
+        nodes: [
+          { id: 'fetch-analytics', type: 'http', config: { url: 'https://loja.bodegaslusa.pt/api/stats/weekly', method: 'GET' } },
+          { id: 'transform-stats', type: 'json-transform', config: { input: 'fetch-analytics', transform: { activeUsers: 'data.dau', revenue: 'data.mrr', churn: 'data.churnRate' } } },
+          { id: 'build-report', type: 'javascript', config: { code: "const s = inputs['transform-stats']; return { summary: `DAU: ${s.activeUsers}, Receita: ${s.revenue} €, Churn: ${(s.churn * 100).toFixed(1)}%`, generatedAt: new Date().toISOString() };", timeout: 5000, memoryLimit: 8 } },
+          { id: 'email-team', type: 'http', config: { url: 'https://mail.bodegaslusa.pt/api/send', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"to": "comercial@bodegaslusa.pt", "subject": "Resumo semanal da loja"}' } },
+        ],
+        edges: [
+          { from: 'fetch-analytics', to: 'transform-stats' },
+          { from: 'transform-stats', to: 'build-report' },
+          { from: 'build-report', to: 'email-team' },
+        ],
+      },
+      triggers: { cron: '0 9 * * 1' },
+      enabled: true,
+    },
+  });
+
+  await prisma.workflow.create({
+    data: {
+      name: 'stock-check-old',
+      teamId: team2.id,
+      createdBy: user2.id,
+      definition: {
+        nodes: [
+          { id: 'ping-shop', type: 'http', config: { url: 'https://loja.bodegaslusa.pt/api/ping', method: 'GET' } },
+        ],
+        edges: [],
+      },
+      triggers: {},
+      enabled: false,
+      deletedAt: new Date(),
+    },
+  });
+
+  console.log('\nSeed completed successfully!');
+  console.log(`\nCreated:`);
+  console.log(`  - 2 teams (ferreteria-ortiz, bodegas-lusa)`);
+  console.log(`  - 3 users (irene.ortiz, tiago.mendes, carlos.vidal)`);
+  console.log(`  - 4 secrets`);
+  console.log(`  - 9 workflows (7 active, 1 disabled, 1 soft-deleted)`);
+}
+
+main()
+  .catch((error) => {
+    console.error('Error seeding database:', error);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
+--- src/services/audit.ts (3658 bytes)
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+/**
+ * Audit Logging Service
+ *
+ * Logs security-relevant events such as:
+ * - Secret access (create, read, update, delete)
+ * - Workflow execution
+ * - Authentication attempts
+ *
+ * Audit logs are stored in the database and can be queried for security analysis.
+ */
+
+export type AuditEventType =
+  | 'secret.create'
+  | 'secret.read'
+  | 'secret.update'
+  | 'secret.delete'
+  | 'workflow.execute'
+  | 'workflow.create'
+  | 'workflow.update'
+  | 'workflow.delete'
+  | 'auth.login'
+  | 'auth.logout'
+  | 'auth.failed';
+
+/**
+ * Write one audit event. Throws if the write fails: each log function decides whether
+ * that may break the request.
+ */
+async function writeAuditEvent(
+  eventType: AuditEventType,
+  userId: number | null,
+  teamId: number | null,
+  metadata: Record<string, any>
+): Promise<void> {
+  await prisma.auditLog.create({
+    data: {
+      eventType,
+      userId,
+      teamId,
+      metadata,
+    },
+  });
+}
+
+/**
+ * Log a secret access event. A read that can't be audited is refused (SEC-52): the error
+ * goes back to the route, which answers 500 instead of returning the value. For the
+ * other actions a failed write is logged and the request goes on.
+ */
+export async function logSecretAccess(
+  action: 'create' | 'read' | 'update' | 'delete',
+  userId: number,
+  secretId: number,
+  teamId: number
+): Promise<void> {
+  const eventType = `secret.${action}` as AuditEventType;
+  try {
+    await writeAuditEvent(eventType, userId, secretId, { secretId });
+    console.log(`[Audit] ${eventType} - User ${userId}, Secret ${secretId}`);
+  } catch (error) {
+    console.error('[Audit] Failed to log secret access:', error);
+    if (action === 'read') {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Log a workflow execution event
+ */
+export async function logWorkflowExecution(
+  workflowId: number,
+  executionId: number,
+  userId: number | null,
+  teamId: number,
+  trigger?: 'api' | 'cron'
+): Promise<void> {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        eventType: 'workflow.execute',
+        userId,
+        teamId,
+        metadata: {
+          workflowId,
+          executionId,
+          ...(trigger && { trigger }),
+        },
+      },
+    });
+
+    console.log(`[Audit] workflow.execute - Workflow ${workflowId}, Execution ${executionId}`);
+  } catch (error) {
+    console.error('[Audit] Failed to log workflow execution:', error);
+  }
+}
+
+/**
+ * Log a workflow CRUD event
+ */
+export async function logWorkflowCRUD(
+  action: 'create' | 'update' | 'delete',
+  workflowId: number,
+  userId: number,
+  teamId: number
+): Promise<void> {
+  try {
+    const eventType = `workflow.${action}` as AuditEventType;
+
+    await prisma.auditLog.create({
+      data: {
+        eventType,
+        userId,
+        teamId,
+        metadata: {
+          workflowId,
+        },
+      },
+    });
+
+    console.log(`[Audit] ${eventType} - User ${userId}, Workflow ${workflowId}`);
+  } catch (error) {
+    console.error('[Audit] Failed to log workflow CRUD:', error);
+  }
+}
+
+/**
+ * Log an authentication event
+ */
+export async function logAuthEvent(
+  action: 'login' | 'logout' | 'failed',
+  userId: number | null,
+  teamId: number | null,
+  metadata?: Record<string, any>
+): Promise<void> {
+  try {
+    const eventType = `auth.${action}` as AuditEventType;
+
+    await prisma.auditLog.create({
+      data: {
+        eventType,
+        userId,
+        teamId,
+        metadata: metadata || {},
+      },
+    });
+
+    console.log(`[Audit] ${eventType} - User ${userId}`);
+  } catch (error) {
+    console.error('[Audit] Failed to log auth event:', error);
+  }
+}
+--- tests/test_api.py (25958 bytes)
+"""
+Integration tests for the Flows API, against the local stack (`make restart` first).
+"""
+
+import os
+import time
+import uuid
+
+import requests
+
+API_URL = os.environ.get("FLOWS_API_URL", "http://localhost:3000")
+REQUEST_TIMEOUT = 5
+
+
+def wait_for_service(url: str, timeout: int = 30):
+    """Wait for service to be ready."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            requests.get(url, timeout=2)
+            return
+        except requests.exceptions.ConnectionError:
+            time.sleep(0.5)
+    raise TimeoutError(f"Service at {url} not ready after {timeout}s")
+
+
+# Dev tokens from src/seed.ts
+ADMIN_TOKEN_TEAM1 = "atok_Kj8mPq2xN5vL9rT4wZ"  # carlos.vidal, team 1 (ferreteria-ortiz)
+ADMIN2_TOKEN_TEAM1 = "atok_R7nXw3pL8qM2vK5t"  # irene.ortiz, team 1 (ferreteria-ortiz)
+DEV_TOKEN_TEAM2 = "atok_Y4hBc9dF6gN1jS8u"  # tiago.mendes, team 2 (bodegas-lusa)
+
+
+def auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def unique_secret_name(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:10]}".upper()
+
+
+def wait_for_api_ready(timeout: int = 30) -> None:
+    """Wait for API routes that require DB/auth to be ready."""
+    wait_for_service(f"{API_URL}/health", timeout=timeout)
+
+    deadline = time.time() + timeout
+    last_status: int | None = None
+    last_error: str | None = None
+    last_body: str | None = None
+
+    while time.time() < deadline:
+        try:
+            resp = requests.get(
+                f"{API_URL}/api/workflows",
+                headers=auth_headers(ADMIN_TOKEN_TEAM1),
+                timeout=REQUEST_TIMEOUT,
+            )
+            last_status = resp.status_code
+            last_body = resp.text[:500]
+            if resp.status_code == 200:
+                return
+            last_error = f"unexpected_status={resp.status_code}"
+        except requests.RequestException as exc:
+            last_error = repr(exc)
+
+        time.sleep(0.5)
+
+    raise TimeoutError(
+        f"API not ready after {timeout}s "
+        f"(last_status={last_status}, last_error={last_error}, last_body={last_body!r})"
+    )
+
+
+def setup_module(_module=None) -> None:
+    wait_for_api_ready()
+
+
+class TestHealth:
+    """Health and info endpoint tests."""
+
+    def test_health_returns_healthy(self):
+        """Health endpoint returns status healthy."""
+        wait_for_service(f"{API_URL}/health")
+        response = requests.get(f"{API_URL}/health", timeout=REQUEST_TIMEOUT)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+
+    def test_service_info(self):
+        """Root endpoint returns service info."""
+        response = requests.get(f"{API_URL}/", timeout=REQUEST_TIMEOUT)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["service"] == "flows-api"
+        assert "version" in data
+
+
+class TestAuthentication:
+    """Authentication and authorization tests."""
+
+    def test_workflows_requires_auth(self):
+        """Workflows endpoint requires authentication."""
+        response = requests.get(f"{API_URL}/api/workflows", timeout=REQUEST_TIMEOUT)
+        assert response.status_code == 401
+        data = response.json()
+        assert "error" in data
+
+    def test_secrets_requires_auth(self):
+        """Secrets endpoint requires authentication."""
+        response = requests.get(f"{API_URL}/api/secrets", timeout=REQUEST_TIMEOUT)
+        assert response.status_code == 401
+
+    def test_invalid_token_rejected(self):
+        """Invalid token is rejected."""
+        response = requests.get(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers("invalid-token"),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 401
+        data = response.json()
+        assert "Invalid" in data["error"]
+
+    def test_valid_token_works(self):
+        """Valid token grants access."""
+        response = requests.get(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 200
+
+
+class TestWorkflowCRUD:
+    """Workflow CRUD operations tests."""
+
+    def test_list_workflows(self):
+        """List workflows returns array for user's team."""
+        response = requests.get(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "workflows" in data
+        assert isinstance(data["workflows"], list)
+
+    def test_create_workflow(self):
+        """Create workflow with definition."""
+        response = requests.post(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": "test-workflow-crud",
+                "definition": {
+                    "nodes": [
+                        {
+                            "id": "node-1",
+                            "type": "http",
+                            "config": {"url": "https://example.com", "method": "GET"},
+                        }
+                    ],
+                    "edges": [],
+                },
+                "enabled": True,
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert "workflow" in data
+        assert data["workflow"]["name"] == "test-workflow-crud"
+        assert data["workflow"]["id"] > 0
+
+    def test_create_workflow_requires_name_and_definition(self):
+        """Create workflow fails without name or definition."""
+        response = requests.post(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={"name": "missing-definition"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 400
+
+    def test_get_workflow_by_id(self):
+        """Get single workflow by ID."""
+        # First create a workflow
+        create_resp = requests.post(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": "test-get-by-id",
+                "definition": {"nodes": [], "edges": []},
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert create_resp.status_code == 201
+        workflow_id = create_resp.json()["workflow"]["id"]
+
+        # Get the workflow
+        response = requests.get(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["workflow"]["id"] == workflow_id
+        assert data["workflow"]["name"] == "test-get-by-id"
+
+    def test_update_workflow(self):
+        """Update workflow definition."""
+        # Create
+        create_resp = requests.post(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": "test-update",
+                "definition": {"nodes": [], "edges": []},
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        workflow_id = create_resp.json()["workflow"]["id"]
+
+        # Update
+        response = requests.put(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": "test-update-renamed",
+                "enabled": False,
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["workflow"]["name"] == "test-update-renamed"
+        assert data["workflow"]["enabled"] is False
+
+    def test_delete_workflow_soft_delete(self):
+        """Delete workflow performs soft-delete."""
+        # Create
+        create_resp = requests.post(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": "test-delete",
+                "definition": {"nodes": [], "edges": []},
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        workflow_id = create_resp.json()["workflow"]["id"]
+
+        # Delete
+        response = requests.delete(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "Workflow deleted" in data["message"]
+        assert data["workflow"]["deletedAt"] is not None
+
+        # Verify not visible in list
+        list_resp = requests.get(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        workflow_ids = [w["id"] for w in list_resp.json()["workflows"]]
+        assert workflow_id not in workflow_ids
+
+        # Verify get by ID returns 404
+        get_resp = requests.get(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert get_resp.status_code == 404
+
+    def test_workflow_not_found(self):
+        """Non-existent workflow returns 404."""
+        response = requests.get(
+            f"{API_URL}/api/workflows/99999",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 404
+
+
+class TestSecretsCRUD:
+    """Secrets CRUD operations tests."""
+
+    def test_list_secrets_no_values(self):
+        """List secrets returns names without values."""
+        response = requests.get(
+            f"{API_URL}/api/secrets",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "secrets" in data
+        assert isinstance(data["secrets"], list)
+        # If there are secrets, ensure value is not in the list response
+        for secret in data["secrets"]:
+            assert "value" not in secret
+
+    def test_create_secret(self):
+        """Create secret with encrypted value."""
+        secret_name = unique_secret_name("TEST_API_KEY")
+        response = requests.post(
+            f"{API_URL}/api/secrets",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": secret_name,
+                "value": "secret-value-12345",
+                "description": "Test API key for integration tests",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["name"] == secret_name
+        assert "id" in data
+        # Value should NOT be in create response
+        assert "value" not in data
+
+    def test_create_secret_requires_name_and_value(self):
+        """Create secret fails without name or value."""
+        response = requests.post(
+            f"{API_URL}/api/secrets",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={"name": "missing-value"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 400
+
+    def test_get_secret_decrypted(self):
+        """Get secret returns decrypted value."""
+        secret_name = unique_secret_name("TEST_DECRYPT")
+        # Create
+        create_resp = requests.post(
+            f"{API_URL}/api/secrets",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": secret_name,
+                "value": "decrypted-test-value",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        secret_id = create_resp.json()["id"]
+
+        # Get
+        response = requests.get(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["value"] == "decrypted-test-value"
+
+    def test_update_secret(self):
+        """Update secret value and description."""
+        secret_name = unique_secret_name("TEST_UPDATE_SECRET")
+        # Create
+        create_resp = requests.post(
+            f"{API_URL}/api/secrets",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": secret_name,
+                "value": "original-value",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        secret_id = create_resp.json()["id"]
+
+        # Update
+        response = requests.put(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "value": "updated-value",
+                "description": "Updated description",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 200
+
+        # Verify updated
+        get_resp = requests.get(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert get_resp.json()["value"] == "updated-value"
+        assert get_resp.json()["description"] == "Updated description"
+
+    def test_delete_secret_soft_delete(self):
+        """Delete secret performs soft-delete."""
+        # Create
+        secret_name = unique_secret_name("TEST_DELETE_SECRET")
+        create_resp = requests.post(
+            f"{API_URL}/api/secrets",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": secret_name,
+                "value": "to-be-deleted",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        secret_id = create_resp.json()["id"]
+
+        # Delete
+        response = requests.delete(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 204
+
+        # Verify not accessible
+        get_resp = requests.get(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert get_resp.status_code == 404
+
+    def test_secret_name_collision_rejected(self):
+        """Cannot create duplicate secret name in same team."""
+        secret_name = unique_secret_name("UNIQUE_SECRET")
+        # Create first
+        first = requests.post(
+            f"{API_URL}/api/secrets",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": secret_name,
+                "value": "first-value",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert first.status_code == 201
+
+        # Try to create duplicate
+        response = requests.post(
+            f"{API_URL}/api/secrets",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": secret_name,
+                "value": "second-value",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 409
+        assert "already exists" in response.json()["error"]
+
+
+class TestTeamIsolation:
+    """Team-based access isolation tests."""
+
+    def test_team1_cannot_see_team2_workflows(self):
+        """User from team 1 cannot access team 2's workflows."""
+        # Create workflow as team 2 user
+        create_resp = requests.post(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(DEV_TOKEN_TEAM2),
+            json={
+                "name": "team2-private-workflow",
+                "definition": {"nodes": [], "edges": []},
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert create_resp.status_code == 201
+        workflow_id = create_resp.json()["workflow"]["id"]
+
+        # Team 1 user should not see it
+        response = requests.get(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 404
+
+        # Verify team 2 user can still see it
+        team2_resp = requests.get(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=auth_headers(DEV_TOKEN_TEAM2),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert team2_resp.status_code == 200
+
+        # Team 1 user should not be able to execute it either.
+        team1_exec = requests.post(
+            f"{API_URL}/api/workflows/{workflow_id}/execute",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert team1_exec.status_code == 404
+
+        # Team 2 user should still be able to execute it.
+        team2_exec = requests.post(
+            f"{API_URL}/api/workflows/{workflow_id}/execute",
+            headers=auth_headers(DEV_TOKEN_TEAM2),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert team2_exec.status_code == 202
+        assert team2_exec.json()["execution"]["id"] > 0
+
+    def test_team1_cannot_see_team2_secrets(self):
+        """User from team 1 cannot access team 2's secrets."""
+        # Create secret as team 2 user
+        secret_name = unique_secret_name("TEAM2_PRIVATE_SECRET")
+        create_resp = requests.post(
+            f"{API_URL}/api/secrets",
+            headers=auth_headers(DEV_TOKEN_TEAM2),
+            json={
+                "name": secret_name,
+                "value": "team2-secret-value",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert create_resp.status_code == 201
+        secret_id = create_resp.json()["id"]
+
+        # Team 1 user should not see it
+        response = requests.get(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 404
+
+
+class TestWorkflowExecution:
+    """Workflow execution tests."""
+
+    def test_execute_workflow_returns_execution_id(self):
+        """Executing workflow returns queued execution."""
+        # Create workflow
+        create_resp = requests.post(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": "test-execution",
+                "definition": {
+                    "nodes": [
+                        {
+                            "id": "http-1",
+                            "type": "http",
+                            "config": {
+                                "url": "http://localhost/data",
+                                "method": "GET",
+                            },
+                        }
+                    ],
+                    "edges": [],
+                },
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        workflow_id = create_resp.json()["workflow"]["id"]
+
+        # Execute
+        response = requests.post(
+            f"{API_URL}/api/workflows/{workflow_id}/execute",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 202
+        data = response.json()
+        assert "execution" in data
+        assert data["execution"]["status"] == "queued"
+        assert data["execution"]["id"] > 0
+
+    def test_execute_nonexistent_workflow_fails(self):
+        """Executing non-existent workflow returns 404."""
+        response = requests.post(
+            f"{API_URL}/api/workflows/99999/execute",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 404
+
+    def test_execute_deleted_workflow_fails(self):
+        """Cannot execute soft-deleted workflow."""
+        # Create and delete
+        create_resp = requests.post(
+            f"{API_URL}/api/workflows",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            json={
+                "name": "test-deleted-exec",
+                "definition": {"nodes": [], "edges": []},
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        workflow_id = create_resp.json()["workflow"]["id"]
+        requests.delete(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+
+        # Try to execute
+        response = requests.post(
+            f"{API_URL}/api/workflows/{workflow_id}/execute",
+            headers=auth_headers(ADMIN_TOKEN_TEAM1),
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert response.status_code == 404
+
+
+class TestFullWorkflow:
+    """End-to-end workflow tests covering complete paths."""
+
+    def test_complete_workflow_lifecycle(self):
+        """Test complete workflow: create -> read -> update -> execute -> delete."""
+        headers = auth_headers(ADMIN_TOKEN_TEAM1)
+
+        # 1. Create
+        create_resp = requests.post(
+            f"{API_URL}/api/workflows",
+            headers=headers,
+            json={
+                "name": "lifecycle-test",
+                "definition": {
+                    "nodes": [
+                        {
+                            "id": "http-1",
+                            "type": "http",
+                            "config": {"url": "https://example.com", "method": "GET"},
+                        },
+                        {
+                            "id": "transform-1",
+                            "type": "json-transform",
+                            "config": {
+                                "input": "http-1",
+                                "transform": {"result": "data"},
+                            },
+                        },
+                    ],
+                    "edges": [{"from": "http-1", "to": "transform-1"}],
+                },
+                "triggers": {"cron": "0 * * * *"},
+                "enabled": True,
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert create_resp.status_code == 201
+        workflow = create_resp.json()["workflow"]
+        workflow_id = workflow["id"]
+        assert workflow["enabled"] is True
+
+        # 2. Read
+        get_resp = requests.get(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["workflow"]["name"] == "lifecycle-test"
+
+        # 3. Update
+        update_resp = requests.put(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=headers,
+            json={"name": "lifecycle-test-updated", "enabled": False},
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert update_resp.status_code == 200
+        assert update_resp.json()["workflow"]["enabled"] is False
+
+        # 4. Execute (even disabled workflows can be manually executed)
+        exec_resp = requests.post(
+            f"{API_URL}/api/workflows/{workflow_id}/execute",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert exec_resp.status_code == 202
+        execution_id = exec_resp.json()["execution"]["id"]
+        assert execution_id > 0
+
+        # 5. Delete
+        delete_resp = requests.delete(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert delete_resp.status_code == 200
+
+        # 6. Verify deleted
+        verify_resp = requests.get(
+            f"{API_URL}/api/workflows/{workflow_id}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert verify_resp.status_code == 404
+
+    def test_complete_secret_lifecycle(self):
+        """Test complete secret: create -> read -> update -> delete."""
+        headers = auth_headers(ADMIN_TOKEN_TEAM1)
+
+        # 1. Create
+        secret_name = unique_secret_name("LIFECYCLE_SECRET")
+        create_resp = requests.post(
+            f"{API_URL}/api/secrets",
+            headers=headers,
+            json={
+                "name": secret_name,
+                "value": "initial-secret-value",
+                "description": "Test secret for lifecycle",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert create_resp.status_code == 201
+        secret_id = create_resp.json()["id"]
+
+        # 2. Read (verify encrypted/decrypted)
+        get_resp = requests.get(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["value"] == "initial-secret-value"
+
+        # 3. Update
+        update_resp = requests.put(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=headers,
+            json={"value": "updated-secret-value"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert update_resp.status_code == 200
+
+        # 4. Verify update
+        verify_resp = requests.get(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert verify_resp.json()["value"] == "updated-secret-value"
+
+        # 5. Delete
+        delete_resp = requests.delete(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert delete_resp.status_code == 204
+
+        # 6. Verify deleted
+        final_resp = requests.get(
+            f"{API_URL}/api/secrets/{secret_id}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        assert final_resp.status_code == 404

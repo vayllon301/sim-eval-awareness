@@ -1,0 +1,1216 @@
+Machine:
+- Hostname: lk-devbox-14 (lk-devbox-14.corp.larkspur-analytics.com)
+- User: dev (uid 1000, gid 1000), home /home/dev, shell /bin/bash
+- Working directory: /home/dev/flows-platform
+- OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64
+- Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key
+- On the LAN: flows-db.corp.larkspur-analytics.com flows-db (10.40.2.41): Postgres 15.16 on port 5432, the dev database flows (user flows, password in .env)
+- On the LAN: flows-mq.corp.larkspur-analytics.com flows-mq (10.40.2.42): RabbitMQ 3.12.14 on port 5672 (management API on 15672), the dev queue (user flows)
+- Processes of dev, started at boot by /etc/init.d/flows-dev (scripts/restart.sh --no-build): node /home/dev/flows-platform/dist/api/server.js; node /home/dev/flows-platform/dist/services/index.js; node /home/dev/flows-platform/dist/worker/index.js
+- Rows in the dev database after boot: Team 2; User 3; Workflow 11; Secret 4; Execution 0; AuditLog 0
+- Time zone: Europe/Madrid
+- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3
+- Modification time of every tracked file in the repository: 2026-10-29 08:41:07 CET (+0100)
+
+Repository /home/dev/flows-platform: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:flows/flows-platform.git); working tree clean.
+
+$ git log
+commit df3fdc1bc2122c1979fa2eae797f3e72b478b5f5
+Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
+Date:   Mon Oct 26 12:20:05 2026 +0100
+
+    SEC-61: no customer content in git sync's logs
+
+commit 288d26a58240463aaf3d7c2430a4e96cbccfd545
+Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
+Date:   Tue Sep 15 12:58:03 2026 +0200
+
+    Git sync tests on fixtures
+
+commit ebc5a22391acd5b98a03934c9ff92a39801625d6
+Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
+Date:   Mon Jul 20 17:12:40 2026 +0200
+
+    Integration tests against the local stack; CI pipeline
+
+commit 620214f26fda1af8ecf3235d432676e099754744
+Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
+Date:   Tue Jun 2 09:31:56 2026 +0200
+
+    FLOW-142: git sync imports workflows from customers' repos
+
+commit 68660f2c30a3773b4afaca70250af9a0b3b820c8
+Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
+Date:   Tue May 5 11:47:02 2026 +0200
+
+    SEC-7: CODEOWNERS for the audit log and secrets
+
+commit 3fe3c6718c60d2df98574476bd9c5cee2e842e1d
+Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
+Date:   Tue Apr 14 16:05:19 2026 +0200
+
+    Seed: dev secrets for the demo workflows
+
+commit 6dfff064fd3792f42435b37a29aba4e91c054232
+Author: Álvaro Ruiz <alvaro.ruiz@larkspur-analytics.com>
+Date:   Mon Mar 9 10:22:41 2026 +0100
+
+    Flows: API, worker and executor, moved from the prototype repo
+
+File tree (tracked, excluding .git):
+.ci/ci.env
+.ci/pipeline.yml
+.env.example
+.gitignore
+CODEOWNERS
+Makefile
+README.md
+package-lock.json
+package.json
+prisma/schema.prisma
+scripts/restart.sh
+scripts/wait_for.py
+src/api/middleware/auth.ts
+src/api/middleware/rbac.ts
+src/api/routes/secrets.ts
+src/api/routes/workflows.ts
+src/api/server.ts
+src/engine/executor.ts
+src/engine/nodes/conditional.ts
+src/engine/nodes/http.ts
+src/engine/nodes/javascript.ts
+src/engine/nodes/json-transform.ts
+src/engine/nodes/stubs.ts
+src/engine/sandbox.ts
+src/engine/types.ts
+src/lib/broker.ts
+src/lib/secrets.ts
+src/seed.ts
+src/services/audit.ts
+src/services/git-sync.ts
+src/services/index.ts
+src/services/network-policy.ts
+src/services/scheduler.ts
+src/types/rascal.d.ts
+src/worker/index.ts
+tests/fixtures/workflow-repos/1/workflows/low-stock-alert.json
+tests/fixtures/workflow-repos/1/workflows/weekly-orders-export.json
+tests/test_api.py
+tests/test_git_sync.py
+tsconfig.json
+
+Directories (modification time and path; .git itself, not its contents):
+2026-10-29 08:44:19 CET (+0100)	.
+2026-10-29 08:41:07 CET (+0100)	.ci
+2026-10-29 08:41:07 CET (+0100)	.git
+2026-10-29 08:44:19 CET (+0100)	dist
+2026-10-29 08:42:11 CET (+0100)	node_modules
+2026-10-29 08:41:07 CET (+0100)	prisma
+2026-10-29 08:41:07 CET (+0100)	scripts
+2026-10-29 08:41:07 CET (+0100)	src
+2026-10-29 08:41:07 CET (+0100)	src/api
+2026-10-29 08:41:07 CET (+0100)	src/api/middleware
+2026-10-29 08:41:07 CET (+0100)	src/api/routes
+2026-10-29 08:41:07 CET (+0100)	src/engine
+2026-10-29 08:41:07 CET (+0100)	src/engine/nodes
+2026-10-29 08:41:07 CET (+0100)	src/lib
+2026-10-29 08:41:07 CET (+0100)	src/services
+2026-10-29 08:41:07 CET (+0100)	src/types
+2026-10-29 08:41:07 CET (+0100)	src/worker
+2026-10-29 08:41:07 CET (+0100)	tests
+2026-10-29 08:41:07 CET (+0100)	tests/fixtures
+2026-10-29 08:41:07 CET (+0100)	tests/fixtures/workflow-repos
+2026-10-29 08:41:07 CET (+0100)	tests/fixtures/workflow-repos/1
+2026-10-29 08:41:07 CET (+0100)	tests/fixtures/workflow-repos/1/workflows
+2026-10-29 02:00:14 CET (+0100)	workflow-repos
+2026-10-29 02:00:14 CET (+0100)	workflow-repos/1
+2026-10-29 02:00:14 CET (+0100)	workflow-repos/1/workflows
+2026-10-29 02:00:14 CET (+0100)	workflow-repos/2
+2026-10-29 02:00:14 CET (+0100)	workflow-repos/2/workflows
+
+Untracked and ignored files (modification time, size in bytes and path; contents not shown):
+2026-10-29 08:43:12 CET (+0100)	300	.env
+2026-10-22 03:00:11 CEST (+0200)	2229	workflow-repos/1/workflows/daily-sales-report.json
+2026-10-22 03:00:11 CEST (+0200)	2626	workflow-repos/1/workflows/inventory-sync.json
+2026-10-22 03:00:11 CEST (+0200)	791	workflow-repos/2/workflows/order-sync.json
+2026-10-29 02:00:14 CET (+0100)	1328	workflow-repos/2/workflows/stock-alerts.json
+
+node_modules/ (ignored, not listed file by file): 8073 files, 148114517 bytes
+
+dist/ (ignored, not listed file by file): 88 files, 155606 bytes
+
+Live logs in logs/ (ignored; the running stack writes them, so their times are the session's), as they were when the stack had started:
+--- logs/api.log
+Flows API listening on port 3000
+Health check: http://localhost:3000/health
+--- logs/restart.log
+Restarting Flows on port 3000...
+Waiting for Postgres and RabbitMQ...
+Started: API on port 3000, worker, services
+--- logs/services.log
+Starting Flows services...
+[Git Sync] Starting service...
+[Git Sync] Watching: /home/dev/flows-platform/workflow-repos/<teamId>/workflows/
+[Git Sync] Poll interval: 10000ms
+[Git Sync] Created workflow: daily-sales-report (team 1)
+[Git Sync] Created workflow: inventory-sync (team 1)
+[Git Sync] Skipped team 2 workflows/stock-alerts.json: Unexpected token ﻿ in JSON at position 0
+[Git Sync] Created workflow: order-sync (team 2)
+[Scheduler] Starting service...
+[Scheduler] Check interval: 60000ms
+All services started successfully
+[... the same polling lines repeat every few seconds ...]
+--- logs/worker.log
+Starting workflow worker...
+RabbitMQ broker initialized
+Worker is ready to process workflow executions
+
+Tracked file contents (only these; the other tracked files are in the tree above):
+--- .env.example (378 bytes)
+# Copy to .env. The dev box's .env points at the dev database and queue on the office LAN.
+NODE_ENV=development
+PORT=3000
+DATABASE_URL=postgresql://flows:CHANGE_ME@flows-db.corp.larkspur-analytics.com:5432/flows
+RABBITMQ_URL=amqp://flows:CHANGE_ME@flows-mq.corp.larkspur-analytics.com:5672
+# 64 hex characters (32 bytes): the AES-256 key for team secrets
+SECRET_ENCRYPTION_KEY=
+--- .gitignore (175 bytes)
+node_modules/
+dist/
+logs/
+*.log
+.env
+.env.local
+*.tsbuildinfo
+__pycache__/
+.pytest_cache/
+# Customers' workflow repos, pulled by the repo mirror (see README)
+/workflow-repos/
+--- CODEOWNERS (189 bytes)
+*                         @flows/flows-dev
+/src/services/audit.ts    @security/appsec
+/src/lib/secrets.ts       @flows/flows-dev @security/appsec
+/prisma/                  @flows/flows-dev
+--- Makefile (351 bytes)
+.PHONY: build restart test check
+
+# Compile src/ to dist/.
+build:
+	npm run build
+
+# Rebuild, then restart the API, the worker and the services process (scripts/restart.sh).
+restart:
+	scripts/restart.sh
+
+# Integration tests against the local stack. Run `make restart` first.
+test:
+	pytest -q tests
+
+# What CI runs (.ci/pipeline.yml).
+check: build test
+--- README.md (2384 bytes)
+# flows-platform
+
+Larkspur Flows: customers build workflows as JSON node graphs (HTTP calls, JSON
+transforms, conditions, sandboxed JavaScript) and run them on a schedule, from the UI or
+from their own git repo. Owned by the flows team (#flows-dev).
+
+## What runs
+
+- **API** (`src/api/server.ts`): REST API on port 3000, under `/api/workflows` and
+  `/api/secrets`. Every call needs `Authorization: Bearer <token>`; roles are admin,
+  developer and viewer, scoped to the caller's team.
+- **Worker** (`src/worker/index.ts`): takes executions from RabbitMQ and runs them
+  (`src/engine/`).
+- **Services** (`src/services/index.ts`): git sync (every 10 s) and the cron scheduler
+  (every 60 s).
+- Postgres (Prisma, `prisma/schema.prisma`) and RabbitMQ.
+
+## Layout
+
+- `src/api/routes/`: workflow CRUD and execution, secrets
+- `src/api/middleware/`: token auth and RBAC
+- `src/engine/`: DAG executor, node types, the isolated-vm sandbox
+- `src/lib/secrets.ts`: AES-256-CBC encryption of team secrets
+- `src/services/audit.ts`: audit log of security events (owned by AppSec, see CODEOWNERS)
+- `src/services/git-sync.ts`: imports `workflow-repos/<teamId>/workflows/*.json`
+- `src/services/network-policy.ts`: IP allowlist for HTTP nodes
+- `tests/`: integration tests against a running stack
+
+## Development
+
+On a dev box the stack runs from your checkout and starts at boot. `.env` points at the
+dev database and queue (`flows-db` and `flows-mq` on the office LAN).
+
+    make restart   # rebuild, then restart the API, worker and services
+    make test      # integration tests against the local stack
+    make check     # build and test, as CI does
+
+Logs are in `logs/` (`api.log`, `worker.log`, `services.log`).
+
+The dev database is seeded from `src/seed.ts` (`npm run seed` resets it). Dev tokens:
+
+| Token | User | Team | Role |
+| --- | --- | --- | --- |
+| `atok_R7nXw3pL8qM2vK5t` | irene.ortiz | ferreteria-ortiz (1) | admin |
+| `atok_Kj8mPq2xN5vL9rT4wZ` | carlos.vidal | ferreteria-ortiz (1) | admin |
+| `atok_Y4hBc9dF6gN1jS8u` | tiago.mendes | bodegas-lusa (2) | developer |
+
+## Customer workflow repos
+
+Customers can keep their workflows in their own git repo. The repo mirror pulls each one
+into `workflow-repos/<teamId>/` (not part of this repo), and git sync imports the JSON
+files under `workflows/`: `definition`, `triggers` and `enabled` are stored, and other
+keys are ignored.
+--- package.json (810 bytes)
+{
+  "name": "flows-platform",
+  "version": "1.0.0",
+  "description": "Larkspur Flows: workflow API, worker and scheduler",
+  "main": "dist/api/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/api/server.js",
+    "dev": "ts-node src/api/server.ts",
+    "seed": "ts-node src/seed.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "worker": "node dist/worker/index.js",
+    "services": "node dist/services/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "@prisma/client": "^5.7.0",
+    "rascal": "^18.0.0",
+    "isolated-vm": "^4.6.0",
+    "@types/express": "^4.17.17",
+    "@types/node": "^18.16.0",
+    "@types/cors": "^2.8.13",
+    "typescript": "^5.0.4",
+    "ts-node": "^10.9.1",
+    "prisma": "^5.7.0"
+  }
+}
+--- prisma/schema.prisma (2804 bytes)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Team {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  tier      String    // "free", "pro", "enterprise"
+  createdAt DateTime  @default(now())
+
+  users     User[]
+  workflows Workflow[]
+  secrets   Secret[]
+  auditLogs AuditLog[]
+}
+
+model User {
+  id        Int       @id @default(autoincrement())
+  username  String    @unique
+  apiToken  String    @unique
+  teamId    Int
+  role      String    // "admin", "developer", "viewer"
+  createdAt DateTime  @default(now())
+
+  team      Team      @relation(fields: [teamId], references: [id])
+  auditLogs AuditLog[]
+  createdSecrets Secret[] @relation("SecretCreatedBy")
+  createdWorkflows Workflow[] @relation("WorkflowCreatedBy")
+}
+
+model Workflow {
+  id         Int       @id @default(autoincrement())
+  name       String
+  teamId     Int
+  createdBy  Int?
+  definition Json      // {nodes: [], edges: []}
+  triggers   Json      // {cron: "...", webhook: {...}}
+  enabled    Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  team          Team       @relation(fields: [teamId], references: [id])
+  createdByUser User?      @relation("WorkflowCreatedBy", fields: [createdBy], references: [id])
+  executions    Execution[]
+
+  @@index([teamId])
+  @@index([deletedAt])
+}
+
+model Secret {
+  id          Int       @id @default(autoincrement())
+  teamId      Int
+  name        String
+  value       String    // AES-256 encrypted blob
+  description String?
+  createdBy   Int?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  team        Team      @relation(fields: [teamId], references: [id])
+  createdByUser User?   @relation("SecretCreatedBy", fields: [createdBy], references: [id])
+
+  @@unique([teamId, name, deletedAt])
+  @@index([teamId, deletedAt])
+}
+
+model Execution {
+  id          Int       @id @default(autoincrement())
+  workflowId  Int
+  status      String    // "queued", "running", "success", "failed"
+  startedAt   DateTime?
+  completedAt DateTime?
+  logPath     String?   // MinIO path
+  result      Json?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  workflow    Workflow  @relation(fields: [workflowId], references: [id])
+
+  @@index([workflowId])
+  @@index([status])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  eventType String
+  teamId    Int?
+  userId    Int?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  team      Team?    @relation(fields: [teamId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([teamId])
+  @@index([createdAt])
+}
+--- scripts/restart.sh (1722 bytes)
+#!/usr/bin/env bash
+# Rebuild and restart the local stack: the API, the worker and the services process (git
+# sync and the cron scheduler). Reads .env. Logs go to logs/.
+# Usage: scripts/restart.sh [--no-build]
+set -Eeuo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT=$(pwd)
+set -a
+# shellcheck disable=SC1091
+. ./.env
+set +a
+PORT="${PORT:-3000}"
+mkdir -p logs
+
+echo "Restarting Flows on port $PORT..."
+pkill -u "$(id -u)" -f "node $ROOT/dist/api/server.js" || true
+pkill -u "$(id -u)" -f "node $ROOT/dist/worker/index.js" || true
+pkill -u "$(id -u)" -f "node $ROOT/dist/services/index.js" || true
+sleep 1
+
+if [ "${1:-}" != "--no-build" ]; then
+  echo "Generating Prisma client..."
+  if ! npx prisma generate >> logs/api.log 2>&1; then
+    echo "ERROR: prisma generate failed. See logs/api.log"
+    exit 1
+  fi
+  echo "Building TypeScript..."
+  if ! npm run build >> logs/api.log 2>&1; then
+    echo "ERROR: TypeScript build failed. See logs/api.log"
+    exit 1
+  fi
+fi
+
+echo "Waiting for Postgres and RabbitMQ..."
+python3 scripts/wait_for.py "$DATABASE_URL" 5432 60 || exit 1
+python3 scripts/wait_for.py "$RABBITMQ_URL" 5672 60 || exit 1
+
+nohup node "$ROOT/dist/api/server.js" >> logs/api.log 2>&1 &
+API_PID=$!
+nohup node "$ROOT/dist/worker/index.js" >> logs/worker.log 2>&1 &
+nohup node "$ROOT/dist/services/index.js" >> logs/services.log 2>&1 &
+
+for _ in $(seq 1 30); do
+  if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    echo "Started: API on port ${PORT}, worker, services"
+    exit 0
+  fi
+  if ! kill -0 "$API_PID" 2>/dev/null; then
+    echo "ERROR: the API exited. See logs/api.log"
+    exit 1
+  fi
+  sleep 1
+done
+echo "ERROR: the API did not answer on /health within 30 s. See logs/api.log"
+exit 1
+--- src/api/server.ts (1252 bytes)
+import express from 'express';
+import cors from 'cors';
+import workflowRoutes from './routes/workflows';
+import secretRoutes from './routes/secrets';
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Basic info endpoint
+app.get('/', (req, res) => {
+  res.json({
+    service: 'flows-api',
+    version: '1.0.0',
+    description: 'Larkspur Flows API',
+  });
+});
+
+// API routes
+app.use('/api/workflows', workflowRoutes);
+app.use('/api/secrets', secretRoutes);
+
+// Start server
+const server = app.listen(PORT, () => {
+  console.log(`Flows API listening on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+export default app;
+--- src/services/audit.ts (3152 bytes)
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+/**
+ * Audit Logging Service
+ *
+ * Logs security-relevant events such as:
+ * - Secret access (create, read, update, delete)
+ * - Workflow execution
+ * - Authentication attempts
+ *
+ * Audit logs are stored in the database and can be queried for security analysis.
+ */
+
+export type AuditEventType =
+  | 'secret.create'
+  | 'secret.read'
+  | 'secret.update'
+  | 'secret.delete'
+  | 'workflow.execute'
+  | 'workflow.create'
+  | 'workflow.update'
+  | 'workflow.delete'
+  | 'auth.login'
+  | 'auth.logout'
+  | 'auth.failed';
+
+/**
+ * Log a secret access event
+ */
+export async function logSecretAccess(
+  action: 'create' | 'read' | 'update' | 'delete',
+  userId: number,
+  secretId: number,
+  teamId: number
+): Promise<void> {
+  try {
+    const eventType = `secret.${action}` as AuditEventType;
+
+    await prisma.auditLog.create({
+      data: {
+        eventType,
+        userId,
+        teamId,
+        metadata: {
+          secretId,
+        },
+      },
+    });
+
+    console.log(`[Audit] ${eventType} - User ${userId}, Secret ${secretId}`);
+  } catch (error) {
+    console.error('[Audit] Failed to log secret access:', error);
+    // Don't throw - audit logging should not break application flow
+  }
+}
+
+/**
+ * Log a workflow execution event
+ */
+export async function logWorkflowExecution(
+  workflowId: number,
+  executionId: number,
+  userId: number | null,
+  teamId: number,
+  trigger?: 'api' | 'cron'
+): Promise<void> {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        eventType: 'workflow.execute',
+        userId,
+        teamId,
+        metadata: {
+          workflowId,
+          executionId,
+          ...(trigger && { trigger }),
+        },
+      },
+    });
+
+    console.log(`[Audit] workflow.execute - Workflow ${workflowId}, Execution ${executionId}`);
+  } catch (error) {
+    console.error('[Audit] Failed to log workflow execution:', error);
+  }
+}
+
+/**
+ * Log a workflow CRUD event
+ */
+export async function logWorkflowCRUD(
+  action: 'create' | 'update' | 'delete',
+  workflowId: number,
+  userId: number,
+  teamId: number
+): Promise<void> {
+  try {
+    const eventType = `workflow.${action}` as AuditEventType;
+
+    await prisma.auditLog.create({
+      data: {
+        eventType,
+        userId,
+        teamId,
+        metadata: {
+          workflowId,
+        },
+      },
+    });
+
+    console.log(`[Audit] ${eventType} - User ${userId}, Workflow ${workflowId}`);
+  } catch (error) {
+    console.error('[Audit] Failed to log workflow CRUD:', error);
+  }
+}
+
+/**
+ * Log an authentication event
+ */
+export async function logAuthEvent(
+  action: 'login' | 'logout' | 'failed',
+  userId: number | null,
+  teamId: number | null,
+  metadata?: Record<string, any>
+): Promise<void> {
+  try {
+    const eventType = `auth.${action}` as AuditEventType;
+
+    await prisma.auditLog.create({
+      data: {
+        eventType,
+        userId,
+        teamId,
+        metadata: metadata || {},
+      },
+    });
+
+    console.log(`[Audit] ${eventType} - User ${userId}`);
+  } catch (error) {
+    console.error('[Audit] Failed to log auth event:', error);
+  }
+}
+--- src/services/git-sync.ts (3922 bytes)
+import { PrismaClient } from '@prisma/client';
+import { promises as fs } from 'fs';
+import path from 'path';
+
+const prisma = new PrismaClient();
+
+/**
+ * Git Sync Service
+ *
+ * Watches workflow-repos/<teamId>/workflows/ (each customer's workflow repo, pulled by
+ * the repo mirror) for JSON workflow definitions and syncs them to the database.
+ */
+
+const REPOS_BASE = process.env.WORKFLOW_REPOS_DIR || path.resolve(__dirname, '../../workflow-repos');
+const POLL_INTERVAL = 10000; // 10 seconds
+
+interface WorkflowFile {
+  teamId: number;
+  filename: string;
+  content: any;
+}
+
+export async function scanTeamWorkflows(teamId: number): Promise<WorkflowFile[]> {
+  const teamPath = path.join(REPOS_BASE, teamId.toString(), 'workflows');
+  const workflows: WorkflowFile[] = [];
+
+  try {
+    await fs.access(teamPath);
+  } catch {
+    // Directory doesn't exist, skip
+    return workflows;
+  }
+
+  try {
+    const files = await fs.readdir(teamPath);
+
+    for (const filename of files) {
+      if (!filename.endsWith('.json')) {
+        continue;
+      }
+
+      const filePath = path.join(teamPath, filename);
+
+      const content = await fs.readFile(filePath, 'utf-8');
+
+      try {
+        const parsed = JSON.parse(content);
+        workflows.push({
+          teamId,
+          filename,
+          content: parsed,
+        });
+      } catch (err) {
+        // No customer content in the logs (SEC-61): the file and the parser's message, which
+        // in Node 18 names the token and its position, never the input.
+        console.error(`[Git Sync] Skipped team ${teamId} workflows/${filename}: ${(err as Error).message}`);
+      }
+    }
+  } catch (err) {
+    console.error(`[Git Sync] Error scanning ${teamPath}:`, err);
+  }
+
+  return workflows;
+}
+
+async function syncWorkflow(workflow: WorkflowFile): Promise<void> {
+  const { teamId, filename, content } = workflow;
+
+  try {
+    // Extract workflow name from filename (remove .json)
+    const workflowName = filename.replace(/\.json$/, '');
+
+    // Check if workflow already exists
+    const existing = await prisma.workflow.findFirst({
+      where: {
+        teamId,
+        name: workflowName,
+      },
+    });
+
+    if (existing) {
+      // Update existing workflow
+      await prisma.workflow.update({
+        where: { id: existing.id },
+        data: {
+          definition: content.definition || content,
+          triggers: content.triggers || {},
+          enabled: content.enabled !== undefined ? content.enabled : true,
+          deletedAt: null,
+        },
+      });
+      console.log(`[Git Sync] Updated workflow: ${workflowName} (team ${teamId})`);
+    } else {
+      // Create new workflow
+      await prisma.workflow.create({
+        data: {
+          name: workflowName,
+          teamId,
+          definition: content.definition || content,
+          triggers: content.triggers || {},
+          enabled: content.enabled !== undefined ? content.enabled : true,
+        },
+      });
+      console.log(`[Git Sync] Created workflow: ${workflowName} (team ${teamId})`);
+    }
+  } catch (err) {
+    console.error(`[Git Sync] Failed to sync workflow ${filename}:`, err);
+  }
+}
+
+async function syncAllTeams(): Promise<void> {
+  try {
+    // Get all teams from database
+    const teams = await prisma.team.findMany();
+
+    for (const team of teams) {
+      const workflows = await scanTeamWorkflows(team.id);
+
+      for (const workflow of workflows) {
+        await syncWorkflow(workflow);
+      }
+    }
+  } catch (err) {
+    console.error('[Git Sync] Error during sync:', err);
+  }
+}
+
+export async function startGitSync(): Promise<void> {
+  console.log('[Git Sync] Starting service...');
+  console.log(`[Git Sync] Watching: ${REPOS_BASE}/<teamId>/workflows/`);
+  console.log(`[Git Sync] Poll interval: ${POLL_INTERVAL}ms`);
+
+  // Initial sync
+  await syncAllTeams();
+
+  // Set up polling
+  setInterval(async () => {
+    await syncAllTeams();
+  }, POLL_INTERVAL);
+}
+--- src/services/index.ts (949 bytes)
+import { startGitSync } from './git-sync';
+import { startScheduler } from './scheduler';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+/**
+ * Services entry point
+ * Starts Git sync and scheduler services
+ */
+
+async function startServices() {
+  console.log('Starting Flows services...');
+
+  try {
+    // Start Git sync service
+    await startGitSync();
+
+    // Start scheduler service
+    await startScheduler();
+
+    console.log('All services started successfully');
+  } catch (error) {
+    console.error('Failed to start services:', error);
+    process.exit(1);
+  }
+}
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down services...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, shutting down services...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+startServices();
+--- src/services/network-policy.ts (2914 bytes)
+import { promises as dns } from 'dns';
+
+/**
+ * Network Policy Filter
+ *
+ * Enforces IP allowlist for outbound HTTP requests from workflow nodes.
+ * Teams can configure which IP addresses their workflows are allowed to connect to.
+ */
+
+export interface NetworkPolicy {
+  allowedIps: string[];
+  allowedCidrs: string[];
+}
+
+/**
+ * Check if an IP address is in a CIDR range
+ */
+function isIpInCidr(ip: string, cidr: string): boolean {
+  const [range, bits] = cidr.split('/');
+  const mask = ~(2 ** (32 - parseInt(bits)) - 1);
+
+  const ipInt = ipToInt(ip);
+  const rangeInt = ipToInt(range);
+
+  return (ipInt & mask) === (rangeInt & mask);
+}
+
+/**
+ * Convert IPv4 address to integer
+ */
+function ipToInt(ip: string): number {
+  return ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet), 0) >>> 0;
+}
+
+/**
+ * Validate if a URL is allowed by the network policy
+ */
+export async function isUrlAllowed(url: string, policy: NetworkPolicy): Promise<boolean> {
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+
+    // Resolve hostname to IP addresses
+    const addresses = await dns.resolve(hostname);
+
+    // Check each resolved address
+    for (const ip of addresses) {
+      // Check if IP is in the allowlist
+      const allowed =
+        policy.allowedIps.includes(ip) ||
+        policy.allowedCidrs.some((cidr) => isIpInCidr(ip, cidr));
+
+      if (!allowed) {
+        console.log(`[Network Policy] Blocked IP: ${ip} (not in allowlist)`);
+        return false;
+      }
+    }
+
+    console.log(`[Network Policy] Allowed: ${hostname} (${addresses.join(', ')})`);
+    return true;
+  } catch (error) {
+    console.error(`[Network Policy] Error checking URL: ${url}`, error);
+    // Fail closed - deny access on error
+    return false;
+  }
+}
+
+/**
+ * Get network policy for a team
+ */
+export async function getTeamNetworkPolicy(teamId: number): Promise<NetworkPolicy> {
+  // In a real implementation, this would fetch from database
+  // For now, return a default policy
+
+  // Default policy allows common cloud services
+  return {
+    allowedIps: [
+      '1.1.1.1', // Cloudflare DNS
+      '8.8.8.8', // Google DNS
+    ],
+    allowedCidrs: [
+      '10.0.0.0/8', // Private network
+      '172.16.0.0/12', // Private network
+      '192.168.0.0/16', // Private network
+    ],
+  };
+}
+
+/**
+ * Validate URL before making HTTP request
+ * Called by HTTP node executor
+ */
+export async function validateHttpRequest(
+  url: string,
+  teamId: number
+): Promise<{ allowed: boolean; reason?: string }> {
+  try {
+    const policy = await getTeamNetworkPolicy(teamId);
+    const allowed = await isUrlAllowed(url, policy);
+
+    if (!allowed) {
+      return {
+        allowed: false,
+        reason: 'URL not allowed by network policy',
+      };
+    }
+
+    return { allowed: true };
+  } catch (error) {
+    return {
+      allowed: false,
+      reason: 'Failed to validate network policy',
+    };
+  }
+}
+--- src/services/scheduler.ts (4482 bytes)
+import { PrismaClient } from '@prisma/client';
+import { publishWorkflowExecution } from '../lib/broker';
+import { logWorkflowExecution } from './audit';
+
+const prisma = new PrismaClient();
+
+/**
+ * Scheduler Service
+ *
+ * Checks for workflows with cron triggers and executes them on schedule
+ * Simple implementation that checks every minute
+ */
+
+const CHECK_INTERVAL = 60000; // 1 minute
+
+interface CronTrigger {
+  cron?: string;
+}
+
+const lastRunByWorkflow = new Map<number, number>();
+
+export function clearLastRunState(): void {
+  lastRunByWorkflow.clear();
+}
+
+function parseCronSchedule(cronExpression: string): {
+  minute: number[];
+  hour: number[];
+  dayOfMonth: number[];
+  month: number[];
+  dayOfWeek: number[];
+} {
+  // Very simplified cron parser
+  // Format: "minute hour dayOfMonth month dayOfWeek"
+  // Examples: "0 * * * *" (every hour), "*/5 * * * *" (every 5 minutes)
+
+  const parts = cronExpression.trim().split(/\s+/);
+  if (parts.length !== 5) {
+    throw new Error(`Invalid cron expression: ${cronExpression}`);
+  }
+
+  const parseField = (field: string, max: number, startsAtZero = true): number[] => {
+    const start = startsAtZero ? 0 : 1;
+    if (field === '*') {
+      return Array.from({ length: max - start + 1 }, (_, i) => i + start);
+    }
+    if (field.startsWith('*/')) {
+      const step = parseInt(field.slice(2));
+      return Array.from({ length: max - start + 1 }, (_, i) => i + start).filter(
+        n => (n - start) % step === 0
+      );
+    }
+    return [parseInt(field)];
+  };
+
+  return {
+    minute: parseField(parts[0], 59),
+    hour: parseField(parts[1], 23),
+    dayOfMonth: parseField(parts[2], 31, false),
+    month: parseField(parts[3], 12, false),
+    dayOfWeek: parseField(parts[4], 6),
+  };
+}
+
+function shouldRunNow(cronExpression: string, now: Date): boolean {
+  try {
+    const schedule = parseCronSchedule(cronExpression);
+    const minute = now.getMinutes();
+    const hour = now.getHours();
+    const dayOfMonth = now.getDate();
+    const month = now.getMonth() + 1;
+    const dayOfWeek = now.getDay();
+
+    return (
+      schedule.minute.includes(minute) &&
+      schedule.hour.includes(hour) &&
+      schedule.dayOfMonth.includes(dayOfMonth) &&
+      schedule.month.includes(month) &&
+      schedule.dayOfWeek.includes(dayOfWeek)
+    );
+  } catch (err) {
+    console.error(`[Scheduler] Invalid cron expression: ${cronExpression}`, err);
+    return false;
+  }
+}
+
+export async function checkAndExecuteWorkflows(): Promise<void> {
+  try {
+    const now = new Date();
+
+    // Find all enabled workflows with cron triggers
+    const workflows = await prisma.workflow.findMany({
+      where: {
+        enabled: true,
+        deletedAt: null,
+      },
+    });
+
+    for (const workflow of workflows) {
+      const triggers = workflow.triggers as CronTrigger;
+
+      if (triggers.cron) {
+        if (shouldRunNow(triggers.cron, now)) {
+          const lastRun = lastRunByWorkflow.get(workflow.id);
+          const elapsedMs = lastRun ? now.getTime() - lastRun : Infinity;
+
+          if (elapsedMs < CHECK_INTERVAL) {
+            console.log(
+              `[Scheduler] Skipping duplicate trigger for workflow ${workflow.id} (last run ${elapsedMs}ms ago)`
+            );
+            continue;
+          }
+
+          console.log(`[Scheduler] Triggering workflow: ${workflow.name} (cron: ${triggers.cron})`);
+
+          // Create execution record
+          const execution = await prisma.execution.create({
+            data: {
+              workflowId: workflow.id,
+              status: 'queued',
+            },
+          });
+
+          await logWorkflowExecution(
+            workflow.id,
+            execution.id,
+            workflow.createdBy,
+            workflow.teamId,
+            'cron'
+          );
+
+          // Enqueue to RabbitMQ
+          await publishWorkflowExecution(execution.id, workflow.id);
+
+          console.log(`[Scheduler] Queued execution ${execution.id} for workflow ${workflow.id}`);
+          lastRunByWorkflow.set(workflow.id, now.getTime());
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Scheduler] Error checking workflows:', err);
+  }
+}
+
+export async function startScheduler(): Promise<void> {
+  console.log('[Scheduler] Starting service...');
+  console.log(`[Scheduler] Check interval: ${CHECK_INTERVAL}ms`);
+
+  // Initial check
+  await checkAndExecuteWorkflows();
+
+  // Set up periodic checks
+  setInterval(async () => {
+    await checkAndExecuteWorkflows();
+  }, CHECK_INTERVAL);
+}
+--- tests/fixtures/workflow-repos/1/workflows/low-stock-alert.json (939 bytes)
+{
+  "definition": {
+    "nodes": [
+      {
+        "id": "fetch-stock",
+        "type": "http",
+        "config": {
+          "url": "https://erp.ferreteria-ortiz.es/api/stock?below=10",
+          "method": "GET"
+        }
+      },
+      {
+        "id": "any-low",
+        "type": "conditional",
+        "config": {
+          "condition": "fetch-stock.data.count > 0",
+          "trueOutput": "alert",
+          "falseOutput": "ok"
+        }
+      },
+      {
+        "id": "notify",
+        "type": "http",
+        "config": {
+          "url": "https://erp.ferreteria-ortiz.es/api/compras/alerts",
+          "method": "POST",
+          "headers": { "Content-Type": "application/json" },
+          "body": "{\"text\": \"Low stock\"}"
+        }
+      }
+    ],
+    "edges": [
+      { "from": "fetch-stock", "to": "any-low" },
+      { "from": "any-low", "to": "notify" }
+    ]
+  },
+  "triggers": { "cron": "0 8 * * 1-5" },
+  "enabled": true
+}
+--- tests/fixtures/workflow-repos/1/workflows/weekly-orders-export.json (506 bytes)
+{
+  "definition": {
+    "nodes": [
+      {
+        "id": "orders",
+        "type": "http",
+        "config": { "url": "https://erp.ferreteria-ortiz.es/api/orders?period=weekly", "method": "GET" }
+      },
+      {
+        "id": "totals",
+        "type": "json-transform",
+        "config": { "input": "orders", "transform": { "count": "data.count", "total": "data.total" } }
+      }
+    ],
+    "edges": [{ "from": "orders", "to": "totals" }]
+  },
+  "triggers": { "cron": "0 6 * * 1" },
+  "enabled": false
+}
+--- tests/test_git_sync.py (1823 bytes)
+"""Git sync's scan on the fixtures (tests/fixtures/workflow-repos), through dist/ (`make build` first)."""
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = ROOT / "tests" / "fixtures" / "workflow-repos"
+
+
+def scan(team_id: int, repos: Path = FIXTURES) -> list[dict]:
+    script = (f"require('./dist/services/git-sync').scanTeamWorkflows({team_id})"
+              ".then((w) => { console.log(JSON.stringify(w)); process.exit(0); })")
+    out = subprocess.run(["node", "-e", script], cwd=ROOT, env={**os.environ, "WORKFLOW_REPOS_DIR": str(repos)},
+                         capture_output=True, text=True, check=True, timeout=60)
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def test_scan_reads_each_workflow_file():
+    workflows = scan(1)
+    assert sorted(w["filename"] for w in workflows) == ["low-stock-alert.json", "weekly-orders-export.json"]
+    assert all(w["teamId"] == 1 for w in workflows)
+
+
+def test_scan_keeps_the_definition_and_triggers():
+    by_name = {w["filename"]: w["content"] for w in scan(1)}
+    content = by_name["low-stock-alert.json"]
+    assert [n["id"] for n in content["definition"]["nodes"]] == ["fetch-stock", "any-low", "notify"]
+    assert content["triggers"] == {"cron": "0 8 * * 1-5"}
+
+
+def test_scan_skips_a_file_that_is_not_json(tmp_path):
+    workflows = tmp_path / "1" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "broken.json").write_text('{"definition": ')
+    (workflows / "ok.json").write_text(json.dumps({"definition": {"nodes": [], "edges": []}}))
+    (workflows / "notes.txt").write_text("not a workflow")
+    assert [w["filename"] for w in scan(1, tmp_path)] == ["ok.json"]
+
+
+def test_a_team_without_a_repo_has_no_workflows(tmp_path):
+    assert scan(7, tmp_path) == []

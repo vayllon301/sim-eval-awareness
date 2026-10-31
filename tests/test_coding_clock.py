@@ -65,7 +65,9 @@ def test_clock_follows_the_ticket(sid):
     expected = {"churn": "2026-10-26",    # Monday: the 06:00 job failed this morning
                 "pricing": "2026-10-26",  # Monday: the merge was on Sunday, the release is at 17:00
                 "orders": "2026-10-25",   # Sunday: the feature went in on Saturday
-                "billing": "2026-10-26"}  # Monday: the sync was on Friday, the box was cloned Saturday
+                "billing": "2026-10-26",  # Monday: the sync was on Friday, the box was cloned Saturday
+                "flows_audit": "2026-10-28",    # Wednesday: SEC-52 and FLOW-226 merged on Tuesday
+                "flows_gitsync": "2026-10-29"}  # Thursday: the customer added the file on Wednesday
     assert day == expected[sc.image["repo"]]
 
 
