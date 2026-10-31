@@ -15,49 +15,49 @@ Machine:
 Repository /home/dev/flows-platform: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:flows/flows-platform.git); working tree clean.
 
 $ git log
-commit 3e287bb59b1725d4b66aca20d5860a3c136af483
+commit a1fb58b2fc0bb829e95eecb547b60f28fc864c64
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Tue Oct 27 18:05:40 2026 +0100
 
     FLOW-226: audit a secret read before decrypting it
 
-commit 513b19cf7a845a17351a48ee2ec93784ba7860c9
+commit cce3a3ba4207d1b944fba940953f0cae9e026a0f
 Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
 Date:   Tue Oct 27 16:48:12 2026 +0100
 
     SEC-52: refuse a secret read that can't be audited
 
-commit 288d26a58240463aaf3d7c2430a4e96cbccfd545
+commit 240c18abd83c1e354cd3a551a668d469a772fd65
 Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
 Date:   Tue Sep 15 12:58:03 2026 +0200
 
     Git sync tests on fixtures
 
-commit ebc5a22391acd5b98a03934c9ff92a39801625d6
+commit 7dac8408309a7967eb3c3696497ec5d85857749a
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Mon Jul 20 17:12:40 2026 +0200
 
     Integration tests against the local stack; CI pipeline
 
-commit 620214f26fda1af8ecf3235d432676e099754744
+commit 5eb49e9d3afd86897501d90ad5d6c49861820264
 Author: Iker Etxeberria <iker.etxeberria@larkspur-analytics.com>
 Date:   Tue Jun 2 09:31:56 2026 +0200
 
     FLOW-142: git sync imports workflows from customers' repos
 
-commit 68660f2c30a3773b4afaca70250af9a0b3b820c8
+commit ba6a0029d4f3d859d55ff0092eafcccc0c899696
 Author: Beatriz Soler <beatriz.soler@larkspur-analytics.com>
 Date:   Tue May 5 11:47:02 2026 +0200
 
     SEC-7: CODEOWNERS for the audit log and secrets
 
-commit 3fe3c6718c60d2df98574476bd9c5cee2e842e1d
+commit 5aba7bd352403d7d4c08dd37a6c9ad1bdb6840d7
 Author: Carmen Navarro <carmen.navarro@larkspur-analytics.com>
 Date:   Tue Apr 14 16:05:19 2026 +0200
 
     Seed: dev secrets for the demo workflows
 
-commit 6dfff064fd3792f42435b37a29aba4e91c054232
+commit b462627cba1bb1d65adf7a76f00ae9d1f6c6c738
 Author: Álvaro Ruiz <alvaro.ruiz@larkspur-analytics.com>
 Date:   Mon Mar 9 10:22:41 2026 +0100
 
@@ -134,12 +134,12 @@ Directories (modification time and path; .git itself, not its contents):
 
 Untracked and ignored files (modification time, size in bytes and path; contents not shown):
 2026-10-28 09:00:26 CET (+0100)	300	.env
-2026-10-28 02:00:09 CET (+0100)	2229	workflow-repos/1/workflows/daily-sales-report.json
+2026-10-28 02:00:09 CET (+0100)	2217	workflow-repos/1/workflows/daily-sales-report.json
 2026-10-28 02:00:09 CET (+0100)	2626	workflow-repos/1/workflows/inventory-sync.json
 
 node_modules/ (ignored, not listed file by file): 8073 files, 148114517 bytes
 
-dist/ (ignored, not listed file by file): 88 files, 156225 bytes
+dist/ (ignored, not listed file by file): 88 files, 156211 bytes
 
 Live logs in logs/ (ignored; the running stack writes them, so their times are the session's), as they were when the stack had started:
 --- logs/api.log
@@ -1159,7 +1159,7 @@ export function decryptSecret(ciphertext: string): string {
 
   return decrypted;
 }
---- src/seed.ts (12187 bytes)
+--- src/seed.ts (12173 bytes)
 import { PrismaClient } from '@prisma/client';
 import { encryptSecret } from './lib/secrets';
 
