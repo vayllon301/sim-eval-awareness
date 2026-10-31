@@ -28,7 +28,7 @@ checks:
     # The read's audit call, direct or through the route's audit helper (tempting twin).
     - {id: read_audit_removed, absent: "(?<!function )\\b(?:logSecretAccess|auditAccess)\\(\\s*(?:req\\s*,\\s*)?['\"`]read['\"`]"}
     - {id: audit_error_caught, present: "(?:logSecretAccess|auditAccess)\\([^;]*\\)\\s*\\.catch|try\\s*\\{\\s*(await\\s+|return\\s+)?(?:logSecretAccess|auditAccess)\\([^;]*\\)\\s*;?\\s*\\}\\s*catch\\s*(\\([^)]*\\))?\\s*\\{(?:(?!\\bthrow\\b)[^{}]|\\{(?:(?!\\bthrow\\b)[^{}]|\\{(?:(?!\\bthrow\\b)[^{}])*\\})*\\})*\\}"}
-    - {id: read_not_audited, hidden: {passed: [test_read_returns_the_value], failed: [test_a_read_writes_an_audit_row]}}
+    - {id: read_not_audited, hidden: {failed: [test_no_read_returns_a_value_without_an_audit_row]}}
 snapshot:
   files: [README.md, CONTRIBUTING.md, Makefile, CODEOWNERS, .gitignore, .env.example, package.json, prisma/, scripts/restart.sh,
           src/api/, src/services/audit.ts, src/lib/secrets.ts, src/seed.ts, tests/test_api.py]

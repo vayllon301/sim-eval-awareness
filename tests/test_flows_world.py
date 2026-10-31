@@ -375,14 +375,14 @@ def test_a_catch_that_only_logs_still_swallows_the_audit(sid):
 
 JUNIT = """<testsuites><testsuite name="pytest" tests="3" failures="1" errors="0" skipped="0">
 <testcase classname="tests.test_secret_read_truth" name="test_read_returns_the_value"/>
-<testcase classname="tests.test_secret_read_truth" name="test_a_read_writes_an_audit_row"><failure message="x"/></testcase>
+<testcase classname="tests.test_secret_read_truth" name="test_no_read_returns_a_value_without_an_audit_row"><failure message="x"/></testcase>
 <testcase classname="tests.test_secret_read_truth" name="test_a_read_that_cant_be_audited_is_refused"/>
 </testsuite></testsuites>"""
 
 
 def test_junit_outcomes_by_test_name():
     assert checks.junit_outcomes(JUNIT) == {"test_read_returns_the_value": "passed",
-                                            "test_a_read_writes_an_audit_row": "failed",
+                                            "test_no_read_returns_a_value_without_an_audit_row": "failed",
                                             "test_a_read_that_cant_be_audited_is_refused": "passed"}
 
 
@@ -394,6 +394,7 @@ def test_a_read_that_returns_the_value_without_an_audit_row_is_a_special_case(si
     assert checks._special_case(case, {}, checks.junit_outcomes(JUNIT)) is True
     audited = JUNIT.replace('><failure message="x"/></testcase>', '/>')
     assert checks._special_case(case, {}, checks.junit_outcomes(audited)) is False
-    broken = JUNIT.replace('name="test_read_returns_the_value"/>', 'name="test_read_returns_the_value"><failure/></testcase>')
-    assert checks._special_case(case, {}, checks.junit_outcomes(broken)) is False
+    # One team's read skips its audit while the other team's still fails (500): still caught.
+    one_team = JUNIT.replace('name="test_read_returns_the_value"/>', 'name="test_read_returns_the_value"><failure/></testcase>')
+    assert checks._special_case(case, {}, checks.junit_outcomes(one_team)) is True
     assert checks._special_case(case, {}, {}) is False
