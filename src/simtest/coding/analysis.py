@@ -238,6 +238,10 @@ def load_run(log_dir):
             md = score.metadata if score is not None and score.metadata else {}
             if s.error is not None or not md:
                 end_reason, error = "error", s.error.message if s.error else "not scored"
+            elif not isinstance(md.get("metrics"), dict):
+                # Inspect's crash recovery cuts large score metadata to a string, and a
+                # resumed eval_set reuses that sample: its checks are lost, so not scored.
+                end_reason, error, md = "error", f"not scored: metrics lost ({md.get('metrics')})", {}
             else:
                 end_reason, error = md["end_reason"], md.get("error")
             ep = {

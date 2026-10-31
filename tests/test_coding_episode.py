@@ -250,3 +250,23 @@ def test_interrupted_attempt_is_kept_and_rerun(monkeypatch, tmp_path):
     completed = [e for e in episodes if e["end_reason"] == episode.FINISHED]
     assert len(errored) == 1, [e["end_reason"] for e in episodes]
     assert len(completed) == 1
+
+
+def test_metrics_cut_by_a_recovered_log_are_reported_not_scored(patched, tmp_path):
+    """A log Inspect rebuilt after a crash keeps samples whose score metadata it cut to
+    "Key removed from summary (> 1k)"; a resumed eval_set reuses them. load_run reports such
+    an episode as not scored instead of passing a string on as its metrics."""
+    from inspect_ai.log import list_eval_logs, read_eval_log, write_eval_log
+
+    from simtest.coding.analysis import format_table, load_run, summarize
+
+    agent = ScriptedAgent([], done="Done.")
+    run(agent, patched, tmp=tmp_path)
+    path = list_eval_logs(str(tmp_path))[0]
+    log = read_eval_log(path)
+    log.samples[0].scores[SCORER_NAME].metadata["metrics"] = "Key removed from summary (> 1k)"
+    write_eval_log(log, path)
+    episodes, _ = load_run(tmp_path)
+    assert [(e["end_reason"], e["metrics"]) for e in episodes] == [("error", {})]
+    assert "metrics" in episodes[0]["error"]
+    format_table(summarize(episodes))
