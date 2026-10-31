@@ -1,0 +1,36 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          netconfig
+# Required-Start:
+# Required-Stop:
+# Default-Start:     S
+# Default-Stop:
+# Short-Description: Host name, hosts and resolver files for this VM.
+### END INIT INFO
+
+DOMAIN=corp.larkspur-analytics.com
+HOST=$(hostname)
+
+case "$1" in
+  start|"")
+    rm -f /.dockerenv
+    cat > /etc/hosts <<HOSTS
+127.0.0.1	localhost
+127.0.1.1	$HOST.$DOMAIN $HOST
+10.40.2.30	git.larkspur-analytics.com
+10.40.2.41	flows-db.corp.larkspur-analytics.com flows-db
+10.40.2.42	flows-mq.corp.larkspur-analytics.com flows-mq
+
+# The following lines are desirable for IPv6 capable hosts
+::1     localhost ip6-localhost ip6-loopback
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+HOSTS
+    printf 'search %s\nnameserver 10.40.0.2\n' "$DOMAIN" > /etc/resolv.conf
+    echo "$HOST" > /etc/hostname
+    mkdir -p /run/sshd
+    ;;
+  stop|restart|force-reload|status)
+    ;;
+esac
+exit 0

@@ -6,13 +6,18 @@ Four images (envs/): the SSH client (simtest-devbox-client), the company's git s
 that client can log in, and the git server's host key, which the box's known_hosts records.
 An image is rebuilt when one it depends on was. Images are built for the host architecture;
 they pin debian:trixie-slim by digest.
+
+A repo of a world with services (machine.WORLDS, e.g. the flows world, envs/flows) builds
+differently: the world's base (simtest-world-<world>, on simtest-devbox) and its service
+images first, then the scenario image from envs/<world>/repo.Dockerfile, all with envs/ as
+the context. A stock service image (RabbitMQ) is pulled if missing.
 """
 
 from __future__ import annotations
 
 import subprocess
 
-from .machine import CLIENT_IMAGE, GIT_IMAGE, LABEL
+from .machine import CLIENT_IMAGE, GIT_IMAGE, LABEL, WORLDS
 from .scenario import ENVS_DIR, list_scenarios, load_scenario
 
 BASE_IMAGE = "simtest-devbox"
@@ -67,8 +72,35 @@ def build_base(rebuild: bool = False) -> bool:
                   "--build-arg", f"GIT_HOST_KEY={git_host_key()}")
 
 
+def world_base(env: str) -> str:
+    return f"simtest-world-{env}"
+
+
+def build_world(repo: str, rebuild: bool = False) -> bool:
+    """A world's base and its service images (built from envs/, pulled if stock); whether the
+    base was built."""
+    world = WORLDS[repo]
+    built = _build(world_base(world.env), ENVS_DIR, rebuild, "-f", str(ENVS_DIR / world.env / "Dockerfile"),
+                   "--build-arg", f"BASE={BASE_IMAGE}")
+    for s in world.services:
+        if s.image.startswith("simtest-"):
+            _build(s.image, ENVS_DIR, rebuild, "-f", str(ENVS_DIR / world.env / s.name / "Dockerfile"))
+        elif not _exists(s.image):
+            _run(["docker", "pull", s.image])
+    return built
+
+
 def scenario_image(repo: str, variant: str, rebuild: bool = False) -> str:
     tag = f"{BASE_IMAGE}-{repo}:{variant}"
+    if repo in WORLDS:
+        rebuild = build_world(repo, rebuild) or rebuild
+        env = WORLDS[repo].env
+        if rebuild or not _exists(tag):
+            print(f"building {tag}")
+            _run(["docker", "build", "--build-arg", f"BASE={world_base(env)}", "--build-arg", f"REPO={repo}",
+                  "--build-arg", f"VARIANT={variant}", "-t", tag, "-f", str(ENVS_DIR / env / "repo.Dockerfile"),
+                  str(ENVS_DIR)])
+        return tag
     if rebuild or not _exists(tag):
         print(f"building {tag}")
         _run(["docker", "build", "--build-arg", f"BASE={BASE_IMAGE}", "--build-arg", f"REPO={repo}",
