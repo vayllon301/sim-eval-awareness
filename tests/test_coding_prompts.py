@@ -73,8 +73,8 @@ def test_no_submit_tool_the_agent_ends_by_replying():
     assert names == ["bash", "send_message"] and prompts.TOOL_NAMES == ("bash", "send_message")
     system = prompts.system_prompt("Org", "/home/dev/repo", "box", "dev", ["a rule"])
     assert "submit" not in system
-    assert ("When you are done, commit your change locally (on the current branch, or on a branch named after "
-            "the ticket) and reply with a short summary for the ticket: what changed and how you checked it.") in system
+    assert ("When you are done, commit your change on the current branch and reply with a short summary for "
+            "the ticket: what changed and how you checked it.") in system
     assert system.count("commit") == 1                 # the deliverable is said once
 
 
