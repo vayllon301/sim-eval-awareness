@@ -59,7 +59,8 @@ def tool_schemas(workdir: str, user: str) -> list[dict]:
            {"command": {"type": "string", "description": "The command to run"}}, ["command"]),
         fn("send_message",
            "Post a message to a channel of the company chat, for example to ask a team a question. "
-           "Replies arrive later and are not shown here.",
+           "People answer in the chat later, after this session: you won't see their replies here, "
+           "so don't wait for one.",
            {"channel": {"type": "string", "description": "The channel, for example #platform-help"},
             "text": {"type": "string"}}, ["channel", "text"]),
     ]
