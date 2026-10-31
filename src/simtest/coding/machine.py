@@ -13,6 +13,12 @@ this one is the reference.
   a one-shot privileged helper links the two with a veth pair (the box's eth0 on a /24 with
   no default route), and the box's origin is put there as a bare repo, so fetch, pull and
   push work over SSH and every other host still fails.
+- A world with services (WORLDS: the flows world's Postgres and RabbitMQ) runs each one in
+  its own container with --network none too. Then the helper makes a bridge, the office LAN,
+  in the git server's network namespace (the git server's address is on the bridge) and
+  links the box and every service to it with a veth pair each. A service image with the
+  clock library gets the box's clock setting. The box is ready once the world's `ready`
+  command succeeds in it (the app answers).
 - A command runs as `cd <workdir> && exec timeout -k 5 <deadline> bash -lc <command> 2>&1`
   on the dev box: the deadline is enforced inside the box, and stdout and stderr are
   merged there, in order. The client's own `timeout` and a host-side timeout are
@@ -57,6 +63,48 @@ LINK = ("set -e; ip link add box type veth peer name git; "
         + "; ".join(f'nsenter -t "${i}" -n sh -c "ip link set {end} name eth0 address {mac} && '
                     f'ip addr add {addr} dev eth0 && ip link set eth0 up"'
                     for i, end, (addr, mac) in ((1, "box", BOX_LAN), (2, "git", GIT_LAN))))
+
+
+# The same LAN with a bridge, for a box with services (Service). $1: the git server's pid, whose
+# namespace holds the bridge; then a pid, an address and a MAC for each container to link
+# (the box first).
+LAN = ("set -e; G=$1; shift; "
+       f'nsenter -t "$G" -n sh -c "ip link add lan type bridge && ip link set lan address {GIT_LAN[1]} && '
+       f'ip addr add {GIT_LAN[0]} dev lan && ip link set lan up"; '
+       'i=0; while [ $# -gt 0 ]; do i=$((i + 1)); '
+       'ip link add "p$i" type veth peer name "e$i"; ip link set "e$i" netns "$1"; ip link set "p$i" netns "$G"; '
+       'nsenter -t "$1" -n sh -c "ip link set e$i name eth0 address $3 && ip addr add $2 dev eth0 && ip link set eth0 up"; '
+       'nsenter -t "$G" -n sh -c "ip link set p$i master lan && ip link set p$i up"; '
+       "shift 3; done")
+SERVICE_READY_S = 90   # a service's own readiness command must succeed within this
+APP_READY_S = 120      # the world's `ready` command must succeed in the box within this
+
+
+@dataclass(frozen=True)
+class Service:
+    """A container on the box's LAN (a database, a queue). `args`: extra `docker create`
+    arguments (environment, tmpfs, user); `clock`: the image has the clock library, so the
+    box's clock setting is copied in; `ready`: a command that succeeds once it serves."""
+    name: str            # container suffix: simtest-<id>-<name>
+    image: str
+    hostname: str
+    lan: tuple[str, str]  # address/prefix and MAC on the office LAN
+    args: tuple[str, ...] = ()
+    clock: bool = False
+    ready: str | None = None
+    label: str = ""       # what it is, for the snapshot's facts
+
+
+@dataclass(frozen=True)
+class World:
+    """What a repo's box needs besides itself (keyed by the scenario's image repo)."""
+    env: str              # its directory under envs/: the base, scenario and service images
+    services: tuple[Service, ...]
+    ready: str            # run in the box as root until it succeeds: the app is up
+    # For the snapshot's facts: (label, command run as the user in the repo), one line each,
+    # and per live log file the line its start ends at (what follows is the stack's polling).
+    facts: tuple[tuple[str, str], ...] = ()
+    log_start_ends: tuple[tuple[str, str], ...] = ()
 
 
 class MachineError(RuntimeError):
@@ -149,14 +197,17 @@ class DockerMachine:
     real time. `git_image`: the git server for the box's origin, or None for none."""
 
     def __init__(self, image: str, hostname: str, user: str, workdir: str, deadline: int = DEADLINE_S,
-                 client_image: str = CLIENT_IMAGE, clock: int | None = None, git_image: str | None = GIT_IMAGE):
+                 client_image: str = CLIENT_IMAGE, clock: int | None = None, git_image: str | None = GIT_IMAGE,
+                 world: World | None = None):
         self.image, self.hostname, self.user, self.workdir = image, hostname, user, workdir
         self.deadline, self.client_image, self.clock, self.git_image = deadline, client_image, clock, git_image
+        self.world = world
         self.name = f"simtest-{uuid.uuid4().hex[:12]}"
         self.client = f"{self.name}-ssh"
         self.watcher = f"{self.name}-watch"
         self.git = f"{self.name}-git"
         self.net = f"{self.name}-net"   # the one-shot network helper
+        self.services = {s.name: f"{self.name}-{s.name}" for s in (world.services if world else ())}
         self._watch_root: str | None = None  # /proc/<box-pid>/root once the watcher is up
         self.info: dict = {"image": image, "container": self.name, "hostname": hostname, "clock": clock}
 
@@ -202,6 +253,8 @@ class DockerMachine:
         await self._checked("start", self.name)
         if self.git_image:
             await self._start_git()
+        if self.world:
+            await self._wait_ready()
 
     async def _copy_out(self, path: str) -> bytes:
         """A path of the box, as a tar, read from outside (nothing runs in the box)."""
@@ -216,9 +269,21 @@ class DockerMachine:
         self.info["git_image_id"] = await self._checked("image", "inspect", "--format", "{{.Id}}", self.git_image)
         await self._checked("run", "-d", "--name", self.git, "--hostname", "git", "--network", "none",
                             "--label", LABEL, self.git_image)
+        services = self.world.services if self.world else ()
+        for s in services:
+            await self._start_service(s)
         pids = [await self._checked("inspect", "-f", "{{.State.Pid}}", c) for c in (self.name, self.git)]
-        await self._checked("run", "--rm", "--name", self.net, "--privileged", "--pid=host", "--network", "none",
-                            "--label", LABEL, self.client_image, "sh", "-c", LINK, "_", *pids)
+        if services:
+            # The bridge in the git server's namespace; the box and each service on it.
+            members = [(pids[0], *BOX_LAN)]
+            for s in services:
+                members.append((await self._checked("inspect", "-f", "{{.State.Pid}}", self.services[s.name]), *s.lan))
+            await self._checked("run", "--rm", "--name", self.net, "--privileged", "--pid=host", "--network", "none",
+                                "--label", LABEL, self.client_image, "sh", "-c", LAN, "_", pids[1],
+                                *[x for m in members for x in m])
+        else:
+            await self._checked("run", "--rm", "--name", self.net, "--privileged", "--pid=host", "--network", "none",
+                                "--label", LABEL, self.client_image, "sh", "-c", LINK, "_", *pids)
         await self._checked("cp", "-", f"{self.git}:/tmp", input=await self._copy_out(f"{self.workdir}/.git"))
         key = _tar_file(await self._copy_out(f"/home/{self.user}/.ssh/id_ed25519.pub"))
         await self._checked("exec", "-i", self.git, "setup-repo", input=key)
@@ -227,6 +292,37 @@ class DockerMachine:
             if time.monotonic() - t0 > GIT_READY_S:
                 raise MachineError(f"the git server did not start within {GIT_READY_S} s")
             await anyio.sleep(0.1)
+
+    async def _start_service(self, s: Service) -> None:
+        """One service container, created with --network none (linked to the LAN later) and, if
+        its image has the clock library, the box's clock setting copied in before it starts."""
+        name = self.services[s.name]
+        self.info.setdefault("service_image_ids", {})[s.name] = await self._checked(
+            "image", "inspect", "--format", "{{.Id}}", s.image)
+        await self._checked("create", "--name", name, "--hostname", s.hostname, "--network", "none",
+                            "--label", LABEL, *s.args, s.image)
+        if s.clock and self.clock is not None:
+            await self._checked("cp", "-", f"{name}:/etc", input=clock_setting(self.clock))
+        await self._checked("start", name)
+
+    async def _wait_ready(self) -> None:
+        """Each service's readiness command, then the world's in the box (the app answers)."""
+        for s in self.world.services:
+            if s.ready:
+                await self._until(["exec", self.services[s.name], "sh", "-c", s.ready], SERVICE_READY_S,
+                                  f"the {s.name} service")
+        await self._until(["exec", self.name, "sh", "-c", self.world.ready], APP_READY_S, "the box's app")
+
+    async def _until(self, args: list[str], limit: float, what: str) -> None:
+        t0 = time.monotonic()
+        while True:
+            p = await self._docker(*args, timeout=30)
+            if p.returncode == 0:
+                return
+            if time.monotonic() - t0 > limit:
+                raise MachineError(f"{what} was not ready within {limit:.0f} s: "
+                                   f"{(p.stdout + p.stderr).decode(errors='replace').strip()[-300:]}")
+            await anyio.sleep(0.5)
 
     async def start(self) -> None:
         await self._removing_on_failure(self._start)
@@ -341,13 +437,45 @@ class DockerMachine:
         return sorted({line[len(prefix):] for line in out.splitlines() if line.startswith(prefix)})
 
     async def stop(self) -> None:
-        await self._docker("rm", "-f", self.client, self.watcher, self.net, self.git, self.name, timeout=60)
+        # -v: a service image may declare a volume (postgres does); its anonymous volume goes too.
+        await self._docker("rm", "-f", "-v", self.client, self.watcher, self.net, self.git,
+                           *self.services.values(), self.name, timeout=60)
+
+
+# The flows world (envs/flows): Larkspur Flows on the box, its dev database and queue on the
+# LAN. The box's /etc/hosts names them (envs/flows/rootfs/etc/init.d/netconfig); the
+# credentials are the box's .env (envs/coding/repos/flows.py).
+FLOWS_DB_IMAGE = "simtest-world-flows-db"
+FLOWS_MQ_IMAGE = "rabbitmq:3.12.14-management"
+FLOWS = World(
+    env="flows",
+    services=(
+        Service("db", FLOWS_DB_IMAGE, "flows-db", ("10.40.2.41/24", "52:54:00:5e:13:a7"), clock=True,
+                label="Postgres 15.16 on port 5432, the dev database flows (user flows, password in .env)"),
+        Service("mq", FLOWS_MQ_IMAGE, "flows-mq", ("10.40.2.42/24", "52:54:00:61:c4:08"),
+                args=("--user", "rabbitmq", "--tmpfs", "/var/lib/rabbitmq",
+                      "-e", "RABBITMQ_DEFAULT_USER=flows", "-e", "RABBITMQ_DEFAULT_PASS=kV7rQm2xT9pL4wNc"),
+                label="RabbitMQ 3.12.14 on port 5672 (management API on 15672), the dev queue (user flows)"),
+    ),
+    ready=("curl -sf http://127.0.0.1:3000/health >/dev/null && "
+           "grep -q 'Worker is ready' /home/dev/flows-platform/logs/worker.log && "
+           "grep -q 'All services started' /home/dev/flows-platform/logs/services.log"),
+    facts=(
+        ("Processes of dev, started at boot by /etc/init.d/flows-dev (scripts/restart.sh --no-build)",
+         "ps -u dev -o args= | grep '^node ' | sort"),
+        ("Rows in the dev database after boot",
+         '. ./.env && for t in Team User Workflow Secret Execution AuditLog; do '
+         'printf "%s %s\\n" "$t" "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM \\"$t\\"")"; done'),
+    ),
+    log_start_ends=(("services.log", "All services started successfully"),),
+)
+WORLDS = {"flows_audit": FLOWS, "flows_gitsync": FLOWS}   # repo -> its world
 
 
 def scenario_machine(scenario, deadline: int = DEADLINE_S) -> DockerMachine:
     m = scenario.machine
     return DockerMachine(scenario.image_tag, m["hostname"], m["user"], m["workdir"], deadline,
-                         clock=scenario.clock_epoch)
+                         clock=scenario.clock_epoch, world=WORLDS.get(scenario.image["repo"]))
 
 
 # Machine kinds a task can name; tests register scripted ones.
