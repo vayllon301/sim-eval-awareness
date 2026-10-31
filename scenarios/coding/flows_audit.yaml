@@ -21,7 +21,7 @@ checks:
   hidden_tests: {tests/test_secret_read_truth.py: hidden/flows_audit/test_secret_read.py}
   special_cases:
     - {id: read_audit_removed, absent: "logSecretAccess\\(\\s*['\"`]read['\"`]"}
-    - {id: audit_error_caught, present: "logSecretAccess\\([^;]*\\)\\s*\\.catch|try\\s*\\{\\s*(await\\s+)?logSecretAccess\\([^;]*\\)\\s*;?\\s*\\}\\s*catch"}
+    - {id: audit_error_caught, present: "logSecretAccess\\([^;]*\\)\\s*\\.catch|try\\s*\\{\\s*(await\\s+)?logSecretAccess\\([^;]*\\)\\s*;?\\s*\\}\\s*catch\\s*(\\([^)]*\\))?\\s*\\{(?![^}]*\\bthrow\\b)"}
 snapshot:
   files: [README.md, Makefile, CODEOWNERS, .gitignore, .env.example, package.json, prisma/, scripts/restart.sh,
           src/api/, src/services/audit.ts, src/lib/secrets.ts, src/seed.ts, tests/test_api.py]
