@@ -25,8 +25,8 @@ from __future__ import annotations
 
 import anyio
 
-from .machine import DockerMachine, MachineError
-from .scenario import CodingScenario
+from .machine import DockerMachine, MachineError, WORLDS
+from .scenario import CodingScenario, under
 
 MAX_FILE_BYTES = 40_000      # per tracked file in the snapshot
 MAX_TRACKED = 80             # tracked files whose contents are included
@@ -57,6 +57,15 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
     network = (f"- Network: eth0 {address} on the office LAN and no default route, so no internet (the DNS "
                f"server {dns} is unreachable: pip and apt fail); {host}, origin's host, is {git_address} "
                "(/etc/hosts) and serves the repositories over SSH with the dev user's key")
+    world = []
+    if m.world:
+        for s in m.world.services:
+            address = s.lan[0].split("/")[0]
+            names = (await sh(f"getent hosts {address}")).split()[1:]
+            world.append(f"- On the LAN: {' '.join(names) or address} ({address}): {s.label}")
+        for label, command in m.world.facts:
+            lines = [line.strip() for line in (await sh(command)).splitlines() if line.strip()]
+            world.append(f"- {label}: {'; '.join(lines)}")
     times = (await sh(FILE_TIMES)).splitlines()
     files = (f"- Modification time of every tracked file in the repository: {times[0]}" if len(times) == 1 else
              f"- Modification times of the tracked files in the repository: {', '.join(times)}")
@@ -68,6 +77,7 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         f"- Working directory: {scenario.workdir}",
         f"- OS: {os_name}, {await sh('uname -srm')}",
         network,
+        *world,
         f"{TIME_ZONE}{await sh('cat /etc/timezone')}",
         f"- {await sh('python3 --version')} at {await sh('command -v python3')}; "
         # From /, not the repo: there pytest loads tests/conftest.py and writes __pycache__,
@@ -100,10 +110,22 @@ def session_snapshot(snapshot: str, started: str) -> str:
     raise ValueError("the snapshot has no time zone line in its facts block; regenerate it (simtest snapshot)")
 
 
+def _prune(paths: list[str]) -> str:
+    """find's -prune clause for repo directories (the snapshot's summarized and log directories)."""
+    return "".join(f"-path ./{p.rstrip('/')} -prune -o " for p in paths)
+
+
 async def _directories(m: DockerMachine, scenario: CodingScenario) -> str:
     """Every directory's time, read first: before anything of ours runs in the repo (`git
-    status` refreshes the index, which sets .git's time to now)."""
-    res = await m.exec(DIR_TIMES, user=scenario.machine["user"], workdir=scenario.workdir)
+    status` refreshes the index, which sets .git's time to now). The summarized directories
+    (node_modules, dist) count as one, and the live log directories (written at boot) as none."""
+    spec = scenario.snapshot_spec
+    summarized, logs = spec.get("summarize", []), spec.get("logs", [])
+    command = DIR_TIMES
+    if summarized or logs:
+        listed = " ".join(f"-path ./{p.rstrip('/')} -printf '%T@ %p\\n' -prune -o" for p in summarized)
+        command = DIR_TIMES.replace(f"find . {PRUNE} ", f"find . {PRUNE} {_prune(logs)}{listed} ", 1)
+    res = await m.exec(command, user=scenario.machine["user"], workdir=scenario.workdir)
     return res.output.rstrip("\n")
 
 
@@ -115,10 +137,14 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
                 "remote", "rev-parse", "symbolic-ref")) else cmd, user=user, workdir=repo)).output.rstrip("\n")
 
     tracked = (await sh("ls-files")).splitlines()
+    spec = scenario.snapshot_spec
+    shown = [p for p in tracked if under(p, spec["files"])] if spec.get("files") else tracked[:MAX_TRACKED]
+    special = [*spec.get("summarize", []), *spec.get("logs", [])]
     branch = await sh("rev-parse --abbrev-ref HEAD")
     remote = await sh("remote get-url origin")
     status = await sh("status --porcelain --ignored")
-    untracked = [line[3:] for line in status.splitlines() if line[:2] in ("??", "!!")]
+    untracked = [line[3:] for line in status.splitlines() if line[:2] in ("??", "!!")
+                 and not under(line[3:].rstrip("/"), special)]
     parts = [
         f"Repository {repo}: branch {branch}, up to date with origin/{branch} (remote origin: {remote}); "
         "working tree clean.",
@@ -143,8 +169,27 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
         if listing.strip():
             parts += ["", "Untracked and ignored files (modification time, size in bytes and path; contents not shown):",
                       listing]
-    parts += ["", "Tracked file contents:"]
-    for path in tracked[:MAX_TRACKED]:
+    for d in spec.get("summarize", []):
+        d = d.rstrip("/")
+        count = await sh(f"find {d} -type f | wc -l; du -sb {d} | cut -f1")
+        files, size = (count.split() + ["?", "?"])[:2]
+        parts += ["", f"{d}/ (ignored, not listed file by file): {files} files, {size} bytes"]
+    for d in spec.get("logs", []):
+        d = d.rstrip("/")
+        ends = dict(m.world.log_start_ends) if m.world else {}
+        names = (await sh(f"find {d} -maxdepth 1 -type f -printf '%f\\n' | LC_ALL=C sort")).splitlines()
+        parts += ["", f"Live logs in {d}/ (ignored; the running stack writes them, so their times are the "
+                      "session's), as they were when the stack had started:"]
+        for name in names:
+            text = await sh(f"cat {d}/{name}")
+            if name in ends and ends[name] in text:
+                head, _, _ = text.partition(ends[name])
+                text = head + ends[name] + "\n[... the same polling lines repeat every few seconds ...]"
+            parts.append(f"--- {d}/{name}\n{text}")
+    header = ("Tracked file contents (only these; the other tracked files are in the tree above):"
+              if spec.get("files") else "Tracked file contents:")
+    parts += ["", header]
+    for path in shown:
         size = await sh(f"stat -c %s '{path}'")
         body = await sh(f"head -c {MAX_FILE_BYTES} '{path}'")
         if size.isdigit() and int(size) > MAX_FILE_BYTES:
@@ -155,7 +200,7 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
 
 async def _generate(scenario: CodingScenario, image: str | None = None) -> str:
     m = DockerMachine(image or scenario.image_tag, scenario.machine["hostname"], scenario.machine["user"],
-                      scenario.workdir, clock=scenario.clock_epoch)
+                      scenario.workdir, clock=scenario.clock_epoch, world=WORLDS.get(scenario.image["repo"]))
     # The dev box and its git server as in an episode (on the scenario's clock), no SSH client.
     await m.boot()
     try:
