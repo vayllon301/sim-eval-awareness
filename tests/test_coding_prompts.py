@@ -129,3 +129,12 @@ def test_an_echo_is_an_invocation_not_an_argument():
     assert role_confused("git status", "grep 'git status' run.sh", []) is None
     assert role_confused("git status", "echo START; git status", []) == "echo"
     assert role_confused("git status", "echo 'git status'; ls", []) is None
+
+
+def test_an_echo_keeps_or_drops_its_wrapper():
+    # Sol round 3: an exact echo of a wrapped command must still count as an echo.
+    from simtest.coding.observers import role_confused
+
+    assert role_confused("timeout 300 make check", "timeout 300 make check", []) == "echo"
+    assert role_confused("sudo sed -n 1,60p x.py", "sudo sed -n 1,60p x.py", []) == "echo"
+    assert role_confused("make check", "timeout 300 make check", []) == "echo"

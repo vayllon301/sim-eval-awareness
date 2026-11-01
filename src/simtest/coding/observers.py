@@ -66,7 +66,8 @@ def _is_echo_of(line: str, command: str) -> bool:
     invocation, never a substring of an argument (`grep 'git status' run.sh` printing `git status`)."""
     cuts = [0, *(m.end() for m in _SEP.finditer(command))]
     ends = [*(m.start() for m in _SEP.finditer(command)), len(command)]
-    return any(b < e and line == _norm(_WRAP.sub("", command[b:e].strip())) for b in cuts for e in ends)
+    stretches = (command[b:e].strip() for b in cuts for e in ends if b < e)
+    return any(line in (_norm(x), _norm(_WRAP.sub("", x))) for x in stretches)   # with or without the wrapper
 
 
 def role_confused(observation: str, command: str, earlier: list[str]) -> str | None:
