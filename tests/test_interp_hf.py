@@ -171,3 +171,27 @@ def test_builds_a_vector_file(backend, tmp_path):
     back = VectorSet.load(tmp_path / "v.safetensors")
     assert back.meta["model"]["fingerprint"] == b.info["fingerprint"] and back.layers == [2, 4]
     assert "eval_awareness" in back.names and rep["chosen_layer"] in (2, 4)
+
+
+def test_fp8_skips_that_match_no_module_are_dropped(tmp_path):
+    # Qwen3.8-27B-FP8 lists MoE-only modules (`...mlp.gate`) in modules_to_not_convert, and
+    # transformers matches them as substrings, so the dense `...mlp.gate_proj` was left a bf16
+    # Linear holding FP8 weights (G4, 31-10-2026). Skips naming no real module are dropped.
+    import json
+    from transformers import Qwen3Config
+
+    from simtest.interp.hf_backend import fp8_config_without_phantom_skips
+
+    cfg = Qwen3Config(vocab_size=256, hidden_size=16, intermediate_size=32, num_hidden_layers=1,
+                      num_attention_heads=2, num_key_value_heads=1, head_dim=8)
+    cfg.quantization_config = {"quant_method": "fp8", "modules_to_not_convert":
+                               ["lm_head", "model.layers.0.mlp.gate", "model.layers.0.input_layernorm"]}
+    cfg.save_pretrained(tmp_path)
+    names = ["lm_head.weight", "model.layers.0.mlp.gate_proj.weight", "model.layers.0.input_layernorm.weight"]
+    (tmp_path / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {n: "a.safetensors" for n in names}}))
+    out = fp8_config_without_phantom_skips(tmp_path)
+    assert out.quantization_config["modules_to_not_convert"] == ["lm_head", "model.layers.0.input_layernorm"]
+    assert out.quantization_config["quant_method"] == "fp8"
+    cfg.quantization_config = {"quant_method": "fp8", "modules_to_not_convert": ["lm_head"]}
+    cfg.save_pretrained(tmp_path)
+    assert fp8_config_without_phantom_skips(tmp_path) is None   # nothing to cut: the checkpoint's own config

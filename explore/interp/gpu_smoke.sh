@@ -45,6 +45,9 @@ MODELS=${MODELS:-/content/models}
 BUDGET_MIN=${BUDGET_MIN:-75}
 STEPS=${STEPS:-agent-stock-eager agent-lens simulator-stock-eager simulator-lens agent-stock-served simulator-stock-served agent-hf}
 mkdir -p "$OUT" "$MODELS"
+# The copied checkout belongs to the laptop's user, so git (here and in the Python steps)
+# refuses it as "dubious ownership" and every output recorded no commit (31-10-2026).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$CODE"
 t0=$(date +%s)
 stamp() { echo "$1 $(($(date +%s) - t0))s" | tee -a "$OUT/timings.txt"; }
 
@@ -64,10 +67,11 @@ if [ ! -e "$VENV/.setup-complete" ]; then
   # vllm-lens pins vllm==0.30.0, so it goes on top of 0.32.0 without its dependencies (its patches
   # are checked at startup: gpu_smoke.py sets VLLM_LENS_STRICT_COMPATIBILITY=1). zstandard is the
   # one it needs that vLLM doesn't bring; kernels (the FP8 Triton kernel) and accelerate are for the
-  # HF step. The constraints keep vLLM's torch and transformers.
+  # HF step (transformers 5.19 needs kernels >=0.17,<0.18; an unpinned install failed on 31-10-2026).
+  # The constraints keep vLLM's torch and transformers.
   uv pip freeze --python "$PY" | grep -E '^(torch|transformers|triton|vllm)==' > "$VENV/constraints.txt"
   uv pip install -q --python "$PY" --no-deps "vllm-lens==$LENS_VERSION"
-  uv pip install -q --python "$PY" -c "$VENV/constraints.txt" zstandard kernels accelerate
+  uv pip install -q --python "$PY" -c "$VENV/constraints.txt" zstandard "kernels==0.17.0" accelerate
   # Gated DeltaNet's fast path for the HF step; without it transformers uses its torch path.
   uv pip install -q --python "$PY" -c "$VENV/constraints.txt" flash-linear-attention \
     || echo "flash-linear-attention not installed: the HF step uses transformers' torch path" | tee -a "$OUT/versions.txt"

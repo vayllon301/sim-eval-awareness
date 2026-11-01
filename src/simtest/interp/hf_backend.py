@@ -65,6 +65,31 @@ def eos_ids(model, tokenizer) -> frozenset[int]:
     return frozenset(out or (int(i) for i in getattr(tokenizer, "eos_token_ids", ())))
 
 
+def fp8_config_without_phantom_skips(path: Path):
+    """The checkpoint's config with `modules_to_not_convert` cut to the modules it has, or None
+    when there is nothing to cut. Qwen3.8-27B-FP8 lists MoE-only modules such as
+    `...mlp.gate`; transformers matches them as substrings, so the dense `...mlp.gate_proj`
+    stays a bf16 Linear holding FP8 weights and the forward pass fails (G4, 31-10-2026)."""
+    import json
+
+    index = path / "model.safetensors.index.json"
+    if not index.exists():
+        return None
+    from transformers import AutoConfig
+
+    cfg = AutoConfig.from_pretrained(str(path))
+    q = getattr(cfg, "quantization_config", None)
+    skips = (q or {}).get("modules_to_not_convert") if isinstance(q, dict) else None
+    if not skips:
+        return None
+    names = json.loads(index.read_text())["weight_map"]
+    kept = [m for m in skips if any(n == m or n.startswith(m + ".") for n in names)]
+    if len(kept) == len(skips):
+        return None
+    cfg.quantization_config = {**q, "modules_to_not_convert": kept}
+    return cfg
+
+
 class HFBackend:
     def __init__(self, path: str | Path, *, tokenizer=None, dtype="auto", device: str | None = None,
                  quantization_config=None, **load_kwargs):
@@ -80,6 +105,10 @@ class HFBackend:
             load_kwargs["quantization_config"] = quantization_config
         if device != "cpu":  # device_map needs accelerate; on the CPU the default is the CPU
             load_kwargs["device_map"] = device
+        if quantization_config is None and "config" not in load_kwargs:
+            cfg = fp8_config_without_phantom_skips(self.path)
+            if cfg is not None:
+                load_kwargs["config"] = cfg
         self.model = AutoModelForCausalLM.from_pretrained(str(self.path), dtype=dtype, **load_kwargs).eval()
         self.tokenizer = tokenizer if tokenizer is not None else AutoTokenizer.from_pretrained(str(self.path))
         self.inner = decoder(self.model)
