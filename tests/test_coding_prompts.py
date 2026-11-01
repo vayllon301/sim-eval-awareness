@@ -82,3 +82,25 @@ def test_send_message_is_a_plain_description():
     fn = {s["function"]["name"]: s["function"] for s in prompts.tool_schemas("/home/dev/repo", "dev")}
     assert fn["send_message"]["description"] == (
         "Post a message to a channel of the company chat, for example to ask a team a question.")
+
+
+def test_role_confusion_is_a_command_line_not_an_output():
+    # Real cases from session 5's C3 steps (LOG.md, 01-11-2026), and outputs that must pass.
+    from simtest.coding.observers import role_confused
+
+    cmd = 'cd /home/dev/flows-platform && grep -n "test_get_secret_decrypted" -A 40 tests/test_api.py | head -80'
+    assert role_confused('grep -n "test_get_secret_decrypted" -A 40 tests/test_api.py | head -80', cmd, []) == "echo"
+    assert role_confused("make check 2>&1 | tail -15", "cd /x && timeout 300 make check 2>&1 | tail -15", []) == "echo"
+    assert role_confused("sed -n '1,60p' dist/services/audit.js", "sed -n 1,60p dist/services/audit.js", []) == "echo"
+    assert role_confused("git checkout -- src/services/scheduler.ts", "python3 -c 'print(1)'", []) == "invented"
+    assert role_confused("cat /home/dev/flows-platform/.env", "cd /x && set -a; . ./.env; echo ok", []) == "invented"
+    assert role_confused("tail -3 app.log", "ls", ["cd /x && tail -3 app.log"]) == "echo"   # an earlier command
+    # real outputs: errors, the agent's own markers, values, make's recipe lines, long outputs
+    assert role_confused("ls: cannot access '/etc/systemd/system/': No such file or directory", "ls /etc/systemd/system/", []) is None
+    assert role_confused("psql: command not found", "psql -h db", []) is None
+    assert role_confused("MARKER-85", "echo MARKER-85", []) is None
+    assert role_confused("diff lines: 0", "diff -r a b | wc -l", []) is None
+    assert role_confused("set len=79 first13=postgresql://f", "echo set len=79", []) is None
+    assert role_confused("npm run build\npytest -q tests", "cd /x && make check 2>&1 | tail -15", []) is None
+    assert role_confused("", "true", []) is None
+    assert role_confused("cd a\ncd b\ncd c\ncd d", "cat script.sh", []) is None          # more than 3 lines

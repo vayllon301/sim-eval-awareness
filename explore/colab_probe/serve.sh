@@ -10,6 +10,7 @@
 #
 # From the laptop (session "probe"; every Colab command uses gcloud ADC):
 #   colab --auth adc new -s probe --gpu G4          # or A100, H100 (80 GB: shorter contexts, below)
+#   (MIX=c3 for C3-heavy runs, EAGER=1 for steering runs: prefix them to bash -s, e.g. "MIX=c3 bash -s")
 #   PROXY="colab --auth adc ssh --proxy-mode -s probe"
 #   SSH="ssh -o ProxyCommand='$PROXY' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@probe"
 #   eval "$SSH 'bash -s'" < explore/colab_probe/serve.sh                 # until both servers are ready
@@ -28,6 +29,11 @@ SIM_REPO=${SIM_REPO:-Qwen/Qwen-AgentWorld-35B-A3B}
 GPU_MIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
 # On the G4, 0.42 left the agent 7.6 of the 8.3 GiB of KV it needs at 128K (LOG.md, 29-10-2026).
 if [ "$GPU_MIB" -ge 90000 ]; then mem=0.47 sim=0.47 len=131072; else mem=0.44 sim=0.50 len=65536; fi
+# MIX=c3: runs that are mostly C1-C3 give the simulator more. In session 5 (12-14 C3 episodes at
+# once) the simulator's KV cache sat at 75-99% with 300 preemptions, and the agent's never passed
+# about 30% of its 218K tokens (LOG.md, 01-11-2026). 0.42 leaves the agent about 117K tokens, still
+# about twice what it used. Keep the default for C0-heavy runs: 12 C0 agents need the agent's cache.
+if [ "${MIX:-}" = c3 ] && [ "$GPU_MIB" -ge 90000 ]; then mem=0.42 sim=0.52; fi
 AGENT_MEM=${AGENT_MEM:-$mem}
 SIM_MEM=${SIM_MEM:-$sim}
 AGENT_LEN=${AGENT_LEN:-$len}
@@ -79,8 +85,13 @@ serve() {
   done
   stamp "$name-ready"
 }
-serve agent 8000 /content/models/agent "$AGENT_MEM" "$AGENT_LEN" --enable-auto-tool-choice --tool-call-parser qwen3_coder
-serve simulator 8001 /content/models/simulator "$SIM_MEM" "$SIM_LEN" --quantization fp8 --trust-remote-code
+# EAGER=1: serve on the engine settings the steering engine uses (vllm-lens forces eager mode and
+# vLLM's V1 model runner). The compiled default does not give the eager engine's tokens (session 5,
+# LOG.md, 01-11-2026), so steered and unsteered episodes (N4) both run with EAGER=1.
+if [ "${EAGER:-}" = 1 ]; then ENGINE=(--enforce-eager); export VLLM_USE_V2_MODEL_RUNNER=0; else ENGINE=(); fi
+echo "engine: ${ENGINE[*]:-compiled (vLLM default)}" | tee -a "$OUT/versions.txt"
+serve agent 8000 /content/models/agent "$AGENT_MEM" "$AGENT_LEN" --enable-auto-tool-choice --tool-call-parser qwen3_coder "${ENGINE[@]}"
+serve simulator 8001 /content/models/simulator "$SIM_MEM" "$SIM_LEN" --quantization fp8 --trust-remote-code "${ENGINE[@]}"
 nvidia-smi --query-gpu=memory.used,memory.total --format=csv | tee -a "$OUT/gpu.txt"
 grep -h -i -E "KV cache|maximum concurrency|prefix cach" "$OUT/agent.log" "$OUT/simulator.log" | tee "$OUT/kv.txt" || true
 stamp done

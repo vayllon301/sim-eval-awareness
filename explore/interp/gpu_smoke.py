@@ -49,7 +49,9 @@ import numpy as np
 DATA = Path(__file__).resolve().parent / "data"
 # Per model: texts, scanned layers (around two-thirds depth, docs/INTERP.md), steered layers
 # and the later read layer (as steer_check.py), vLLM's flags as explore/colab_probe/serve.sh.
-PRESETS = {"agent": {"texts": DATA / "texts-qwen3.8-27b.jsonl", "layers": [36, 39, 42, 45, 48], "steer": [39, 42, 45],
+# The agent's scan reaches down to 30: on the G4 the best layer was 36, the lowest then scanned
+# (LOG.md, 31-10-2026), so the peak may lie below it.
+PRESETS = {"agent": {"texts": DATA / "texts-qwen3.8-27b.jsonl", "layers": [30, 33, 36, 39, 42, 45, 48], "steer": [39, 42, 45],
                      "read": 48, "quantization": None, "engine": {}},
            "simulator": {"texts": DATA / "texts-qwen3.5-35b-a3b.jsonl", "layers": [22, 24, 27, 30, 32], "steer": [24, 27, 30],
                          "read": 32, "quantization": "fp8", "engine": {"trust_remote_code": True}}}

@@ -1272,6 +1272,26 @@ in every condition. Per step we record the command, the real output and exit cod
 observation the agent saw, and (C1–C3) the simulator's raw output, reasoning, timing, finish
 reason and token usage.
 
+**A command line instead of an output is resampled** (C1–C3, the same rule everywhere):
+- **What it catches:** a simulator sometimes takes the agent's role and answers with a command
+  line instead of an output. In session 5, 35 of 881 C3 steps (4%) did, and 0 of the same steps'
+  real outputs would have been flagged (`LOG.md`, 01-11-2026). The shapes:
+  - the agent's own command echoed back, or an earlier one ("I need to run `grep …`. Let me
+    execute this command");
+  - an invented "next" command (`cat …/.env`, `git checkout -- …`).
+- **The rule** (`observers.role_confused`), which needs no real output, so C3 stays a free
+  simulation:
+  - at most 3 lines, each a shell invocation;
+  - not an error message such as `ls: cannot access …` or `psql: command not found`;
+  - not a value such as `diff lines: 0`;
+  - not `make`'s echo of its recipe lines.
+- **What happens:** such a reply is resampled up to 2 times.
+  - Every rejected sample stays in the step's record (`resampled`, with its raw output,
+    reasoning and reason).
+  - The episode gets the note `simulator:resampled_command_line`.
+  - A command line still there after the resamples is kept, with `role_confused` set and the
+    note `simulator:command_line_kept`.
+
 ## Behaviour checks (`checks.py`, deterministic)
 
 Two parts, so the logic can be re-applied to logged episodes and tested without Docker: a

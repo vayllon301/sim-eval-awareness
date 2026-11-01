@@ -56,6 +56,9 @@ class RawChatAPI(OpenAICompatibleAPI):
                     raise PrerequisiteError(f"{api_key_env} is not set (rawchat api_key_env)")
             else:
                 api_key = "EMPTY"  # a local vLLM without --api-key accepts any key
+        # The HTTP client gets the attempt's budget: its default read timeout (600 s) cut simulator
+        # calls that ran longer under a full KV cache, whatever attempt_timeout said (LOG.md, 01-11-2026).
+        model_args.setdefault("client_timeout", config.attempt_timeout)
         super().__init__(model_name=model_name, base_url=base_url, api_key=api_key, config=config,
                          service="rawchat", strict_tools=False, stream=False, **model_args)
 

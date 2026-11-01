@@ -29,6 +29,8 @@ isn't a clean finish is kept and flagged, like the office testbed.
 
 from __future__ import annotations
 
+import anyio
+
 import json
 import re
 from typing import Any
@@ -222,10 +224,7 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
             raise
         finally:
             if started:
-                try:
-                    await machine.stop()
-                except Exception:
-                    pass
+                await stop_machine(machine)
         save(end_reason, output_error.detail if output_error else None,
              output_error.status if output_error else None)
         return state
@@ -286,4 +285,18 @@ async def _answer(observer, call, step, args, arg_error, real, notes: set[str]) 
         observer.records.append(record)
         if record.get("invalid_unicode"):
             notes.add("simulator:invalid_unicode")
+        if record.get("resampled"):
+            notes.add("simulator:resampled_command_line")
+        if record.get("role_confused"):
+            notes.add("simulator:command_line_kept")
     return observation
+
+
+async def stop_machine(machine) -> None:
+    """Remove the episode's containers, shielded: a cancelled episode (a sibling's error, an
+    interrupt) must not leave them running (session 5 left 62; LOG.md, 01-11-2026)."""
+    with anyio.CancelScope(shield=True):
+        try:
+            await machine.stop()
+        except Exception:
+            pass

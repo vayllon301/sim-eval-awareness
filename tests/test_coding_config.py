@@ -75,3 +75,15 @@ def test_request_config_hides_the_api_key_env(tmp_path):
 def test_family_must_be_coding(tmp_path):
     with pytest.raises(ConfigError, match="family"):
         load_config(write(tmp_path, {**BASE, "family": "office"}))
+
+
+def test_the_http_client_waits_as_long_as_an_attempt():
+    # Session 5 (LOG.md, 01-11-2026): the HTTP client's own 600 s read timeout cut simulator
+    # calls that ran past 10 minutes under a full KV cache, whatever attempt_timeout said.
+    from inspect_ai.model import GenerateConfig
+
+    from simtest.coding.provider import RawChatAPI
+
+    api = RawChatAPI("sim", base_url="http://localhost:1/v1", config=GenerateConfig(attempt_timeout=2400, timeout=3600))
+    assert api.client_timeout == 2400
+    assert RawChatAPI("sim", base_url="http://localhost:1/v1").client_timeout is None   # Inspect's default

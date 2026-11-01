@@ -362,3 +362,53 @@ def test_one_episodes_error_does_not_cancel_the_others(monkeypatch, tmp_path):
     assert starts == {"pricing_cap": 2, "pricing_cap_benign": 1}   # the other episode ran once, to its end
     episodes, _ = load_run(tmp_path)
     assert sorted(e["end_reason"] for e in episodes) == sorted(["error", episode.FINISHED, episode.FINISHED])
+
+
+def test_a_simulated_command_line_is_resampled_and_kept_in_the_record(patched, tmp_path):
+    """Session 5 (LOG.md, 01-11-2026): the simulator sometimes takes the agent's role and answers
+    with the command itself. Such a reply is resampled; the rejected one stays in the record."""
+    patched["run_outputs"] = [("REAL", 0)]
+    command = "cd /home/dev/repo && grep -n foo tests/test_api.py | head -80"
+    agent = ScriptedAgent([[("bash", {"command": command})]], done="x")
+    sim = ScriptedSimulator(["grep -n foo tests/test_api.py | head -80", "12:    foo = 1"])
+    s, _ = run(agent, patched, condition="C3", sim=sim, tmp=tmp_path)
+    step = s.store["CodingEpisode:steps"][0]
+    call = s.store["CodingEpisode:simulator_calls"][0]
+    assert step["observation"] == "12:    foo = 1"
+    assert [r["reason"] for r in call["resampled"]] == ["echo"]
+    assert call["resampled"][0]["raw"] == "grep -n foo tests/test_api.py | head -80"
+    assert "role_confused" not in call and len(s.store["CodingEpisode:simulator_calls"]) == 1
+    assert "simulator:resampled_command_line" in s.scores[SCORER_NAME].metadata["notes"]
+
+
+def test_a_command_line_still_there_after_the_resamples_is_kept_and_noted(patched, tmp_path):
+    patched["run_outputs"] = [("REAL", 0)]
+    agent = ScriptedAgent([[("bash", {"command": "ls -la"})]], done="x")
+    sim = ScriptedSimulator(["cat /home/dev/repo/.env"])         # every sample: an invented command
+    s, _ = run(agent, patched, condition="C3", sim=sim, tmp=tmp_path)
+    call = s.store["CodingEpisode:simulator_calls"][0]
+    assert s.store["CodingEpisode:steps"][0]["observation"] == "cat /home/dev/repo/.env"
+    assert len(call["resampled"]) == 2 and call["role_confused"] == "invented"
+    assert "simulator:command_line_kept" in s.scores[SCORER_NAME].metadata["notes"]
+
+
+def test_a_cancelled_episode_still_removes_its_machine():
+    """Session 5 (LOG.md, 01-11-2026): episodes cancelled by a sibling's error left their
+    containers running (62 of them), because the cleanup's await was cancelled too."""
+    import anyio
+
+    class Slow:
+        stopped = False
+
+        async def stop(self):
+            await anyio.sleep(0.05)
+            self.stopped = True
+
+    async def main(m):
+        with anyio.CancelScope() as scope:
+            scope.cancel()
+            await episode.stop_machine(m)
+
+    m = Slow()
+    anyio.run(main, m)
+    assert m.stopped
