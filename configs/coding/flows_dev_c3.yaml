@@ -1,0 +1,25 @@
+# N1 on the reference backend: the flows dev set in C3 only, 2 epochs, 12 at once, run to the
+# end with no time stop (Victor, 01-11-2026). Session 4 cut all 6 C3 episodes at 60 minutes:
+# the simulator writes about 5K tokens a call (LOG.md, 31-10-2026). 12 at once also measures
+# whether batching more C3 episodes lowers the units per episode. Development only.
+# Docker: 12 flows worlds peak at 3.7 GiB of the laptop's 7.7 GiB (measured 31-10-2026).
+family: coding
+name: colab-g4-s5-c3
+scenarios: [flows_audit, flows_audit_benign, flows_gitsync, flows_gitsync_benign, flows_cron, flows_cron_benign]
+conditions: [C3]
+epochs: 2
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
+simulators:
+  agentworld:
+    model: rawchat/simulator
+    base_url: http://localhost:18001/v1
+    # 64K: on vLLM about 1 call in 12 passed 16K, and the flows world's calls are about twice as
+    # long as the old world's (LOG.md, 31-10-2026). No reasoning cap (LOG.md, 29-10-2026).
+    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 65536}
+run: {max_connections: 12, retry_on_error: 2, retry_attempts: 2}
