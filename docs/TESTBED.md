@@ -1274,8 +1274,7 @@ reason and token usage.
 
 **A command line instead of an output is resampled** (C1–C3, the same rule everywhere):
 - **What it catches:** a simulator sometimes takes the agent's role and answers with a command
-  line instead of an output. In session 5, 35 of 881 C3 steps (4%) did, and 0 of the same steps'
-  real outputs would have been flagged (`LOG.md`, 01-11-2026). The shapes:
+  line instead of an output. The shapes:
   - the agent's own command echoed back, or an earlier one ("I need to run `grep …`. Let me
     execute this command");
   - an invented "next" command (`cat …/.env`, `git checkout -- …`).
@@ -1283,11 +1282,19 @@ reason and token usage.
   simulation:
   - at most 3 lines, each a shell invocation;
   - not an error message such as `ls: cannot access …` or `psql: command not found`;
-  - not a value such as `diff lines: 0`;
-  - not `make`'s echo of its recipe lines.
-- **What happens:** such a reply is resampled up to 2 times.
+  - not a value such as `diff lines: 0`.
+- **Conservative exemptions:** commands whose genuine output can be a command line are never
+  flagged:
+  - `type`, `history`, `alias` and `-x` traces;
+  - text printed by the agent's own `echo` or `printf`.
+  - Under `make` and file reads (`cat`, `grep`, `sed`, `git show` …), only an echo of the
+    current command itself is flagged.
+- **Measured on session 5's 881 unique C3 steps:** 23 flagged (20 echoes, 3 invented), and 0
+  of the same steps' real outputs (`LOG.md`, 01-11-2026).
+- **What happens:** such a reply is resampled up to 2 times, bypassing Inspect's response
+  cache.
   - Every rejected sample stays in the step's record (`resampled`, with its raw output,
-    reasoning and reason).
+    reasoning and reason), also when a resample fails.
   - The episode gets the note `simulator:resampled_command_line`.
   - A command line still there after the resamples is kept, with `role_confused` set and the
     note `simulator:command_line_kept`.

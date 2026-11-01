@@ -32,14 +32,20 @@ CONDITIONS = ("C0", "C1", "C2", "C3")
 RAW_LIMIT = 100_000  # characters of a simulator's raw reply kept in the step record
 # A simulator that takes the agent's role answers with a command line instead of an output: the
 # agent's own command (or an earlier one) echoed back, or a "next" command it invented (session 5:
-# 35 of 881 C3 steps, 4%, and 0 of the same steps' real outputs; LOG.md, 01-11-2026). Such a
+# 23 of 881 C3 steps with the exemptions below, and 0 of the same steps' real outputs; LOG.md,
+# 01-11-2026). Such a
 # reply is resampled up to RESAMPLES times; every rejected sample stays in the step's record.
 RESAMPLES = 2
 _CMD = re.compile(r"^(sudo\s+)?(cd|cat|grep|git|node|npm|npx|make|python3?|pytest|sed|ls|curl|od|xxd|head|tail|"
                   r"echo|cp|mv|rm|find|wc|md5sum|sha256sum|psql|docker|timeout|export|source|tsc|awk|stat|"
                   r"touch|mkdir|chmod|printf|which|ps|kill|sleep|hexdump|jq)\s+\S")
 _NOT_CMD = re.compile(r"^\S+ \w+[:=]|: command not found|^[\w./-]+: ")   # "diff lines: 0", "ls: cannot access"
-_MAKE = re.compile(r"(^|[;&|]\s*)make\b")                                 # make echoes its recipe lines
+_MAKE = re.compile(r"\bmake\b")                                            # make echoes its recipe lines
+# Commands whose genuine output can be a command line: `type git` ("git is /usr/bin/git"),
+# `history`, `alias`, `set -x` traces, and file reads (a one-line script holds a command).
+_PRINTS_COMMANDS = re.compile(r"\b(type|history|alias|declare|compgen|set\s+-\w*x|(ba)?sh\s+-\w*x)\b")
+_READS_FILES = re.compile(r"\b(cat|head|tail|sed|awk|less|more|grep|strings|xxd|od|nl|cut|git\s+(show|diff|log|blame|cat-file))\b")
+_ECHO_ARG = re.compile(r"\b(echo|printf)\b(.*)", re.S)
 
 
 def _norm(text: str) -> str:
@@ -56,10 +62,19 @@ def role_confused(observation: str, command: str, earlier: list[str]) -> str | N
     lines = [_norm(x) for x in text.splitlines() if x.strip()]
     if not all(_CMD.match(x) and not _NOT_CMD.search(x) for x in lines):
         return None
-    seen = [_norm(c) for c in [command, *earlier]]
-    if all(any(x in c for c in seen) for x in lines):
+    if _PRINTS_COMMANDS.search(command):
+        return None
+    echoed = [_norm(m.group(2)) for m in _ECHO_ARG.finditer(command)]   # what the agent's echo/printf print
+    if all(any(x in e for e in echoed) for x in lines):
+        return None
+    current = _norm(command)
+    if all(x in current for x in lines):
+        return "echo"                       # the current command itself: never a genuine output
+    if _MAKE.search(command) or _READS_FILES.search(command):
+        return None                         # make's recipe lines, a file that holds a command
+    if all(any(x in _norm(c) for c in earlier) for x in lines):
         return "echo"
-    return None if _MAKE.search(command) else "invented"
+    return "invented"
 
 
 def parse(content: str) -> str:
@@ -110,10 +125,15 @@ class SimulatedBash(BashObserver):
         rejected: list[dict] = []
         while True:
             try:
-                text, record = await self._observe_once(command, real)
+                text, record = await self._observe_once(command, real, resample=bool(rejected))
             except (IncompleteOutput, OutputError) as exc:   # a resample that fails keeps what was rejected
                 if rejected and getattr(exc, "record", None) is not None:
                     exc.record["resampled"] = rejected
+                raise
+            except BaseException as exc:                    # infrastructure: the episode is re-run, but
+                if rejected:                                 # what was rejected is still recorded
+                    self.records.append({"model": str(self.model), "turns": len(self.history),
+                                         "error": repr(exc), "resampled": rejected})
                 raise
             reason = role_confused(text, command, [c for c, _ in self.history])
             if reason is None or len(rejected) == RESAMPLES:
@@ -126,11 +146,13 @@ class SimulatedBash(BashObserver):
         self.history.append((command, text))
         return text, record
 
-    async def _observe_once(self, command: str, real: ExecResult) -> tuple[str, dict]:
+    async def _observe_once(self, command: str, real: ExecResult, resample: bool = False) -> tuple[str, dict]:
         t0 = time.monotonic()
         record: dict = {"model": str(self.model), "turns": len(self.history)}
         try:
-            output = await self.model.generate(self.messages(command, real))
+            # A resample must reach the model: a cached reply would be the rejected one again.
+            messages = self.messages(command, real)
+            output = await (self.model.generate(messages, cache=False) if resample else self.model.generate(messages))
         except Exception as exc:
             if is_infrastructure(exc):
                 raise

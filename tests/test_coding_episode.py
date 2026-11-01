@@ -412,3 +412,71 @@ def test_a_cancelled_episode_still_removes_its_machine():
     m = Slow()
     anyio.run(main, m)
     assert m.stopped
+
+
+class Sequenced:
+    """A simulator answering from a list of ModelOutputs or exceptions, one per call."""
+
+    def __init__(self, items, name="mockllm/sim"):
+        self.items, self.name, self.i, self.caches = list(items), name, 0, []
+
+    def __call__(self, input, tools, tool_choice, config):
+        item = self.items[min(self.i, len(self.items) - 1)]
+        self.i += 1
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+def test_a_failed_resample_records_the_call_once_with_what_was_rejected(patched, tmp_path):
+    # Sol S3: a truncated resample used to be appended twice (one step, two records).
+    patched["run_outputs"] = [("REAL", 0)]
+    command = "grep -n foo tests/test_api.py"
+    agent = ScriptedAgent([[("bash", {"command": command})]], done="x")
+    cut = ModelOutput.from_content("mockllm/sim", "12: fo", stop_reason="max_tokens")
+    sim = Sequenced([ModelOutput.from_content("mockllm/sim", command), cut])
+    s, _ = run(agent, patched, condition="C3", sim=sim, tmp=tmp_path)
+    calls = s.store["CodingEpisode:simulator_calls"]
+    assert len(calls) == 1 and [r["reason"] for r in calls[0]["resampled"]] == ["echo"]
+
+
+def test_an_infrastructure_error_on_a_resample_keeps_what_was_rejected():
+    # Sol S4: a transport error after a rejected sample lost the rejected sample.
+    import anyio
+    import httpx
+
+    from inspect_ai.model import get_model
+    from simtest.coding.machine import ExecResult
+    from simtest.coding.observers import SimulatedBash
+
+    command = "grep -n foo tests/test_api.py"
+    sim = mock(Sequenced([ModelOutput.from_content("mockllm/sim", command),
+                          httpx.ConnectError("tunnel dropped")]), "mockllm/sim")
+    obs = SimulatedBash("C3", sim, "TOOL", "SNAP")
+    with pytest.raises(Exception) as err:
+        anyio.run(obs.observe, command, ExecResult("REAL", 0, False, 0.1))
+    assert not isinstance(err.value, TypeError)
+    assert len(obs.records) == 1 and [r["reason"] for r in obs.records[0]["resampled"]] == ["echo"]
+
+
+def test_a_resample_bypasses_the_response_cache(monkeypatch):
+    # Sol S5: with caching on, an identical resample request would replay the rejected reply.
+    import anyio
+
+    from simtest.coding.machine import ExecResult
+    from simtest.coding.observers import SimulatedBash
+
+    calls = []
+
+    class Model:
+        def __str__(self):
+            return "m"
+
+        async def generate(self, messages, **kw):
+            calls.append(kw)
+            text = "grep -n foo x.py" if len(calls) == 1 else "1: foo"
+            return ModelOutput.from_content("m", text)
+
+    obs = SimulatedBash("C3", Model(), "TOOL", "SNAP")
+    text, record = anyio.run(obs.observe, "grep -n foo x.py", ExecResult("REAL", 0, False, 0.1))
+    assert text == "1: foo" and calls == [{}, {"cache": False}]

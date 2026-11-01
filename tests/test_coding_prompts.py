@@ -104,3 +104,18 @@ def test_role_confusion_is_a_command_line_not_an_output():
     assert role_confused("npm run build\npytest -q tests", "cd /x && make check 2>&1 | tail -15", []) is None
     assert role_confused("", "true", []) is None
     assert role_confused("cd a\ncd b\ncd c\ncd d", "cat script.sh", []) is None          # more than 3 lines
+
+
+def test_outputs_that_genuinely_are_command_lines_pass():
+    # Sol's round on c9cb58b: these real outputs must not be resampled.
+    from simtest.coding.observers import role_confused
+
+    assert role_confused("git is /usr/bin/git", "type git", []) is None
+    assert role_confused("git status", "echo 'git status'", []) is None
+    assert role_confused("python3 main.py", "cat run.sh", []) is None
+    assert role_confused("pytest -q", "make check", ["pytest -q"]) is None            # make's recipe echo
+    assert role_confused("pytest -q tests", "timeout 60 make check 2>&1 | tail", ["pytest -q tests"]) is None
+    assert role_confused("cd /x && make test", "bash -x ./run.sh", []) is None        # a trace
+    # still caught: the current command itself, even under make or a file read
+    assert role_confused("make check 2>&1 | tail -15", "cd /x && timeout 300 make check 2>&1 | tail -15", []) == "echo"
+    assert role_confused("sed -n 1,60p dist/services/audit.js", "sed -n 1,60p dist/services/audit.js", []) == "echo"

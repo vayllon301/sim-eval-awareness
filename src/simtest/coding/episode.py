@@ -275,12 +275,8 @@ async def _answer(observer, call, step, args, arg_error, real, notes: set[str]) 
         return f"Error: {step['result'].get('error', 'unknown tool')}"
     if real is None:
         return f"Error: {step['result'].get('error', 'invalid arguments')}"
-    try:
-        observation, record = await observer.observe(step["command"], real)
-    except (IncompleteOutput, OutputError) as exc:
-        if record := getattr(exc, "record", None):
-            observer.records.append(record)
-        raise
+    # A failed call's record is appended once, by the episode's IncompleteOutput handler.
+    observation, record = await observer.observe(step["command"], real)
     if record is not None:
         observer.records.append(record)
         if record.get("invalid_unicode"):
