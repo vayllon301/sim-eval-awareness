@@ -22,7 +22,7 @@ def smoke(monkeypatch):
     spec = importlib.util.spec_from_file_location("gpu_smoke", ROOT / "explore" / "interp" / "gpu_smoke.py")
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
-    for k in ("VLLM_LENS_DISABLE", "VLLM_LENS_STRICT_COMPATIBILITY"):  # the steps set these; restored after
+    for k in ("VLLM_LENS_DISABLE", "VLLM_LENS_STRICT_COMPATIBILITY", "VLLM_USE_V2_MODEL_RUNNER"):  # restored after
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(V, "_api", lambda: fake_vllm_api(FakeBackend()))  # every engine: the same fake weights
     small = {"layers": [1, 2, 3, 4], "steer": [1, 2, 3], "read": 4}  # the fake has 6 layers
@@ -68,8 +68,11 @@ def test_stock_lens_and_report_on_the_fake_engine(smoke, monkeypatch, tmp_path):
     assert lens["backend"]["lens"] == "enabled" and lens["vectors"]["chosen_layer"] in (1, 2, 3, 4)
     stock = json.loads((out / "agent" / "stock-eager.json").read_text())
     assert stock["backend"]["lens"] == "disabled" and stock["backend"]["engine_settings"]["enforce_eager"]
+    # vllm-lens moves vLLM to its V1 model runner, so stock-eager must run there too; served keeps vLLM's default
+    assert stock["backend"]["env"]["VLLM_USE_V2_MODEL_RUNNER"] == "0"
     served = json.loads((out / "agent" / "stock-served.json").read_text())
     assert served["backend"]["engine_settings"]["enforce_eager"] is False
+    assert served["backend"]["env"]["VLLM_USE_V2_MODEL_RUNNER"] is None
     assert len(list((out / "agent" / "specs").glob("*.yaml"))) == 4 and (out / "agent" / "lens-acts.npz").exists()
     assert rep["checks"]["simulator"] == {} and n["steps_run"] == ["stock-eager", "lens", "stock-served"]
 

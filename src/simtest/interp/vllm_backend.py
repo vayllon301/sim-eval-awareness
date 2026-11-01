@@ -53,6 +53,11 @@ ENGINE = {"enforce_eager": True, "enable_prefix_caching": False, "max_model_len"
           "max_num_batched_tokens": 8192, "gpu_memory_utilization": 0.85, "language_model_only": True}
 
 
+# What changes the engine besides its settings, recorded after it is built (vllm-lens sets
+# VLLM_USE_V2_MODEL_RUNNER=0: its hooks need vLLM's V1 model runner).
+ENV = ("VLLM_LENS_DISABLE", "VLLM_LENS_STRICT_COMPATIBILITY", "VLLM_USE_V2_MODEL_RUNNER")
+
+
 def _api() -> SimpleNamespace:
     """vLLM, vllm-lens and torch, imported on first use (the offline tests swap in fakes)."""
     import torch
@@ -117,6 +122,7 @@ class VLLMBackend:
                      "quantization": files if label is None else f"vLLM {quantization} at load (files: {files})",
                      "engine_settings": {**self.engine, "quantization": quantization},
                      "lens": "disabled" if lens_disabled() else "enabled",
+                     "env": {k: os.environ.get(k) for k in ENV},
                      "tokenizer_sha256": tok["tokenizer_sha256"], "chat_template_sha256": tok["chat_template_sha256"],
                      "n_layers": self.n_layers, "d_model": self.d_model, "device": self.api.device(),
                      "versions": {**versions("vllm", "vllm-lens", "torch", "flashinfer-python"), **tok["versions"]}}

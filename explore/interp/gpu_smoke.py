@@ -5,8 +5,9 @@ Runs on the Colab G4 through explore/interp/gpu_smoke.sh: one step per process, 
 a time, each writing <out-dir>/<name>/<step>.json (and refusing to overwrite it):
 
   stock   greedy tokens of the fixed prompts on stock vLLM (vllm-lens off), each prompt
-          twice. `--mode eager`: the lens steps' engine settings. `--mode served`: vllm
-          serve's (compiled, CUDA graphs, prefix caching), as the episodes ran.
+          twice. `--mode eager`: the lens steps' engine settings and model runner (V1).
+          `--mode served`: vllm serve's (compiled, CUDA graphs, prefix caching, vLLM's
+          default runner), as the episodes ran.
   lens    on vLLM with vllm-lens: (i) the vector file built on the FP8 weights (the texts,
           pairs and layer rule of build_vectors.py); (ii) greedy tokens before the hooks are
           installed, then unsteered, with zero additions and with an alpha-0 spec; (iii) a
@@ -128,6 +129,12 @@ def steer_applied(b, vs, ids, layer: int) -> dict:
 
 def stock(a, p):
     os.environ["VLLM_LENS_DISABLE"] = "1"  # before vLLM loads its plugins
+    # vllm-lens moves vLLM to its V1 model runner (V2 is vLLM's default for dense models), so the
+    # eager baseline runs there too; served keeps vLLM's default, as serve.sh.
+    if a.mode == "eager":
+        os.environ["VLLM_USE_V2_MODEL_RUNNER"] = "0"
+    else:
+        os.environ.pop("VLLM_USE_V2_MODEL_RUNNER", None)
     from simtest.interp.vllm_backend import VLLMBackend
 
     out = out_file(a, f"stock-{a.mode}")
@@ -145,6 +152,7 @@ def stock(a, p):
 def lens(a, p):
     os.environ.pop("VLLM_LENS_DISABLE", None)
     os.environ.setdefault("VLLM_LENS_STRICT_COMPATIBILITY", "1")  # vllm-lens 1.3.0 is validated on vLLM 0.30 only
+    os.environ["VLLM_USE_V2_MODEL_RUNNER"] = "0"  # what vllm-lens sets; explicit, so it is recorded
     from simtest.interp.backend import Add
     from simtest.interp.build import CONCEPTS, build_all, load_rows
     from simtest.interp.meta import file_sha256

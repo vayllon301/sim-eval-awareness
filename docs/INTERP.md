@@ -153,10 +153,12 @@ they use the episodes' FP8 weights by construction.
     every layer at every forward pass is filtered out in the smoke test's venv.
   - It logs and skips a hook that fails instead of raising, so a skipped steer looks like
     an unsteered run. The smoke test checks that a steer moves its layer by its delta.
-  - The episodes ran compiled (torch.compile, CUDA graphs); vllm-lens runs eager. Whether
-    the greedy tokens are the same is the smoke test's `served_equals_eager`. If they
-    aren't, a steering experiment runs all its conditions, the unsteered ones included, on
-    the eager engine.
+  - The episodes ran compiled (torch.compile, CUDA graphs) on vLLM's default model runner.
+    vllm-lens runs eager on the V1 runner (it sets `VLLM_USE_V2_MODEL_RUNNER=0`; its hooks
+    read the V1 runner's internals), and the stock-eager baseline uses the same runner.
+    Whether the greedy tokens are the same is the smoke test's `served_equals_eager`. If
+    they aren't, a steering experiment runs all its conditions, the unsteered ones
+    included, on the lens engine's settings.
   - The plugin loads into every vLLM process of its environment, so it gets a venv of its
     own, apart from serve.sh's install.
 
@@ -527,9 +529,9 @@ HF model.
 | --- | --- | --- |
 | install | vLLM 0.32.0 and vllm-lens 1.3.0 (no dependencies), zstandard, kernels, accelerate, flash-linear-attention, in `/content/interp-venv` (Python 3.12) | 3 |
 | download | Both models, unless serve.sh's copies are in `/content/models` | 5 (0) |
-| `<model>-stock-eager` | Greedy tokens of two fixed prompts on stock vLLM (plugin off), the lens steps' settings, each prompt twice | agent 3, simulator 4 |
+| `<model>-stock-eager` | Greedy tokens of two fixed prompts on stock vLLM (plugin off), with the lens steps' settings and model runner, each prompt twice | agent 3, simulator 4 |
 | `<model>-lens` | (i) The vector file on the FP8 weights (texts, pairs and layer rule of `build_vectors.py`; layers agent 36–48, simulator 22–32). (ii) Greedy tokens before the hooks are installed, then unsteered, with zero additions and with an alpha-0 spec. (iii) A steer at one layer against its delta, the dose curve with random and unrelated controls, samples. (iv) Prompt log-probs | agent 8, simulator 7 |
-| `<model>-stock-served` | The same prompts with vllm serve's settings (compiled, CUDA graphs, prefix caching) | agent 5, simulator 6 |
+| `<model>-stock-served` | The same prompts with vllm serve's settings (compiled, CUDA graphs, prefix caching, the default runner) | agent 5, simulator 6 |
 | `agent-hf` | The agent's FP8 checkpoint on transformers: alpha 0 against `model.generate`, activations against vLLM's on the same tokens, a steer against its delta | 8 |
 | report | `checks.json` | <1 |
 
