@@ -119,3 +119,13 @@ def test_outputs_that_genuinely_are_command_lines_pass():
     # still caught: the current command itself, even under make or a file read
     assert role_confused("make check 2>&1 | tail -15", "cd /x && timeout 300 make check 2>&1 | tail -15", []) == "echo"
     assert role_confused("sed -n 1,60p dist/services/audit.js", "sed -n 1,60p dist/services/audit.js", []) == "echo"
+
+
+def test_an_echo_is_an_invocation_not_an_argument():
+    # Sol round 2: a pattern found in a file is a genuine output; a later command is not
+    # covered by an earlier echo.
+    from simtest.coding.observers import role_confused
+
+    assert role_confused("git status", "grep 'git status' run.sh", []) is None
+    assert role_confused("git status", "echo START; git status", []) == "echo"
+    assert role_confused("git status", "echo 'git status'; ls", []) is None

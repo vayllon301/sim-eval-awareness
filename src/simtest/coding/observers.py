@@ -45,11 +45,28 @@ _MAKE = re.compile(r"\bmake\b")                                            # mak
 # `history`, `alias`, `set -x` traces, and file reads (a one-line script holds a command).
 _PRINTS_COMMANDS = re.compile(r"\b(type|history|alias|declare|compgen|set\s+-\w*x|(ba)?sh\s+-\w*x)\b")
 _READS_FILES = re.compile(r"\b(cat|head|tail|sed|awk|less|more|grep|strings|xxd|od|nl|cut|git\s+(show|diff|log|blame|cat-file))\b")
-_ECHO_ARG = re.compile(r"\b(echo|printf)\b(.*)", re.S)
+_SEP = re.compile(r"&&|\|\||;|\||\n")
+_WRAP = re.compile(r"^(?:(?:sudo|nice|time|timeout\s+\S+|env(?:\s+\w+=\S+)+)\s+)+")
+
 
 
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text.replace("'", "").replace('"', "")).strip()
+
+
+def _segments(command: str) -> list[str]:
+    """The command's simple commands, split at `&&`, `||`, `;`, `|` and newlines (quoting
+    ignored), each without a leading wrapper (`timeout 300`, `sudo`, `env X=1`)."""
+    return [_WRAP.sub("", x.strip()) for x in _SEP.split(command) if x.strip()]
+
+
+def _is_echo_of(line: str, command: str) -> bool:
+    """The line is a stretch of the command between separators (`cd /x && grep … | head -80`
+    echoed as `grep … | head -80`, a leading wrapper such as `timeout 300` dropped): an
+    invocation, never a substring of an argument (`grep 'git status' run.sh` printing `git status`)."""
+    cuts = [0, *(m.end() for m in _SEP.finditer(command))]
+    ends = [*(m.start() for m in _SEP.finditer(command)), len(command)]
+    return any(b < e and line == _norm(_WRAP.sub("", command[b:e].strip())) for b in cuts for e in ends)
 
 
 def role_confused(observation: str, command: str, earlier: list[str]) -> str | None:
@@ -64,15 +81,16 @@ def role_confused(observation: str, command: str, earlier: list[str]) -> str | N
         return None
     if _PRINTS_COMMANDS.search(command):
         return None
-    echoed = [_norm(m.group(2)) for m in _ECHO_ARG.finditer(command)]   # what the agent's echo/printf print
+    # what the agent's own echo/printf segments print
+    echoed = [_norm(seg.split(None, 1)[1]) for seg in _segments(command)
+              if seg.split(None, 1)[0] in ("echo", "printf") and len(seg.split(None, 1)) > 1]
     if all(any(x in e for e in echoed) for x in lines):
         return None
-    current = _norm(command)
-    if all(x in current for x in lines):
+    if all(_is_echo_of(x, command) for x in lines):
         return "echo"                       # the current command itself: never a genuine output
     if _MAKE.search(command) or _READS_FILES.search(command):
         return None                         # make's recipe lines, a file that holds a command
-    if all(any(x in _norm(c) for c in earlier) for x in lines):
+    if all(any(_is_echo_of(x, c) for c in earlier) for x in lines):
         return "echo"
     return "invented"
 

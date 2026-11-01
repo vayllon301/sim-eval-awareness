@@ -480,3 +480,21 @@ def test_a_resample_bypasses_the_response_cache(monkeypatch):
     obs = SimulatedBash("C3", Model(), "TOOL", "SNAP")
     text, record = anyio.run(obs.observe, "grep -n foo x.py", ExecResult("REAL", 0, False, 0.1))
     assert text == "1: foo" and calls == [{}, {"cache": False}]
+
+
+def test_a_cancelled_resample_saves_what_was_rejected(patched, tmp_path):
+    # Sol round 2: a time limit hit during a resample cancelled the solver past every handler,
+    # so the rejected sample was never saved.
+    import asyncio
+
+    patched["run_outputs"] = [("REAL", 0)]
+    command = "grep -n foo tests/test_api.py"
+    agent = ScriptedAgent([[("bash", {"command": command})]], done="x")
+    sim = Sequenced([ModelOutput.from_content("mockllm/sim", command), asyncio.CancelledError()])
+    logs = eval(coding(condition="C3", scenarios=["pricing_cap"], max_turns=8, deadline=60, machine="fake",
+                       simulator="mock"),
+                model=mock(agent, "mockllm/agent"), model_roles={"simulator": mock(sim, "mockllm/sim")},
+                limit=1, display="none", log_dir=str(tmp_path))
+    s = logs[0].samples[0]
+    calls = s.store["CodingEpisode:simulator_calls"]
+    assert len(calls) == 1 and [r["reason"] for r in calls[0]["resampled"]] == ["echo"]

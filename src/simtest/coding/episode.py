@@ -222,6 +222,9 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
         except Exception as exc:
             save("error", repr(exc))
             raise
+        except BaseException as exc:   # cancelled (a time limit, an interrupt): keep what was recorded
+            save("error", repr(exc))
+            raise
         finally:
             if started:
                 await stop_machine(machine)
