@@ -56,6 +56,7 @@ ENGINE = {"enforce_eager": True, "enable_prefix_caching": False, "max_model_len"
 def _api() -> SimpleNamespace:
     """vLLM, vllm-lens and torch, imported on first use (the offline tests swap in fakes)."""
     import torch
+    from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
     from vllm.inputs import TokensPrompt
     from vllm_lens import SteeringVector
@@ -63,7 +64,8 @@ def _api() -> SimpleNamespace:
     return SimpleNamespace(LLM=LLM, SamplingParams=SamplingParams, TokensPrompt=TokensPrompt,
                            SteeringVector=SteeringVector, tensor=lambda a: torch.from_numpy(np.ascontiguousarray(a)),
                            numpy=lambda t: t.float().cpu().numpy(),
-                           device=lambda: torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu")
+                           device=lambda: torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
+                           tokenizer=lambda path: AutoTokenizer.from_pretrained(str(path)))
 
 
 def lens_disabled() -> bool:
@@ -104,11 +106,7 @@ class VLLMBackend:
         cfg = json.loads((self.path / "config.json").read_text())
         text = cfg.get("text_config", cfg)
         self.n_layers, self.d_model = int(text["num_hidden_layers"]), int(text["hidden_size"])
-        if tokenizer is None:
-            from transformers import AutoTokenizer
-
-            tokenizer = AutoTokenizer.from_pretrained(str(self.path))
-        self.tokenizer = tokenizer
+        self.tokenizer = tokenizer = tokenizer if tokenizer is not None else self.api.tokenizer(self.path)
         self.eos_token_ids = eos_ids(self.path, tokenizer)
         self.llm = llm if llm is not None else self.api.LLM(model=str(self.path), quantization=quantization, **self.engine)
         label = f"vllm:{quantization}" if quantization else None

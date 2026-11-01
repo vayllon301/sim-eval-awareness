@@ -14,62 +14,17 @@ import pytest
 from simtest.interp import directions as D
 from simtest.interp import vllm_backend as V
 from simtest.interp.backend import Add, encode
-from simtest.interp.fake import FakeBackend
+from simtest.interp.fake import FakeBackend, FakeLensLLM, fake_vllm_api
 from simtest.interp.steering import SteeringSpec, dose_curve, resolve
 from simtest.interp.vectors import VectorSet
 
 D_MODEL, N_LAYERS = 16, 6
 
 
-class SP:
-    def __init__(self, max_tokens=16, temperature=1.0, extra_args=None, prompt_logprobs=None, stop_token_ids=None):
-        self.max_tokens, self.temperature, self.extra_args = max_tokens, temperature, extra_args
-        self.prompt_logprobs, self.stop_token_ids = prompt_logprobs, stop_token_ids
-
-
-class SV:
-    def __init__(self, activations, layer_indices, scale=1.0, norm_match=False, position_indices=None):
-        assert len(activations) == len(layer_indices)
-        self.activations, self.layer_indices, self.scale = activations, layer_indices, scale
-        self.norm_match, self.position_indices = norm_match, position_indices
-
-
-class FakeLLM:
-    """vllm-lens on the fake model: steering vectors added after their layers at every
-    position, the residual stream captured after the additions, layers in order."""
-
-    def __init__(self, model: FakeBackend, shape_bug=False):
-        self.m, self.calls, self.shape_bug = model, [], shape_bug
-
-    def generate(self, prompts, sp, use_tqdm=True):
-        self.calls.append((prompts, sp))
-        outs = []
-        for p in prompts:
-            ids = p["prompt_token_ids"]
-            extra = dict(sp.extra_args or {})
-            adds = []
-            for sv in extra.get("apply_steering_vectors", []):
-                assert not sv.norm_match and sv.position_indices is None
-                adds += [Add(L, np.asarray(sv.activations[i], np.float32) * sv.scale) for i, L in enumerate(sv.layer_indices)]
-            out = SimpleNamespace(prompt_token_ids=ids, activations=None, prompt_logprobs=None)
-            layers = extra.get("output_residual_stream")
-            if layers is not None:
-                acts = self.m.activations(ids, layers, steer=adds)
-                rs = np.stack([acts[L] for L in sorted(layers)])
-                out.activations = {"residual_stream": rs[:, :-1] if self.shape_bug else rs}
-            if sp.prompt_logprobs is not None:
-                lp = -self.m.token_losses(ids)
-                out.prompt_logprobs = [None] + [{t: SimpleNamespace(logprob=float(v)), 255: None} for t, v in zip(ids[1:], lp)]
-            out.outputs = [SimpleNamespace(token_ids=self.m.generate(ids, max_tokens=sp.max_tokens, steer=adds))]
-            outs.append(out)
-        return outs
-
-
 @pytest.fixture(autouse=True)
 def fake_api(monkeypatch):
-    """vLLM's and vllm-lens's classes, as plain Python."""
-    api = SimpleNamespace(LLM=None, SamplingParams=SP, TokensPrompt=dict, SteeringVector=SV, tensor=lambda a: a,
-                          numpy=lambda t: np.asarray(t), device=lambda: "fake")
+    """vLLM's and vllm-lens's classes, as plain Python on the fake model."""
+    api = fake_vllm_api()
     monkeypatch.setattr(V, "_api", lambda: api)
     monkeypatch.delenv("VLLM_LENS_DISABLE", raising=False)
     return api
@@ -82,9 +37,9 @@ def model_dir(tmp_path):
     return tmp_path
 
 
-def backend(tmp_path, **kw):
+def backend(tmp_path):
     fake = FakeBackend()
-    llm = FakeLLM(fake, **kw)
+    llm = FakeLensLLM(fake)
     return V.VLLMBackend(model_dir(tmp_path), tokenizer=fake.tokenizer, llm=llm), fake, llm
 
 
@@ -127,7 +82,7 @@ def test_engine_settings_and_info(tmp_path, monkeypatch):
     assert b.n_layers == N_LAYERS and b.d_model == D_MODEL and b.eos_token_ids == frozenset({0, 7})
     assert b.info["engine"] == "vllm" and b.info["lens"] == "enabled" and b.info["fingerprint"].startswith("fp1:")
     monkeypatch.setenv("VLLM_LENS_DISABLE", "1")
-    sim = V.VLLMBackend(tmp_path, quantization="fp8", tokenizer=FakeBackend().tokenizer, llm=FakeLLM(FakeBackend()))
+    sim = V.VLLMBackend(tmp_path, quantization="fp8")  # the engine and tokenizer from the (fake) API
     assert sim.info["fingerprint"] == b.info["fingerprint"] + "+vllm:fp8" and sim.info["lens"] == "disabled"
     assert sim.info["quantization"].startswith("vLLM fp8 at load") and sim.info["engine_settings"]["quantization"] == "fp8"
 
@@ -169,8 +124,16 @@ def test_token_losses_from_prompt_logprobs(tmp_path):
 
 
 def test_wrong_or_missing_activations_are_errors(tmp_path):
-    b, _, _ = backend(tmp_path, shape_bug=True)
+    b, _, llm = backend(tmp_path)
     ids = encode(b.tokenizer, "short text here")
+    real = llm.generate
+
+    def short(prompts, sp, use_tqdm=True):  # one position missing
+        out = real(prompts, sp)
+        out[0].activations["residual_stream"] = out[0].activations["residual_stream"][:, :-1]
+        return out
+
+    b.llm.generate = short
     with pytest.raises(RuntimeError, match="shape"):
         b.activations(ids, [1])
     b.llm.generate = lambda prompts, sp, use_tqdm=True: [SimpleNamespace(activations=None)]

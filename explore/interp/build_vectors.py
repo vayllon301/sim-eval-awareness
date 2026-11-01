@@ -16,11 +16,8 @@ Run (free, local; one model at a time, LM Studio unloaded):
 import argparse, json, sys, time
 from pathlib import Path
 
-from simtest.interp.build import build_all, load_rows, slug
+from simtest.interp.build import CONCEPTS, build_all, load_rows
 from simtest.interp.mlx_backend import MLXBackend
-
-CONCEPTS = ["A baker prepares for the busiest morning of the year", "A family drives across the country to a new home",
-            "A neighbor starts a renovation project"]  # training premises used as unrelated-concept controls
 
 
 def main():

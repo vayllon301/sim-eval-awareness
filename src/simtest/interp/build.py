@@ -39,6 +39,9 @@ METHOD = {"emotions": "emotion-diffmeans-v1: story means from token 50, minus th
           "train_awareness": "contrast-v1, training twin (after Aranguri): mean(train) - mean(real) at the colon ending "
                              "each prompt, rendered as a user message with the chat template, unit length, no PC "
                              "projection; the eval pairs with the evaluation side reworded as training"}
+# training premises used as unrelated-concept controls (topic:baker-prepares, ...)
+CONCEPTS = ["A baker prepares for the busiest morning of the year", "A family drives across the country to a new home",
+            "A neighbor starts a renovation project"]
 # contrast vectors: the positive side's key in the pairs file, the dataset name, the sign
 CONTRASTS = {"eval_awareness": ("eval", "eval_pairs", "positive = evaluation"),
              "train_awareness": ("train", "train_pairs", "positive = training")}

@@ -6,6 +6,8 @@ The tokenizer is character level (token ID = code point, capped at 255) with a c
 template laid out like Qwen's (system turn with a tools block, <think> blocks kept for
 every assistant turn, <tool_call> blocks with one <parameter=...> per argument, tool
 outputs grouped into one user turn as <tool_response> blocks, contents trimmed).
+
+`fake_vllm_api` plays vLLM with vllm-lens on the fake model, for vllm_backend's tests.
 """
 
 from __future__ import annotations
@@ -137,3 +139,66 @@ class FakeBackend:
                 break
             seq.append(t)
         return new
+
+
+# ---------------------------------------------------------------- vLLM with vllm-lens, faked
+
+
+class FakeSamplingParams:
+    def __init__(self, max_tokens=16, temperature=1.0, extra_args=None, prompt_logprobs=None, stop_token_ids=None):
+        self.max_tokens, self.temperature, self.extra_args = max_tokens, temperature, extra_args
+        self.prompt_logprobs, self.stop_token_ids = prompt_logprobs, stop_token_ids
+
+
+class FakeSteeringVector:
+    def __init__(self, activations, layer_indices, scale=1.0, norm_match=False, position_indices=None):
+        if len(activations) != len(layer_indices):
+            raise ValueError("activations dim 0 must match len(layer_indices)")
+        self.activations, self.layer_indices, self.scale = activations, layer_indices, scale
+        self.norm_match, self.position_indices = norm_match, position_indices
+
+
+class FakeLensLLM:
+    """vLLM with vllm-lens on the fake model, for vllm_backend's offline tests: steering
+    vectors added after their layers at every position, the residual stream captured after
+    the additions (layers in order), prompt log-probs as vLLM returns them. Records every
+    call."""
+
+    def __init__(self, model: FakeBackend | None = None):
+        self.m, self.calls = model or FakeBackend(), []
+
+    def generate(self, prompts, sp, use_tqdm=True):
+        from types import SimpleNamespace
+
+        self.calls.append((prompts, sp))
+        outs = []
+        for p in prompts:
+            ids = p["prompt_token_ids"]
+            extra = dict(sp.extra_args or {})
+            adds = []
+            for sv in extra.get("apply_steering_vectors", []):
+                if sv.norm_match or sv.position_indices is not None:
+                    raise ValueError("the fake applies plain additions at every position only")
+                adds += [Add(L, np.asarray(sv.activations[i], np.float32) * sv.scale) for i, L in enumerate(sv.layer_indices)]
+            out = SimpleNamespace(prompt_token_ids=ids, activations=None, prompt_logprobs=None)
+            if extra.get("output_residual_stream") is not None:
+                layers = sorted(extra["output_residual_stream"])
+                acts = self.m.activations(ids, layers, steer=adds)
+                out.activations = {"residual_stream": np.stack([acts[L] for L in layers])}
+            if sp.prompt_logprobs is not None:
+                lp = -self.m.token_losses(ids)
+                out.prompt_logprobs = [None] + [{t: SimpleNamespace(logprob=float(v))} for t, v in zip(ids[1:], lp)]
+            out.outputs = [SimpleNamespace(token_ids=self.m.generate(ids, max_tokens=sp.max_tokens, steer=adds))]
+            outs.append(out)
+        return outs
+
+
+def fake_vllm_api(model: FakeBackend | None = None):
+    """What vllm_backend._api returns, on the fake model and tokenizer (no vLLM, no torch).
+    Every engine built from it shares `model`."""
+    from types import SimpleNamespace
+
+    model = model or FakeBackend()
+    return SimpleNamespace(LLM=lambda **engine: FakeLensLLM(model), SamplingParams=FakeSamplingParams, TokensPrompt=dict,
+                           SteeringVector=FakeSteeringVector, tensor=lambda a: a, numpy=lambda t: np.asarray(t),
+                           device=lambda: "fake", tokenizer=lambda path: FakeTokenizer())
