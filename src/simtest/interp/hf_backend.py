@@ -26,14 +26,13 @@ from __future__ import annotations
 import copy
 import gc
 from contextlib import contextmanager
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Mapping, Sequence
 
 import numpy as np
 
 from .backend import Add, Replace, check_adds, check_layers
-from .meta import hf_revision, load_fingerprint, quantization, tokenizer_info
+from .meta import hf_revision, load_fingerprint, quantization, tokenizer_info, versions
 
 
 class _Stop(Exception):
@@ -64,16 +63,6 @@ def eos_ids(model, tokenizer) -> frozenset[int]:
         if v is not None:
             out |= {int(i) for i in (v if isinstance(v, (list, tuple, set, frozenset)) else [v])}
     return frozenset(out or (int(i) for i in getattr(tokenizer, "eos_token_ids", ())))
-
-
-def versions(*pkgs: str) -> dict[str, str | None]:
-    out = {}
-    for p in pkgs:
-        try:
-            out[p] = version(p)
-        except PackageNotFoundError:
-            out[p] = None
-    return out
 
 
 class HFBackend:
