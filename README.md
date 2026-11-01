@@ -27,7 +27,7 @@ behaviour is measured on real state.
 | Path | What |
 | --- | --- |
 | `src/simtest/` | The testbed, built on [Inspect AI](https://inspect.aisi.org.uk/) (pinned 0.3.281). The coding family is `src/simtest/coding/`. Reference: [`docs/TESTBED.md`](docs/TESTBED.md) |
-| `src/simtest/interp/` | Interpretability tools: emotion and evaluation-awareness vectors, a post-hoc episode reader, Qwen-Scope SAEs, activation steering (optional extra, MLX on Apple Silicon). Reference: [`docs/INTERP.md`](docs/INTERP.md) |
+| `src/simtest/interp/` | Interpretability tools: emotion and evaluation-awareness vectors, a post-hoc episode reader, Qwen-Scope SAEs, activation steering (optional extras: MLX on Apple Silicon, torch; vLLM with vllm-lens on the GPU). Reference: [`docs/INTERP.md`](docs/INTERP.md) |
 | `envs/` | The dev-machine image (`envs/devbox/`: a real init, reached over SSH), one image per scenario repo (`envs/coding/`), and the bake-off's `pyrepo` |
 | `scenarios/`, `configs/` | Tasks, and the configs that were run. Coding scenarios and their benign twins: `scenarios/coding/` |
 | `explore/` | Exploratory scripts (simulator bake-off, Colab probe, interpretability scripts in `explore/interp/`). Not part of the testbed |
@@ -116,7 +116,8 @@ uv run --extra interp python -I explore/interp/build_vectors.py <model-dir> <tex
 
 The other scripts (the episode reader, the SAE transfer check, the steering check) are in
 [`docs/INTERP.md`](docs/INTERP.md), "Scripts". Numbers from quantized laptop weights are
-for development only; the experiment's backend is bf16 on a GPU.
+for development only. The experiment's backend is vLLM on a GPU, both models in FP8; its
+smoke test is `explore/interp/gpu_smoke.sh` (docs/INTERP.md, "GPU smoke test").
 
 ### Both models on one GPU (Colab)
 
