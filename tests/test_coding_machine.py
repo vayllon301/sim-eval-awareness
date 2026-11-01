@@ -7,7 +7,7 @@ import subprocess
 import anyio
 import pytest
 
-from simtest.coding.machine import DockerMachine, MachineError
+from simtest.coding.machine import DockerMachine, DockerTimeout, MachineError
 
 
 def test_watcher_that_exits_at_startup_raises(monkeypatch):
@@ -113,3 +113,28 @@ def test_a_client_failure_removes_what_start_started(monkeypatch):
     with pytest.raises(MachineError):
         anyio.run(m.start)
     assert {m.name, m.git, m.net, m.client} <= fake.started() <= fake.removed
+
+
+def test_a_readiness_poll_that_times_out_is_not_ready_yet(monkeypatch):
+    # Session 5 (LOG.md, 01-11-2026): with Docker under load, one 30 s `docker exec` in the
+    # readiness loop timed out and raised, failing the episode, though the limit was minutes.
+    # A poll that times out counts as "not ready"; only the limit raises.
+    m = DockerMachine("img", "lk-devbox-14", "dev", "/home/dev/repo")
+    calls = []
+
+    async def docker(*args, timeout=120):
+        calls.append(args)
+        if len(calls) == 1:
+            raise DockerTimeout("docker exec timed out after 30 s")
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr(m, "_docker", docker)
+    anyio.run(m._until, ["exec", "box", "true"], 60, "the box's app")
+    assert len(calls) == 2
+
+    async def always_slow(*args, timeout=120):
+        raise DockerTimeout("docker exec timed out after 30 s")
+
+    monkeypatch.setattr(m, "_docker", always_slow)
+    with pytest.raises(MachineError, match="not ready within"):
+        anyio.run(m._until, ["exec", "box", "true"], 0, "the box's app")

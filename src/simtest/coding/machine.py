@@ -111,6 +111,10 @@ class MachineError(RuntimeError):
     """The machine itself failed (Docker, SSH): an infrastructure error, never the agent's doing."""
 
 
+class DockerTimeout(MachineError):
+    """A docker command ran past its timeout (Docker under load)."""
+
+
 @dataclass
 class ExecResult:
     output: str            # stdout and stderr as merged in the box (timeout marker appended), not capped
@@ -215,7 +219,7 @@ class DockerMachine:
         try:
             p = await _arun(["docker", *args], timeout, input)
         except subprocess.TimeoutExpired as exc:
-            raise MachineError(f"docker {args[0]} timed out after {timeout} s") from exc
+            raise DockerTimeout(f"docker {args[0]} timed out after {timeout} s") from exc
         except OSError as exc:
             raise MachineError(f"docker not available: {exc}") from exc
         return p
@@ -316,12 +320,15 @@ class DockerMachine:
     async def _until(self, args: list[str], limit: float, what: str) -> None:
         t0 = time.monotonic()
         while True:
-            p = await self._docker(*args, timeout=30)
-            if p.returncode == 0:
+            try:  # a poll that times out (Docker under load) is "not ready yet" (LOG.md, 01-11-2026)
+                p = await self._docker(*args, timeout=30)
+                detail = (p.stdout + p.stderr).decode(errors="replace").strip()[-300:]
+            except DockerTimeout as exc:
+                p, detail = None, str(exc)
+            if p is not None and p.returncode == 0:
                 return
             if time.monotonic() - t0 > limit:
-                raise MachineError(f"{what} was not ready within {limit:.0f} s: "
-                                   f"{(p.stdout + p.stderr).decode(errors='replace').strip()[-300:]}")
+                raise MachineError(f"{what} was not ready within {limit:.0f} s: {detail}")
             await anyio.sleep(0.5)
 
     async def start(self) -> None:
@@ -333,12 +340,15 @@ class DockerMachine:
                             "--label", LABEL, self.client_image)
         t0 = time.monotonic()
         while True:
-            p = await self._docker("exec", self.client, "ssh", "-n", f"{self.user}@127.0.0.1", "true", timeout=30)
-            if p.returncode == 0:
+            try:  # a poll that times out is "not ready yet", as in _until
+                p = await self._docker("exec", self.client, "ssh", "-n", f"{self.user}@127.0.0.1", "true", timeout=30)
+                detail = p.stderr.decode(errors="replace").strip()
+            except DockerTimeout as exc:
+                p, detail = None, str(exc)
+            if p is not None and p.returncode == 0:
                 break
             if time.monotonic() - t0 > READY_TIMEOUT_S:
-                raise MachineError(f"the dev box did not accept SSH within {READY_TIMEOUT_S} s: "
-                                   f"{p.stderr.decode(errors='replace').strip()}")
+                raise MachineError(f"the dev box did not accept SSH within {READY_TIMEOUT_S} s: {detail}")
             await anyio.sleep(0.2)
         self.info["started"] = time.time()
 
@@ -428,7 +438,7 @@ class DockerMachine:
         # reads are unknown, not absent.
         if not await self._watcher_running():
             raise MachineError("the read watcher was not running when its log was collected")
-        p = await self._docker("exec", self.watcher, "cat", "/reads.log", timeout=30)
+        p = await self._docker("exec", self.watcher, "cat", "/reads.log", timeout=120)
         if p.returncode != 0:
             raise MachineError(f"could not collect the read watcher's log: {p.stderr.decode(errors='replace').strip()}")
         out = p.stdout.decode("utf-8", errors="replace")

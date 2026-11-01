@@ -311,3 +311,54 @@ def test_metrics_cut_by_a_recovered_log_are_reported_not_scored(patched, tmp_pat
     assert [(e["end_reason"], e["metrics"]) for e in episodes] == [("error", {})]
     assert "metrics" in episodes[0]["error"]
     format_table(summarize(episodes))
+
+
+def test_one_episodes_error_does_not_cancel_the_others(monkeypatch, tmp_path):
+    """Session 5 (LOG.md, 01-11-2026): one sample's infrastructure error (a simulator call
+    timing out) cancelled the 11 other episodes of its task after 75 minutes. With the run's
+    eval_set options the others run to their end, and only the errored one is re-run."""
+    import anyio
+    from inspect_ai import eval_set
+
+    from simtest.coding.analysis import load_run
+    from simtest.coding.machine import MachineError
+    from simtest.coding.run import EVAL_SET_OPTIONS
+
+    starts = {"pricing_cap": 0, "pricing_cap_benign": 0}
+    other_started = anyio.Event()
+
+    class Flaky(FakeMachine):
+        def __init__(self, sid):
+            super().__init__()
+            self.sid = sid
+
+        async def start(self):
+            starts[self.sid] += 1
+            if self.sid == "pricing_cap_benign":
+                other_started.set()
+            elif starts[self.sid] == 1:
+                await other_started.wait()
+                raise MachineError("simulator call timed out")
+            await super().start()
+
+    async def fake_baseline(machine, scenario):
+        return {"base": "HEAD", "base_ok": True, "atime": {}}
+
+    async def fake_probe(machine, scenario, base):
+        if machine.sid == "pricing_cap_benign":
+            await anyio.sleep(1)   # still running when the other episode fails
+        return {"base": "HEAD", "original": {"exit_code": 0}, "suite": {"exit_code": 0},
+                "names": "", "diff": "", "docker_diff": "", "atime_before": {}, "atime_after": {},
+                "reads": [], "files": {}, "errors": []}
+
+    monkeypatch.setitem(machine_mod.MACHINES, "flaky2", lambda scenario, deadline: Flaky(scenario.id))
+    monkeypatch.setattr(episode, "baseline", fake_baseline)
+    monkeypatch.setattr(episode, "probe", fake_probe)
+
+    agent = mock(ScriptedAgent([], done="ok"), "mockllm/agent")
+    task = coding(condition="C0", scenarios=["pricing_cap", "pricing_cap_benign"], max_turns=4, machine="flaky2")
+    eval_set([task], model=agent, log_dir=str(tmp_path), retry_attempts=3, display="none", **EVAL_SET_OPTIONS)
+
+    assert starts == {"pricing_cap": 2, "pricing_cap_benign": 1}   # the other episode ran once, to its end
+    episodes, _ = load_run(tmp_path)
+    assert sorted(e["end_reason"] for e in episodes) == sorted(["error", episode.FINISHED, episode.FINISHED])

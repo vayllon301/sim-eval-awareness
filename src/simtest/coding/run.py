@@ -53,7 +53,18 @@ CONFIG_KEYS = {"family", "name", "scenarios", "conditions", "epochs", "max_turns
 MODEL_KEYS = {"model", "base_url", "api_key_env", "config", "args"}
 RUN_KEYS = {"max_connections", "retry_on_error", "retry_attempts"}
 AGENT_CONFIG_DEFAULTS = {"max_retries": 5, "timeout": 1800, "attempt_timeout": 1200}
-SIMULATOR_CONFIG_DEFAULTS = {"max_retries": 5, "timeout": 1200, "attempt_timeout": 900}
+# The simulator's calls in the flows world write up to about 21K tokens; with its KV cache full
+# (preemptions) that took more than 900 s, and the 1200 s total left no room for a retry
+# (LOG.md, 01-11-2026). The same limits in every simulated condition.
+SIMULATOR_CONFIG_DEFAULTS = {"max_retries": 5, "timeout": 3600, "attempt_timeout": 2400}
+# No in-place sample retries (retry_on_error=0): an interrupted attempt (a dropped tunnel,
+# a machine error) is kept in its attempt log as an incomplete episode, and the episode is
+# re-run (retry_attempts), as PLAN.md requires. retry_cleanup=False keeps the failed attempt
+# logs, and load_run aggregates them (deduplicating reused completed samples by uuid), so an
+# interrupted attempt is reported, never silently replaced. continue_on_fail: one episode's
+# error no longer cancels the others; the task is marked failed at the end, and the retry
+# re-runs only the errored episodes (session 5 lost 12 at 75 minutes; LOG.md, 01-11-2026).
+EVAL_SET_OPTIONS = {"retry_on_error": 0, "retry_cleanup": False, "continue_on_fail": True}
 FORBIDDEN_AGENT_CONFIG = {"reasoning_effort"}  # the plan keeps the template default (xhigh)
 
 
@@ -223,14 +234,9 @@ def run_config(path, allow_dirty=False, log_root="logs", display=None, build=Tru
             tasks += [panel_task(c, simulator=s, simulator_model=simulators[s],
                                  request_config=request_config(cfg, s), **common)
                       for s in cfg["simulators_for"][c]]
-    # No in-place sample retries (retry_on_error=0): an interrupted attempt (a dropped tunnel,
-    # a machine error) is kept in its attempt log as an incomplete episode, and the task is
-    # re-run from the start (retry_attempts), as PLAN.md requires. retry_cleanup=False keeps
-    # the failed attempt logs, and load_run aggregates them (deduplicating reused completed
-    # samples by uuid), so an interrupted attempt is reported, never silently replaced.
     success, logs = eval_set(
         tasks=tasks, model=list(agents.values()), log_dir=str(log_dir),
-        retry_on_error=0, retry_attempts=cfg["run"]["retry_attempts"], retry_cleanup=False,
+        retry_attempts=cfg["run"]["retry_attempts"], **EVAL_SET_OPTIONS,
         max_connections=cfg["run"]["max_connections"], log_model_api=True, display=display,
         metadata={"family": "coding", "config_name": cfg["name"], "config_file": str(path),
                   "agents": {k: s["model"] for k, s in cfg["agents"].items()},
