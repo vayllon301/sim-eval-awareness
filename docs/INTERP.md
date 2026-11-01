@@ -6,20 +6,25 @@ with a logit monitor, Qwen-Scope SAEs and activation steering. The testbed itsel
 [`TESTBED.md`](TESTBED.md).
 
 **Status.** Built and tested on the laptop with MLX. The experiment's reference backend is
-bf16 on a GPU (Colab), and its torch and steering-engine backends come later (see
-[Left for the GPU](#left-for-the-gpu)). Numbers from local 8-bit or 4-bit weights are for
-development only and are never evidence: every condition of an experiment runs on one
-backend (same weights, quantization, engine and chat template).
+vLLM 0.32 on the Colab G4, with both models in FP8 in every phase (LOG.md, 28-10-2026). Its
+backend reads and steers through vllm-lens, and a transformers backend cross-checks the
+agent ([GPU backends](#gpu-backends)). Both are tested offline; the
+[GPU smoke test](#gpu-smoke-test) has not run yet. Numbers from local 8-bit or 4-bit
+weights are for development only and are never evidence: every condition of an experiment
+runs on one backend (same weights, quantization, engine and chat template).
 
 ## Install
 
 ```bash
 uv sync --extra interp      # MLX and mlx-lm (Apple Silicon), safetensors, transformers
 uv run pytest -q            # the interp tests run offline, without the extra
+uv run --extra torch pytest -q tests/test_interp_hf.py   # the torch backend, on tiny random models (CPU)
 ```
 
-Nothing in the testbed imports `simtest.interp`, and importing it doesn't import MLX
-(only `simtest.interp.mlx_backend` does).
+The GPU install (vLLM 0.32.0, vllm-lens 1.3.0 and what the HF step needs, in a venv of its
+own) is in `explore/interp/gpu_smoke.sh`. Nothing in the testbed imports `simtest.interp`,
+and importing it doesn't import MLX, torch or vLLM: each backend imports its engine when
+it is built.
 
 ## Layout
 
@@ -27,7 +32,9 @@ Nothing in the testbed imports `simtest.interp`, and importing it doesn't import
 | --- | --- |
 | `src/simtest/interp/backend.py` | The backend interface and its conventions |
 | `src/simtest/interp/mlx_backend.py` | The interface on MLX (laptop) |
-| `src/simtest/interp/fake.py` | A tiny numpy model and character tokenizer for offline tests |
+| `src/simtest/interp/vllm_backend.py` | The interface on vLLM with vllm-lens (GPU, the reference backend), and the spec-to-`SteeringVector` adapter |
+| `src/simtest/interp/hf_backend.py` | The interface on PyTorch with transformers (GPU cross-check and fallback for the agent; splicing; cached continuation log-probs) |
+| `src/simtest/interp/fake.py` | A tiny numpy model and character tokenizer for offline tests, and a fake vLLM engine with vllm-lens's semantics |
 | `src/simtest/interp/directions.py` | Difference of means, neutral principal components, accuracy, random controls |
 | `src/simtest/interp/build.py` | Builds a vector file from texts and contrast pairs, with validation |
 | `src/simtest/interp/vectors.py` | The vector file format |
@@ -37,7 +44,8 @@ Nothing in the testbed imports `simtest.interp`, and importing it doesn't import
 | `src/simtest/interp/sae.py` | TopK SAEs: a torch-free `.pt` reader, encode, decode, FVU |
 | `src/simtest/interp/meta.py` | Weights fingerprints, hashes, versions |
 | `explore/interp/` | Command-line scripts (below) and the datasets in `data/`: texts, eval and training pairs, logit-monitor phrases |
-| `tests/test_interp_*.py` | Offline tests; `test_interp_model.py` needs a local model and is skipped by default |
+| `explore/interp/gpu_smoke.{py,sh}` | The [GPU smoke test](#gpu-smoke-test) and its VM runner |
+| `tests/test_interp_*.py` | Offline tests; `test_interp_model.py` needs a local model and is skipped by default; `test_interp_hf.py` needs the torch extra |
 
 ## Backend interface
 
@@ -76,8 +84,8 @@ Conventions every backend honours:
 - **`continuation_logprobs`** (optional): the log-prob of each token of each continuation
   after one prefix, one array of shape (len(c),) per continuation, with the prefix
   computed once. The logit monitor uses it when a backend has it and otherwise calls
-  `token_losses` once per continuation. The MLX backend doesn't have it; the GPU backend
-  will, with a prefix cache.
+  `token_losses` once per continuation. The HF backend has it, with a prefix cache; the
+  MLX and vLLM backends don't.
 
 The MLX backend wraps the decoder layers it needs for the duration of a call and restores
 them after. Long sequences run in chunks with the model's own cache (as mlx-lm's prefill
@@ -85,6 +93,112 @@ does), and activations-only calls stop after the last layer needed. `generate` p
 the prompt in mlx-lm's order (all but the last token in chunks of 2048, then the last
 token alone): another order changes bf16 rounding, and greedy decoding can then flip a
 near-tie, which would look like a steering effect at strength 0.
+
+## GPU backends
+
+The reference backend is vLLM 0.32 with both models in FP8, as the episodes run
+(`explore/colab_probe/serve.sh`). The agent is the official FP8 checkpoint
+(`Qwen/Qwen3.8-27B-FP8`: 128×128 weight blocks, activations quantized per token in groups
+of 128). The simulator is bf16 weights (`Qwen/Qwen-AgentWorld-35B-A3B`) quantized by vLLM
+at load (`--quantization fp8`). Vectors, steering and readings run inside that engine, so
+they use the episodes' FP8 weights by construction.
+
+**Path per model** (sources checked on 31-10-2026, listed below):
+
+- *Agent:* vLLM with vllm-lens, the episodes' engine and kernels (CUTLASS block FP8 on the
+  G4's sm_120). transformers loads the same FP8 files (FineGrainedFP8, a Triton kernel from
+  the `kernels` hub), but with other kernels, so its numbers are close, not identical. It is
+  the cross-check and the fallback.
+- *Simulator:* vLLM with vllm-lens, the only engine with these FP8 weights.
+  - In vLLM 0.32, `--quantization fp8` on a bf16 checkpoint is the deprecated name of
+    `fp8_per_tensor`.
+  - Weights: one scale per merged projection (qkv, gate_up, `in_proj_qkvz`, `in_proj_ba`)
+    and one per expert.
+  - Activations: per token in dense layers (CUTLASS), per tensor over the whole batch in
+    the MoE (Triton).
+  - transformers quantizes each unmerged projection in 128×128 blocks, so it can't
+    reproduce those weights.
+- *A consequence for every simulator number.* The MoE's activation scale is computed over
+  the whole batch, so the simulator's output depends on what else is in the batch. The
+  episodes ran 13–16 at once; the vLLM backend sends one request at a time.
+  `fp8_per_channel` (per-token activations, the MoE included) would remove the dependence,
+  but it changes the simulator's weights for every condition: Victor's call, not made here.
+
+**vLLM backend** (`vllm_backend.py`), on vllm-lens 1.3.0 (UK AISI, MIT):
+
+- *Reading:* `output_residual_stream` captures `hidden_states + residual` after decoder
+  layer L (resid_post) at every prompt position, in bf16. vllm-lens's own tests check it
+  against transformers' `hidden_states[L + 1]`. One request, `max_tokens=1`.
+- *Steering:* `lens_steering` turns `steering.resolve`'s additions into one
+  `SteeringVector` (below). vllm-lens adds it to the layer's output before its capture, so
+  captured activations include it, as the interface requires.
+- *Settings:* eager (vllm-lens forces it) and prefix caching off. Cached blocks skip the
+  forward pass, so they would have no activations, and an unsteered request could reuse
+  steered KV. One request per call: vLLM isn't batch-invariant, and the simulator's MoE
+  scales depend on the batch. `max_num_batched_tokens` is 8192, vllm serve's default on a
+  96 GB card, so prompts are split into the same prefill chunks as the episodes'.
+- *`token_losses`* uses vLLM's prompt log-probs (the raw log-softmax). There is no
+  `replace` (an SAE splice needs a hook shipped to the worker process) and no
+  `continuation_logprobs`. vLLM skips the prefix cache for requests with prompt log-probs,
+  and batching the continuations would change the numbers, so the logit monitor falls back
+  to `token_losses`.
+- *Caveats, all checked by the smoke test:*
+  - vllm-lens 1.3.0 pins vLLM 0.30.0 and is validated only there. It goes on 0.32.0
+    without its dependencies. Every symbol it patches exists in 0.32.0, and
+    `VLLM_LENS_STRICT_COMPATIBILITY=1` makes it fail at startup if a patch doesn't apply.
+  - Its pre-hooks raise on Qwen3.5-architecture layers, which vLLM calls with keywords
+    only ([vllm-lens#52](https://github.com/UKGovernmentBEIS/vllm-lens/issues/52), reported
+    on Qwen3.8-27B-FP8). Post-hooks, which this backend uses, work: the issue says they
+    gave "values matching a bf16 HF reference within FP8 noise". The traceback it logs for
+    every layer at every forward pass is filtered out in the smoke test's venv.
+  - It logs and skips a hook that fails instead of raising, so a skipped steer looks like
+    an unsteered run. The smoke test checks that a steer moves its layer by its delta.
+  - The episodes ran compiled (torch.compile, CUDA graphs); vllm-lens runs eager. Whether
+    the greedy tokens are the same is the smoke test's `served_equals_eager`. If they
+    aren't, a steering experiment runs all its conditions, the unsteered ones included, on
+    the eager engine.
+  - The plugin loads into every vLLM process of its environment, so it gets a venv of its
+    own, apart from serve.sh's install.
+
+**HF backend** (`hf_backend.py`):
+
+- Forward hooks on `model.model.layers[L]` (resid_post), removed after each call. Readings
+  run the decoder stack without `lm_head`.
+- `generate` calls the model the way `model.generate` does (one pass over the prompt with
+  `logits_to_keep=1`, then one token at a time, with an all-ones attention mask). So
+  unhooked output is token-identical to transformers' own greedy generation.
+- `continuation_logprobs` runs the prefix once and scores each continuation from a copy of
+  its cache. `replace` works.
+- On the GPU it needs `kernels` (the FP8 kernel) and `accelerate`. The Gated DeltaNet fast
+  path needs `flash-linear-attention`; without it transformers uses its torch path.
+- Tested offline on tiny random Qwen3 and Qwen3.5-hybrid models (`tests/test_interp_hf.py`),
+  with transformers 5.21 on the laptop and with 5.19 on Python 3.12, vLLM 0.32's pins as on
+  the VM.
+
+**Fingerprints.** A backend that quantizes at load appends its scheme (`fp1:…+vllm:fp8`),
+so vectors built on the simulator's bf16 files don't steer its FP8 weights. A pre-quantized
+checkpoint has one fingerprint (the same files) on vLLM and on transformers.
+
+**EasySteer** (v0.29.0) can't be used.
+- It is a fork of vLLM 0.29.0, and its install overwrites vLLM's own files, so it can't
+  run on 0.32, the episodes' engine.
+- On its own base it would hook the same point (resid_post). Its layer discovery doesn't
+  depend on the architecture, and its fork registers both models' architectures.
+- But nobody has run a Qwen3.5-architecture or FP8 model on it. Using it means moving both
+  models to vLLM 0.29 in every phase, after an equivalence check. Not done.
+
+Sources:
+- vllm-lens:
+  [README, `vllm_lens/_worker_ext.py`, `_helpers/types.py`, `pyproject.toml`](https://github.com/UKGovernmentBEIS/vllm-lens)
+  and [issue #52](https://github.com/UKGovernmentBEIS/vllm-lens/issues/52).
+- vLLM v0.32.0:
+  - `layers/quantization/online/fp8.py`, `model_loader/weight_utils.py`, `config/quantization.py`
+  - `engine/arg_utils.py` (defaults by card), `sampling_params.py`
+- [EasySteer](https://github.com/ZJU-REAL/EasySteer) v0.29.0: `docs/getting-started/installation.md`,
+  `model_hooks/components/discovery.py`.
+- The models' `config.json` on Hugging Face: Qwen3.8-27B-FP8 at `017b9c7`,
+  Qwen-AgentWorld-35B-A3B at `60d2b04`.
+- transformers 5.21: `integrations/finegrained_fp8.py`, `models/qwen3_5/`.
 
 ## Vector file
 
@@ -222,19 +336,26 @@ file, measured on the same backend. The engine adds `delta_L` to the residual st
 decoder layer L at every position, prompt and generated tokens. Alpha 0 must leave greedy
 output token-identical.
 
-**What a GPU engine must do with a spec:**
+**On the GPU** (`vllm_backend.lens_steering`, [GPU backends](#gpu-backends)):
 
-- *EasySteer* (v0.29.0, a vLLM fork): write a GGUF control vector (arch `controlvector`)
-  with tensors `direction.<L>` = `delta_L` (float32, already scaled), and steer with
-  `VectorSpec(..., scale=1.0, layers=[...], apply=ApplySpec(prompt="all", generation="all"))`,
-  algorithm `direct`, `normalize` off.
-- *vllm-lens* (v1.3.0): `SteeringVector(activations=stack(delta_L), layer_indices=layers,
-  scale=1.0, norm_match=False)`, which is applied at every position.
-- Either way, the smoke test first: alpha 0 gives the same greedy output as stock vLLM,
-  and the projection moves with alpha (`explore/interp/steer_check.py` does both on MLX).
+- One vllm-lens `SteeringVector` per request, in
+  `SamplingParams.extra_args["apply_steering_vectors"]`. Its fields:
+  `activations=stack(delta_L)` (the layers in order, already scaled), `layer_indices`,
+  `scale=1.0`, `norm_match=False`, `position_indices=None` (every position).
+- Alpha 0 still sends a zero vector, so it runs the hooked path.
+- Over `vllm serve` the same vector goes in `vllm_xargs` as
+  `json.dumps([sv.model_dump(mode="json")])` (vllm-lens README). Not used yet.
+- The smoke test comes first: alpha 0 gives stock vLLM's greedy output, a steer moves its
+  layer by its delta, and the projection moves with alpha (`gpu_smoke.py`;
+  `steer_check.py` does the same on MLX).
+- EasySteer, which can't run on vLLM 0.32, would take a GGUF control vector (arch
+  `controlvector`, float32 tensors `direction.<L>` = `delta_L`) with `scale=1.0`,
+  algorithm `direct`, `normalize` off, `ApplySpec(prompt="all", generation="all")`.
 
-Positions: every position, prompt included. EasySteer can restrict positions and vllm-lens
-can't, so "generated tokens only" would need its own check; it is not in the spec.
+Positions: every position, prompt included. "Generated tokens only" would need its own
+check, and it is not in the spec. Reading vllm-lens 1.3.0's code, its per-position steering
+looks for absolute positions in the wrong place (`seq_lens` in a per-layer dict), so every
+chunk and decode step would count from 0. That was inferred, not run.
 
 ## Reader
 
@@ -325,7 +446,7 @@ verbalisation, so a difference can show even if verbalised rates sit near zero.
   the whole prefix per turn and phrase. With the draft's 10 phrases, an 8-turn episode is
   80 passes over prefixes of up to the whole episode, so it is slow on the laptop and
   meant for checks (score a few turns with `--logit-turns`). The cached path
-  (`continuation_logprobs`) computes each prefix once and comes with the GPU backend.
+  (`continuation_logprobs`) computes each prefix once; the HF backend has it.
 - Phrases: `explore/interp/data/logit_monitor_phrases.json`, a draft. Aranguri's two
   sentences verbatim, three coding-agent drafts of ours (eval), two training sentences, and
   three controls (one shares the common "The user" opening). In N2 they are replaced by
@@ -364,7 +485,8 @@ paper's tables count from 1).
   agent's own tokens and prose; tool outputs and the prompt are reported apart.
 - **Quantization caveat.** The SAEs were trained on bf16 activations. 8-bit and 4-bit
   weights shift activations, so local FVU is not the bf16 number. Only compare models at
-  the same quantization; the real transfer numbers come from bf16 on the GPU.
+  the same quantization. The transfer numbers that count come from the FP8 reference
+  backend, itself a shift from bf16.
 - **Licence.** The `LICENSE` file in the SAE repos is Apache 2.0, but the model card says
   `license: other` (`qwen`) and adds a "Caution" restricting use to scientific research.
 - The reader stores SAE top-k latents with `read(..., saes={L: sae})`.
@@ -394,18 +516,82 @@ SIMTEST_INTERP_MODEL=<model-dir> uv run --extra interp pytest -q -m interp_model
 `explore/emotion_probe.py` (21-10-2026: 5 emotions × 6 hand-written stories, layer 42) is
 superseded by `build_vectors.py` and kept for the record.
 
+## GPU smoke test
+
+`explore/interp/gpu_smoke.sh` runs `explore/interp/gpu_smoke.py` on the Colab G4, alone on
+the GPU (stop serve.sh's servers first), one model and one step per process. It hasn't run
+yet. `tests/test_interp_gpu_smoke.py` runs every step offline on the fake engine and a tiny
+HF model.
+
+| Step | What | Minutes (estimate) |
+| --- | --- | --- |
+| install | vLLM 0.32.0 and vllm-lens 1.3.0 (no dependencies), zstandard, kernels, accelerate, flash-linear-attention, in `/content/interp-venv` (Python 3.12) | 3 |
+| download | Both models, unless serve.sh's copies are in `/content/models` | 5 (0) |
+| `<model>-stock-eager` | Greedy tokens of two fixed prompts on stock vLLM (plugin off), the lens steps' settings, each prompt twice | agent 3, simulator 4 |
+| `<model>-lens` | (i) The vector file on the FP8 weights (texts, pairs and layer rule of `build_vectors.py`; layers agent 36–48, simulator 22–32). (ii) Greedy tokens before the hooks are installed, then unsteered, with zero additions and with an alpha-0 spec. (iii) A steer at one layer against its delta, the dose curve with random and unrelated controls, samples. (iv) Prompt log-probs | agent 8, simulator 7 |
+| `<model>-stock-served` | The same prompts with vllm serve's settings (compiled, CUDA graphs, prefix caching) | agent 5, simulator 6 |
+| `agent-hf` | The agent's FP8 checkpoint on transformers: alpha 0 against `model.generate`, activations against vLLM's on the same tokens, a steer against its delta | 8 |
+| report | `checks.json` | <1 |
+
+About 50 minutes in all, 8 to 9 compute units. `BUDGET_MIN` (default 75) skips a step that
+would end later; `STEPS` picks steps; a second run resumes. A step that fails is logged and
+the next one runs.
+
+**Pass rules**, fixed before running (`gpu_smoke.py`'s header). They say the tools work on
+these weights; the numbers are not results.
+
+- `vectors`: at the chosen layer, emotion held-out and leave-one-out accuracy ≥ 0.5 (chance
+  1/6), and eval-awareness leave-one-pair-out ≥ 14 of 16. The MLX development builds had
+  37–44 of 54 held out and 16 of 16.
+- `alpha0`: for every fixed prompt, the lens engine's greedy tokens equal stock vLLM's with
+  the same settings. That holds before the hooks, unsteered after them, with zero additions
+  and with an alpha-0 spec.
+- `steer_applied`: alpha 0.1 at one layer moves the mean projection onto that layer's unit
+  vector, at that layer, by 0.1 × its mean residual norm, within 5%.
+- `dose`: the target's mean projection rises strictly with the signed strength at the middle
+  steered layer.
+- `hf_alpha0`, `hf_steer_applied`: the same checks on the HF backend (agent).
+- Reported, not pass or fail:
+  - `served_equals_eager`: does the episodes' compiled engine give the eager engine's
+    tokens?
+  - Stock repeats.
+  - The later layer's dose curve and the controls' slopes.
+  - HF against vLLM: cosine and relative error per layer, projection correlation, the first
+    greedy token that differs.
+
+**Outputs** in `/content/interp-smoke/`:
+
+- Per model: `<model>/{stock-eager,stock-served,lens,hf}.json`, `vectors.safetensors` with
+  its report, `specs/` and `lens-acts.npz`.
+- `checks.json` and `report.txt`.
+- `timings.txt`, `versions.txt` (versions, model commits, experiment commit),
+  `pip-freeze.txt`, `gpu.txt`, and one log per step.
+
+```bash
+# from the laptop (session "probe"; the runner's header has the same lines)
+colab --auth adc new -s probe --gpu G4
+PROXY="colab --auth adc ssh --proxy-mode -s probe"
+SSH="ssh -o ProxyCommand='$PROXY' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@probe"
+tar czf - --exclude .venv --exclude logs -C experiment . | eval "$SSH 'mkdir -p /content/sim && tar xzf - -C /content/sim'"
+eval "$SSH 'setsid nohup bash /content/sim/explore/interp/gpu_smoke.sh >/content/interp-smoke.log 2>&1 </dev/null &'"
+eval "$SSH 'cat /content/interp-smoke/timings.txt; tail -3 /content/interp-smoke.log'"   # progress
+eval "$SSH 'tar czf - -C /content interp-smoke'" > logs/interp/gpu-smoke.tgz             # results
+colab --auth adc stop -s probe
+```
+
 ## Left for the GPU
 
-- A torch/HF backend (bf16) honouring the interface, for building vectors and the reader:
-  teacher-forced passes with hooks on `model.model.layers[L]`, no `lm_head` for readings.
-  It must pass the offline tests' contract and an equivalence check against vLLM's
-  tokenization of the same episodes.
-- The steering-engine adapter (EasySteer first, vllm-lens as the fallback) that turns a
-  spec into the engine's format (above), with the smoke test on Qwen3.8: alpha 0 equals
-  stock vLLM greedy output, and the projection moves with alpha.
-- Vectors rebuilt on the reference backend (the same texts and pairs), the SAE transfer
-  check on bf16 activations of pilot transcripts, and an Inspect-format adapter for the
-  reader.
-- `continuation_logprobs` on the GPU backend, the logit monitor's cached path: each turn's
-  prefix run once, its cache kept, then every phrase scored from it. It must match the
-  generic `token_losses` path on the same episode, and its cost is measured there.
+- Run the smoke test and log it. Until then, nothing on the GPU path has run.
+- If `served_equals_eager` fails, steering experiments run all their conditions on the
+  eager engine (above).
+- The simulator's batch-dependent FP8 MoE ([GPU backends](#gpu-backends)): keep
+  `fp8_per_tensor`, or move every phase to `fp8_per_channel`. Victor's call.
+- The SAE transfer check on FP8 activations of pilot transcripts. `sae_transfer.py` splices
+  with `token_losses(replace=)`, which only the HF backend has. So either the agent on the
+  HF backend, or a vllm-lens `Hook` that splices in the worker process.
+- The logit monitor on vLLM. Prompt log-probs over long prefixes skip the prefix cache and
+  hold full-vocabulary logits per chunk (248K × 8192). Measure memory and time on a real
+  episode, or score the agent on the HF backend's cached path. That path must match the
+  `token_losses` path on the same episode; it does on the tiny models.
+- An Inspect-format adapter for the reader, with the token IDs the server saw.
+- Steering episodes through `vllm serve` (`vllm_xargs`), for the steering experiments.

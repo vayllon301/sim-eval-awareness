@@ -1,7 +1,7 @@
 """The backend interface on MLX (Apple Silicon), for development on the laptop.
 
 Local 8-bit and 4-bit weights are never evidence: the experiment's reference backend is
-bf16 on a GPU (one backend per experiment, AGENTS.md). Use this to build and test the
+FP8 on vLLM on the GPU (vllm_backend.py; one backend per experiment, AGENTS.md). Use this to build and test the
 pipeline, not to report results.
 
 Hooks: each decoder layer the call needs is wrapped for the duration of the call (and

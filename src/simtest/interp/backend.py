@@ -20,8 +20,8 @@ Conventions every backend honours (docs/INTERP.md, "Backend interface"):
 - Optional: `continuation_logprobs(prefix_ids, continuations) -> list[np.ndarray]`, the
   per-token log-probs (nats) of each continuation after one prefix, the prefix computed
   once. The logit monitor (monitors.py) uses it when present, and otherwise falls back to
-  one `token_losses` pass per continuation. The GPU backend implements it with a prefix
-  cache; the MLX backend doesn't.
+  one `token_losses` pass per continuation. The HF backend implements it with a prefix
+  cache; the MLX and vLLM backends don't.
 """
 
 from __future__ import annotations

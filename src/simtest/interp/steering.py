@@ -1,5 +1,5 @@
-"""The steering spec: one file format that every engine reads (MLX now; EasySteer or
-vllm-lens on the GPU later). Reference: docs/INTERP.md, "Steering spec".
+"""The steering spec: one file format that every engine reads (MLX on the laptop, vllm-lens
+and transformers on the GPU). Reference: docs/INTERP.md, "Steering spec".
 
 A spec is a small YAML (or JSON) file:
 

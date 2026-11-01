@@ -3,14 +3,18 @@ reader with a logit monitor, Qwen-Scope SAEs and activation steering. Reference:
 docs/INTERP.md.
 
 Optional: `uv sync --extra interp` installs MLX (Apple Silicon), safetensors and
-transformers. Nothing here is imported by the testbed, and importing this package does not
-import MLX; only `simtest.interp.mlx_backend` does.
+transformers; `--extra torch` installs torch for hf_backend's tests. The GPU install is in
+explore/interp/gpu_smoke.sh. Nothing here is imported by the testbed, and importing this
+package does not import MLX, torch or vLLM; each backend imports its engine when built.
 
 Modules:
   backend      the interface a model engine provides (activations, losses, greedy
                generation with additive residual hooks)
   mlx_backend  that interface on MLX (laptop, development only)
-  fake         a tiny numpy model and tokenizer for offline tests
+  vllm_backend that interface on vLLM with vllm-lens (GPU, the reference backend), and the
+               steering spec as a vllm-lens SteeringVector
+  hf_backend   that interface on PyTorch with transformers (GPU cross-check, splicing)
+  fake         a tiny numpy model and tokenizer for offline tests, and a fake vLLM engine
   directions   difference-of-means vectors, neutral principal components, accuracy
   vectors      the vector file format (safetensors and JSON metadata)
   steering     the steering spec format and its resolution to per-layer additions
