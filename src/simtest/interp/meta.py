@@ -53,6 +53,16 @@ def weights_fingerprint(model_dir: str | Path) -> str:
     return "fp1:" + h.hexdigest()
 
 
+def load_fingerprint(model_dir: str | Path, load_quantization: str | None) -> str:
+    """The fingerprint of the weights a backend computes with. Files read as they are (bf16,
+    or a pre-quantized checkpoint such as Qwen3.8's FP8) are the files' fingerprint. When the
+    engine quantizes at load ("vllm:fp8" for vLLM's online FP8), the weights are the engine's,
+    not the files', so the scheme is appended: vectors built on the bf16 files then don't
+    steer the FP8 model, and the other way round."""
+    fp = weights_fingerprint(model_dir)
+    return fp if not load_quantization else f"{fp}+{load_quantization}"
+
+
 def tokenizer_info(tokenizer, model_dir: str | Path) -> dict:
     """What turns messages into token IDs, beyond the weights: sha256 of the tokenizer files
     (tokenizer.json, tokenizer_config.json), sha256 of the chat template in effect (the one
@@ -93,6 +103,9 @@ def quantization(model_dir: str | Path) -> str:
     q = cfg.get("quantization") or cfg.get("quantization_config")
     if not q:
         return "none (" + str(cfg.get("text_config", cfg).get("dtype") or cfg.get("torch_dtype") or "?") + ")"
+    if q.get("quant_method") == "fp8":  # block FP8, as in the official Qwen FP8 checkpoints
+        block = "x".join(map(str, q.get("weight_block_size") or [])) or "per-tensor"
+        return f"fp8 {q.get('fmt', 'e4m3')}, weight blocks {block}, {q.get('activation_scheme', '?')} activations"
     overrides = sum(1 for v in q.values() if isinstance(v, dict))
     base = f"{q.get('mode', q.get('quant_method', '?'))} {q.get('bits', '?')}-bit, group {q.get('group_size', '?')}"
     return base + (f", {overrides} per-layer overrides" if overrides else "")

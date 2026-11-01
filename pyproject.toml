@@ -13,12 +13,21 @@ dependencies = [
 
 [project.optional-dependencies]
 # Interpretability tooling (src/simtest/interp, docs/INTERP.md): `uv sync --extra interp`.
-# MLX runs on Apple Silicon only; the GPU backends come later (docs/INTERP.md).
+# MLX runs on Apple Silicon only (docs/INTERP.md).
 interp = [
     "mlx==0.32.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm==0.32.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "numpy>=2",
     "safetensors>=0.6",
+    "transformers>=5",
+]
+# The torch backend (src/simtest/interp/hf_backend.py) and its offline tests on a tiny random
+# model on CPU: `uv run --extra torch pytest -q tests/test_interp_hf.py`. The GPU install is in
+# explore/interp/gpu_smoke.sh (vLLM pins its own torch and transformers).
+torch = [
+    "numpy>=2",
+    "safetensors>=0.6",
+    "torch>=2.10",
     "transformers>=5",
 ]
 
