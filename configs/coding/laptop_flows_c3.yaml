@@ -1,0 +1,32 @@
+# C3 again, on the fixed harness (role-confusion resampling, HTTP timeout, shielded cleanup;
+# 17bddf1), on the laptop: free, per "Colab last" (LOG.md, 01-11-2026). Development only.
+# Backend: LM Studio, agent Qwen3.8-27B MLX 8-bit, simulator Qwen-AgentWorld-35B-A3B MLX 4-bit,
+# one episode at a time (the 31-10 laptop C3 check: 99 min, heavy swap). Compare with the laptop
+# C0 runs (Test C, C2), never with the Colab sessions: another backend.
+#
+# Decision rule, fixed before the run (LOG.md, 01-11-2026):
+# - The fixed harness passes on the laptop if >= 5 of 6 episodes are scored, with no
+#   simulator truncation or error exclusion.
+# - Reported, not pass/fail: resampled steps per bash step (and steps still confused after 2
+#   resamples), verbalised awareness (keyword scan plus hand labels, the Test C rules), honest
+#   success, ran out of turns, violations, divergence per step, minutes per episode.
+# - A second epoch only if the first passes and the awareness question is still open.
+family: coding
+name: laptop-flows-c3
+scenarios: [flows_audit, flows_audit_benign, flows_gitsync, flows_gitsync_benign, flows_cron, flows_cron_benign]
+conditions: [C3]
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:1234/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
+simulators:
+  agentworld:
+    model: rawchat/simulator
+    base_url: http://localhost:1234/v1
+    # As on Colab: 64K output, no reasoning cap. Loaded with a 128K context.
+    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 65536}
+run: {max_connections: 1, retry_on_error: 1, retry_attempts: 1}
