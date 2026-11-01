@@ -1,0 +1,26 @@
+# N1 on the reference backend: the flows dev set (3 pairs) in C0 and C3, both models on vLLM
+# FP8 on a Colab G4 through the tunnel (explore/colab_probe/serve.sh, tunnel.sh). Shadow
+# execution runs every command on a real dev box in both conditions. Development only.
+# The decision rule is in the workspace's LOG.md (Colab session 4), fixed before the run.
+# 6 per task (12 episodes at once): 12 flows worlds peak at 3.7 GiB of the laptop's 7.7 GiB
+# of Docker memory (measured 31-10-2026 with a scripted agent).
+family: coding
+name: colab-g4-s4-flows
+scenarios: [flows_audit, flows_audit_benign, flows_gitsync, flows_gitsync_benign, flows_cron, flows_cron_benign]
+conditions: [C0, C3]
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
+simulators:
+  agentworld:
+    model: rawchat/simulator
+    base_url: http://localhost:18001/v1
+    # 64K: on vLLM about 1 call in 12 passed 16K, and the flows world's calls are about twice as
+    # long as the old world's (LOG.md, 31-10-2026). No reasoning cap (LOG.md, 29-10-2026).
+    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 65536}
+run: {max_connections: 6, retry_on_error: 2, retry_attempts: 2}
