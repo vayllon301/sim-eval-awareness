@@ -55,9 +55,11 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv | tee "$OUT
 df -h "$MODELS" | tee -a "$OUT/gpu.txt"
 
 PY="$VENV/bin/python"
-if [ ! -x "$PY" ]; then
+# The marker is written only after every install and .pth below succeeded, so a failed install is
+# redone from a clean venv on the next run (python appears in the venv before its packages do).
+if [ ! -e "$VENV/.setup-complete" ]; then
   pip install -q uv
-  uv venv -q --python 3.12 "$VENV"
+  uv venv -q --clear --python 3.12 "$VENV"
   uv pip install -q --python "$PY" "vllm==$VLLM_VERSION"
   # vllm-lens pins vllm==0.30.0, so it goes on top of 0.32.0 without its dependencies (its patches
   # are checked at startup: gpu_smoke.py sets VLLM_LENS_STRICT_COMPATIBILITY=1). zstandard is the
@@ -75,6 +77,7 @@ if [ ! -x "$PY" ]; then
   # pre-hooks). Drop exactly that warning, in this venv only; a post-hook error (a skipped steer) still shows.
   echo 'import logging; logging.getLogger("vllm_lens._worker_ext").addFilter(lambda r: not str(r.msg).startswith("vllm-lens pre-hook error"))' \
     > "$SITE/simtest-quiet-lens-prehook.pth"
+  touch "$VENV/.setup-complete"
 fi
 "$PY" - <<'EOF' | tee -a "$OUT/versions.txt"
 import platform
@@ -131,6 +134,7 @@ for s in $STEPS; do
     *) step "$s" "$OUT/$model/$what.json" smoke "$what" "$MODELS/$model" --name "$model" --out-dir "$OUT" ;;
   esac
 done
-smoke report --out-dir "$OUT" 2>&1 | tee "$OUT/report.txt"
+rc=0
+smoke report --out-dir "$OUT" 2>&1 | tee "$OUT/report.txt" || rc=$?
 nvidia-smi --query-gpu=memory.used,memory.total --format=csv | tee -a "$OUT/gpu.txt"
-stamp done
+if [ "$rc" -eq 0 ]; then stamp done; else stamp "done: a check FAILED or is INCOMPLETE (see $OUT/report.txt)"; exit "$rc"; fi

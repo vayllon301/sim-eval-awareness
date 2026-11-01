@@ -16,7 +16,8 @@ a time, each writing <out-dir>/<name>/<step>.json (and refusing to overwrite it)
           activations of the dose text for the hf step.
   hf      the agent's FP8 checkpoint on transformers: alpha 0 against model.generate, its
           activations against vLLM's on the same tokens, a steer against its delta.
-  report  every check into <out-dir>/checks.json (CPU only).
+  report  every check into <out-dir>/checks.json (CPU only): PASS, FAIL, or INCOMPLETE when its
+          step failed or was skipped; it exits 1 unless every check passed.
 
 Pass rules, fixed before running. Smoke level: they say the tools work on these weights;
 the numbers are not results.
@@ -65,6 +66,10 @@ ALPHAS = [-0.1, -0.05, -0.02, 0.0, 0.02, 0.05, 0.1]
 CONTROL_SEEDS, CONTROL_CONCEPT = [0, 1], "topic:baker-prepares"
 TEXT_TOKENS, SAMPLE_TOKENS = 400, 80
 RULES = {"vectors_min_accuracy": 0.5, "eval_loo_min_correct": 14, "steer_rel_tol": 0.05}
+# Every pass/fail check, per model. A check whose step failed or was skipped is INCOMPLETE (null),
+# never left out, and the report exits 1 unless every check passed.
+REQUIRED = {"agent": ["vectors", "steer_applied", "dose", "token_losses", "alpha0", "hf_alpha0", "hf_steer_applied"],
+            "simulator": ["vectors", "steer_applied", "dose", "token_losses", "alpha0"]}
 
 
 def out_file(a, step: str) -> Path:
@@ -347,15 +352,21 @@ def report(a):
                        h["vs_vllm_greedy_first_difference"], "prompt_ids_equal_lens": h["prompt_ids_equal_lens"],
                        "vectors_fingerprint_equal": h["vectors_fingerprint_equal"], "steer_applied": h.get("steer_applied")}
         n["steps_run"] = [s for s in ("stock-eager", "lens", "stock-served", "hf") if load(name, s)]
-        checks[name], notes[name] = c, n
-    out = {"rules": RULES, "checks": checks, "notes": notes}
+        checks[name] = {k: (bool(c[k]) if k in c else None) for k in REQUIRED[name]}
+        notes[name] = n
+    incomplete = {name: [k for k, ok in c.items() if ok is None] for name, c in checks.items()}
+    failed = {name: [k for k, ok in c.items() if ok is False] for name, c in checks.items()}
+    out = {"rules": RULES, "checks": checks, "incomplete": incomplete, "failed": failed, "notes": notes}
     (D / "checks.json").write_text(json.dumps(out, indent=1))
+    word = {True: "PASS", False: "FAIL", None: "INCOMPLETE"}
     for name, c in checks.items():
-        print(f"{name}: " + (", ".join(f"{k} {'PASS' if ok else 'FAIL'}" for k, ok in c.items()) or "no steps run"))
+        print(f"{name}: " + ", ".join(f"{k} {word[ok]}" for k, ok in c.items()))
         for k in ("served_equals_eager", "stock_eager_repeat_equal", "served_repeat_equal"):
             if k in notes[name]:
                 print(f"  {k}: {notes[name][k]}")
     print(f"wrote {D / 'checks.json'}")
+    if any(incomplete.values()) or any(failed.values()):
+        sys.exit(1)
 
 
 def main():

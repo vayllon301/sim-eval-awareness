@@ -58,7 +58,8 @@ def test_stock_lens_and_report_on_the_fake_engine(smoke, monkeypatch, tmp_path):
     run(smoke, monkeypatch, "lens", str(model), "--name", "agent", "--out-dir", str(out))
     with pytest.raises(SystemExit, match="refusing to overwrite"):
         run(smoke, monkeypatch, "lens", str(model), "--name", "agent", "--out-dir", str(out))
-    run(smoke, monkeypatch, "report", "--out-dir", str(out))
+    with pytest.raises(SystemExit):  # no hf step and no simulator: incomplete
+        run(smoke, monkeypatch, "report", "--out-dir", str(out))
     rep = json.loads((out / "checks.json").read_text())
     c, n = rep["checks"]["agent"], rep["notes"]["agent"]
     assert c["alpha0"] and c["steer_applied"] and c["token_losses"] and "vectors" in c and "dose" in c
@@ -74,7 +75,7 @@ def test_stock_lens_and_report_on_the_fake_engine(smoke, monkeypatch, tmp_path):
     assert served["backend"]["engine_settings"]["enforce_eager"] is False
     assert served["backend"]["env"]["VLLM_USE_V2_MODEL_RUNNER"] is None
     assert len(list((out / "agent" / "specs").glob("*.yaml"))) == 4 and (out / "agent" / "lens-acts.npz").exists()
-    assert rep["checks"]["simulator"] == {} and n["steps_run"] == ["stock-eager", "lens", "stock-served"]
+    assert set(rep["incomplete"]["simulator"]) == set(smoke.REQUIRED["simulator"]) and n["steps_run"] == ["stock-eager", "lens", "stock-served"]
 
 
 def test_the_simulator_runs_with_vllms_fp8_and_has_no_hf_step(smoke, monkeypatch, tmp_path):
@@ -98,9 +99,27 @@ def test_hf_step_on_the_same_files(smoke, monkeypatch, tmp_path):
     monkeypatch.setattr(AutoTokenizer, "from_pretrained", lambda *a, **k: FakeTokenizer())
     run(smoke, monkeypatch, "lens", str(model), "--name", "agent", "--out-dir", str(out))
     run(smoke, monkeypatch, "hf", str(model), "--name", "agent", "--out-dir", str(out))
-    run(smoke, monkeypatch, "report", "--out-dir", str(out))
+    with pytest.raises(SystemExit):  # no stock-eager and no simulator: incomplete
+        run(smoke, monkeypatch, "report", "--out-dir", str(out))
     rep = json.loads((out / "checks.json").read_text())
     c, n = rep["checks"]["agent"], rep["notes"]["agent"]
     assert c["hf_alpha0"] and c["hf_steer_applied"]
     assert n["hf"]["vectors_fingerprint_equal"] and n["hf"]["prompt_ids_equal_lens"]
     assert set(n["hf"]["activations_vs_vllm"]) == {"2", "4"}  # the fake's and the tiny model's weights differ
+
+
+def test_report_marks_missing_checks_incomplete_and_fails(smoke, monkeypatch, tmp_path):
+    # A failed or budget-skipped step must not drop its checks from the report: without
+    # stock-eager there is no alpha0, without hf no hf checks, and the report exits nonzero.
+    model, out = fake_dir(tmp_path / "agent"), tmp_path / "out"
+    run(smoke, monkeypatch, "lens", str(model), "--name", "agent", "--out-dir", str(out))
+    with pytest.raises(SystemExit) as e:
+        run(smoke, monkeypatch, "report", "--out-dir", str(out))
+    assert e.value.code == 1
+    rep = json.loads((out / "checks.json").read_text())
+    c = rep["checks"]["agent"]
+    assert c["alpha0"] is None and c["hf_alpha0"] is None and c["hf_steer_applied"] is None
+    assert c["steer_applied"] is True
+    assert set(rep["checks"]["simulator"]) == set(smoke.REQUIRED["simulator"])
+    assert all(v is None for v in rep["checks"]["simulator"].values())
+    assert rep["incomplete"]["agent"] == ["alpha0", "hf_alpha0", "hf_steer_applied"]
