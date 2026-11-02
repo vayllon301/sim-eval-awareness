@@ -357,11 +357,14 @@ def test_one_episodes_error_does_not_cancel_the_others(monkeypatch, tmp_path):
 
     agent = mock(ScriptedAgent([], done="ok"), "mockllm/agent")
     task = coding(condition="C0", scenarios=["pricing_cap", "pricing_cap_benign"], max_turns=4, machine="flaky2")
-    eval_set([task], model=agent, log_dir=str(tmp_path), retry_attempts=3, display="none", **EVAL_SET_OPTIONS)
+    # In place, as simtest run does (outside a run queue the retry just starts again).
+    eval_set([task], model=agent, log_dir=str(tmp_path), retry_on_error=3, display="none", **EVAL_SET_OPTIONS)
 
     assert starts == {"pricing_cap": 2, "pricing_cap_benign": 1}   # the other episode ran once, to its end
     episodes, _ = load_run(tmp_path)
-    assert sorted(e["end_reason"] for e in episodes) == sorted(["error", episode.FINISHED, episode.FINISHED])
+    # Without simtest run's queue nothing keeps the failed attempt; under it, attempts/ does
+    # (tests/test_coding_queue_run.py).
+    assert sorted(e["end_reason"] for e in episodes) == [episode.FINISHED, episode.FINISHED]
 
 
 def test_a_simulated_command_line_is_resampled_and_kept_in_the_record(patched, tmp_path):

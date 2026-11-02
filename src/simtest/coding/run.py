@@ -20,7 +20,12 @@ Config format (configs/coding/*.yaml):
         base_url: http://localhost:18001/v1
         config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 16384}
     simulators_for: {C3: [agentworld]}    # optional; default: every simulator for every C1-C3
-    run: {max_connections: 4, retry_on_error: 2, retry_attempts: 2}
+    run: {max_connections: 4, retry_attempts: 2, order_seed: 20261102}
+
+`run.max_connections` is the total number of episodes in flight, over every condition, and the
+connection limit of each model. Every condition's task runs at once, and the episodes share one
+queue in a seeded, blocked order (`run.order_seed`; src/simtest/runqueue.py). An episode that
+errors is re-run from the start up to `run.retry_attempts` times, at the back of the same queue.
 
 The agent and the simulator run on OpenAI-compatible endpoints: `rawchat/<served-name>`
 with a base_url (vLLM on Colab through the tunnel, or OpenRouter for a smoke test only).
@@ -51,20 +56,25 @@ REPO_DIR = Path(__file__).resolve().parents[3]
 CONFIG_KEYS = {"family", "name", "scenarios", "conditions", "epochs", "max_turns", "deadline",
                "agents", "simulators", "simulators_for", "run"}
 MODEL_KEYS = {"model", "base_url", "api_key_env", "config", "args"}
-RUN_KEYS = {"max_connections", "retry_on_error", "retry_attempts"}
+# retry_on_error is accepted for the older configs and unused: re-runs follow retry_attempts.
+RUN_KEYS = {"max_connections", "retry_on_error", "retry_attempts", "order_seed"}
 AGENT_CONFIG_DEFAULTS = {"max_retries": 5, "timeout": 1800, "attempt_timeout": 1200}
 # The simulator's calls in the flows world write up to about 21K tokens; with its KV cache full
 # (preemptions) that took more than 900 s, and the 1200 s total left no room for a retry
 # (LOG.md, 01-11-2026). The same limits in every simulated condition.
 SIMULATOR_CONFIG_DEFAULTS = {"max_retries": 5, "timeout": 3600, "attempt_timeout": 2400}
-# No in-place sample retries (retry_on_error=0): an interrupted attempt (a dropped tunnel,
-# a machine error) is kept in its attempt log as an incomplete episode, and the episode is
-# re-run (retry_attempts), as PLAN.md requires. retry_cleanup=False keeps the failed attempt
-# logs, and load_run aggregates them (deduplicating reused completed samples by uuid), so an
-# interrupted attempt is reported, never silently replaced. continue_on_fail: one episode's
-# error no longer cancels the others; the task is marked failed at the end, and the retry
-# re-runs only the errored episodes (session 5 lost 12 at 75 minutes; LOG.md, 01-11-2026).
-EVAL_SET_OPTIONS = {"retry_on_error": 0, "retry_cleanup": False, "continue_on_fail": True}
+# Re-runs (PLAN.md, Design): an errored episode is re-run from the start, whatever it contained,
+# and the failed attempt is kept and reported. They are Inspect's in-place sample retries
+# (`retry_on_error`, set from the config's `retry_attempts`): the retry gets a fresh state and
+# goes to the back of the run's queue (src/simtest/runqueue.py), so it runs mixed with the rest,
+# never alone at the end (session 5: two re-runs held the VM alone for 80 minutes; LOG.md,
+# 01-11-2026). The episode solver keeps each failed attempt in full under `attempts/`, because
+# Inspect keeps only its error. No task-level retries (retry_attempts=0): those wait until the task
+# has drained. An episode left over (errored after its re-runs, or not started) runs on the next
+# `simtest run` of the same config, mixed into that session's queue. retry_cleanup=False keeps
+# every attempt log, and load_run aggregates them. continue_on_fail: one episode's error no
+# longer cancels the others (session 5 lost 12 at 75 minutes; LOG.md, 01-11-2026).
+EVAL_SET_OPTIONS = {"retry_attempts": 0, "retry_cleanup": False, "continue_on_fail": True}
 FORBIDDEN_AGENT_CONFIG = {"reasoning_effort"}  # the plan keeps the template default (xhigh)
 
 
@@ -174,7 +184,8 @@ def load_config(path):
         "agents": agents, "simulators": simulators, "simulators_for": simulators_for,
         "run": {"max_connections": _positive_int("run.max_connections", run.get("max_connections", 4)),
                 "retry_on_error": _positive_int("run.retry_on_error", run.get("retry_on_error", 2), 0),
-                "retry_attempts": _positive_int("run.retry_attempts", run.get("retry_attempts", 2), 0)},
+                "retry_attempts": _positive_int("run.retry_attempts", run.get("retry_attempts", 2), 0),
+                "order_seed": _positive_int("run.order_seed", run.get("order_seed", 0), 0)},
     }
 
 
@@ -202,14 +213,26 @@ def git_dirty(repo: Path = REPO_DIR) -> bool:
     return bool(out.stdout.strip())
 
 
-def run_config(path, allow_dirty=False, log_root="logs", display=None, build=True, check_snapshots=True):
+def run_config(path, allow_dirty=False, log_root="logs", display=None, build=True, check_snapshots=True,
+               epochs=None, admit_for=None, carry_under=0, machine="docker", models=None):
+    """Run a config (resumable). `epochs` ("2" or "1-3") limits this session to those epochs;
+    `admit_for` (hours) stops starting episodes after that long; `carry_under` leaves the rest
+    for the next session when fewer than that many episodes are left (src/simtest/runqueue.py).
+    `machine` and `models` (a function from a model spec to a Model) are for offline runs:
+    `simtest preflight` and the tests."""
+    import time
+
+    from .. import runqueue
+
     cfg = load_config(path)
     if git_dirty() and not allow_dirty:
         raise SystemExit("Refusing to run from a dirty git working tree: commit first, or pass --allow-dirty.")
-    api_key_envs = {s["args"].get("api_key_env") for s in [*cfg["agents"].values(), *cfg["simulators"].values()]}
-    for env in sorted(filter(None, api_key_envs)):
-        if not os.environ.get(env):
-            raise SystemExit(f"{env} is not set. Run with: uv run --env-file ../.env simtest run ...")
+    if models is None:
+        api_key_envs = {s["args"].get("api_key_env") for s in [*cfg["agents"].values(), *cfg["simulators"].values()]}
+        for env in sorted(filter(None, api_key_envs)):
+            if not os.environ.get(env):
+                raise SystemExit(f"{env} is not set. Run with: uv run --env-file ../.env simtest run ...")
+    allowed = runqueue.parse_epochs(epochs, cfg["epochs"])
     scenarios = [load_scenario(s) for s in cfg["scenarios"]]
     if build:
         build_all()
@@ -218,28 +241,45 @@ def run_config(path, allow_dirty=False, log_root="logs", display=None, build=Tru
             if diff := check_snapshot(sc):
                 raise SystemExit(f"{sc.id}: the frozen snapshot differs from a fresh container. Re-run "
                                  f"`simtest snapshot {sc.id}` and review:\n" + "\n".join(diff[:40]))
-    agents = {k: build_model(s) for k, s in cfg["agents"].items()}
-    simulators = {n: build_model(s) for n, s in cfg["simulators"].items()}
+    make = models or build_model
+    agents = {k: make(s) for k, s in cfg["agents"].items()}
+    simulators = {n: make(s) for n, s in cfg["simulators"].items()}
     log_dir = Path(log_root) / cfg["name"]
     design = make_design(cfg["conditions"], cfg["simulators_for"],
                          {k: s["model"] for k, s in cfg["agents"].items()},
                          [sc.id for sc in scenarios], cfg["epochs"])
     common = {"scenarios": cfg["scenarios"], "max_turns": cfg["max_turns"], "epochs": cfg["epochs"],
-              "deadline": cfg["deadline"], "design": design}
-    tasks = []
+              "deadline": cfg["deadline"], "design": design, "machine": machine}
+    tasks, arms = [], []
     for c in cfg["conditions"]:
         if c == "C0":
             tasks.append(panel_task(c, request_config=request_config(cfg, None), **common))
+            arms.append((c, NO_SIMULATOR))
         else:
             tasks += [panel_task(c, simulator=s, simulator_model=simulators[s],
                                  request_config=request_config(cfg, s), **common)
                       for s in cfg["simulators_for"][c]]
-    success, logs = eval_set(
-        tasks=tasks, model=list(agents.values()), log_dir=str(log_dir),
-        retry_attempts=cfg["run"]["retry_attempts"], **EVAL_SET_OPTIONS,
-        max_connections=cfg["run"]["max_connections"], log_model_api=True, display=display,
-        metadata={"family": "coding", "config_name": cfg["name"], "config_file": str(path),
-                  "agents": {k: s["model"] for k, s in cfg["agents"].items()},
-                  "simulators": {n: s["model"] for n, s in cfg["simulators"].items()}},
-    )
+            arms += [(c, s) for s in cfg["simulators_for"][c]]
+    if len(agents) > 1:   # Inspect would pair each task with each agent; the queue's keys have no agent
+        raise ConfigError("the run queue supports one agent per config")
+    run = cfg["run"]
+    order = runqueue.episode_order(arms, cfg["scenarios"], cfg["epochs"], run["order_seed"])
+    queue = runqueue.EpisodeQueue(order, run["max_connections"], epochs=allowed, carry_under=carry_under,
+                                  admit_until=time.time() + admit_for * 3600 if admit_for is not None else None,
+                                  log_dir=log_dir, settle=runqueue.SETTLE_SECONDS)
+    per_task = len(cfg["scenarios"]) * cfg["epochs"]
+    with runqueue.installed(queue):
+        success, logs = eval_set(
+            tasks=tasks, model=list(agents.values()), log_dir=str(log_dir),
+            retry_on_error=run["retry_attempts"], **EVAL_SET_OPTIONS,
+            # Every task at once, and every episode admitted to Inspect: the queue holds them.
+            max_tasks=len(tasks), max_samples=per_task,
+            max_connections=run["max_connections"], log_model_api=True, display=display,
+            metadata={"family": "coding", "config_name": cfg["name"], "config_file": str(path),
+                      "agents": {k: s["model"] for k, s in cfg["agents"].items()},
+                      "simulators": {n: s["model"] for n, s in cfg["simulators"].items()},
+                      "queue": {"in_flight": run["max_connections"], "order_seed": run["order_seed"],
+                                "order": "blocked: epoch, then scenario, then arm (src/simtest/runqueue.py)"}},
+        )
+    print(queue.summary())
     return success, logs, log_dir

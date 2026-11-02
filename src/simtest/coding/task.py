@@ -97,7 +97,7 @@ def coding(condition: str, scenarios: list[str], max_turns: int = 40, epochs: in
                                   "title": sc.title, "simulator": simulator})
                  for sc in loaded.values()],
         solver=coding_agent(condition=condition, scenarios=list(scenarios), machine_factory=MACHINES[machine],
-                            max_turns=max_turns, deadline=deadline),
+                            max_turns=max_turns, deadline=deadline, version=fp),
         scorer=coding_scorer(scenarios=list(scenarios)),
         epochs=Epochs(epochs, []),
         version=fp,

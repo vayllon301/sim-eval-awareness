@@ -229,3 +229,15 @@ def test_not_started_messages_are_recognised():
     assert Q.is_not_started(str(Q.NotStarted("x")))
     assert Q.is_not_started("RuntimeError('simtest-queue: not started: x')")
     assert not Q.is_not_started("simulator timed out") and not Q.is_not_started(None)
+
+
+def test_batch_mix_per_arm(tmp_path):
+    lines = [{"event": "admit", "key": ["C0", "none", "a", 1], "running": {"C0/none": 1}},
+             {"event": "admit", "key": ["C3", "s", "a", 1], "running": {"C0/none": 1, "C3/s": 1}},
+             {"event": "release", "key": ["C0", "none", "a", 1], "running": {"C3/s": 1}},
+             {"event": "admit", "key": ["C0", "none", "b", 1], "running": {"C0/none": 1, "C3/s": 1}}]
+    (tmp_path / "queue.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+    mix = Q.batch_mix(tmp_path)
+    assert mix == {"C0/none": {"C0/none": 0.0, "C3/s": 0.5}, "C3/s": {"C0/none": 1.0, "C3/s": 0.0}}
+    assert "C3/s: 1.0, 0.0" in Q.format_batch_mix(mix)
+    assert Q.batch_mix(tmp_path / "nothing") is None

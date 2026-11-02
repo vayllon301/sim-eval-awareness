@@ -273,6 +273,56 @@ class EpisodeQueue:
                 f"{self.in_flight} in flight at most")
 
 
+def batch_mix(log_dir) -> dict | None:
+    """Per arm, the mean number of episodes of each arm running when one of its episodes started
+    (itself left out), from queue.jsonl. With one queue they should match across arms."""
+    path = Path(log_dir) / "queue.jsonl"
+    if not path.exists():
+        return None
+    sums: dict = {}
+    n: Counter = Counter()
+    for line in path.read_text().splitlines():
+        e = json.loads(line)
+        if e["event"] != "admit":
+            continue
+        arm = f"{e['key'][0]}/{e['key'][1]}"
+        running = Counter(e["running"])
+        running[arm] -= 1
+        n[arm] += 1
+        for other, k in running.items():
+            sums.setdefault(arm, Counter())[other] += k
+        sums.setdefault(arm, Counter())
+    arms = sorted(n)
+    return {a: {b: sums[a][b] / n[a] for b in arms} for a in arms}
+
+
+def format_batch_mix(mix: dict | None) -> str:
+    if not mix:
+        return ""
+    arms = sorted(mix)
+    lines = ["Batch mix (mean episodes running beside each start, from queue.jsonl): " + ", ".join(arms)]
+    lines += [f"  {a}: " + ", ".join(f"{mix[a][b]:.1f}" for b in arms) for a in arms]
+    return "\n".join(lines)
+
+
+def write_attempt(directory: Path | None, record: dict) -> Path | None:
+    """Write a failed attempt's record (one file each, never overwritten)."""
+    if directory is None:
+        return None
+    import uuid
+
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{uuid.uuid4().hex}.json"
+    path.write_text(json.dumps(record, default=str))
+    return path
+
+
+def read_attempts(directory: Path) -> list[dict]:
+    if not directory.is_dir():
+        return []
+    return [json.loads(p.read_text()) for p in sorted(directory.glob("*.json"))]
+
+
 @contextlib.contextmanager
 def installed(queue: EpisodeQueue):
     """Make `queue` the one the episode solver uses (one run at a time per process)."""
