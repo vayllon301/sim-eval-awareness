@@ -7,7 +7,7 @@ import math
 
 import pytest
 
-from simtest.stats.power import format_grid, power_grid, simulate_power
+from simtest.stats.power import format_grid, planned_repeats, power_grid, simulate_power
 
 
 def se(p, n):
@@ -81,3 +81,28 @@ def test_grid_table_and_cli(capsys):
           "--label", "development, not the pilot", "--json"])
     out = json.loads(capsys.readouterr().out)
     assert out["label"] == "development, not the pilot" and out["rows"][0]["scenarios"] == 8
+
+
+def test_planned_repeats_cover_the_exclusion_rate():
+    assert [planned_repeats(n) for n in (1, 5, 30)] == [1, 5, 30]           # no exclusions: as designed
+    assert planned_repeats(10, 0.1) == 11          # 11 x 0.9 = 9.9 -> 10; 10 x 0.9 = 9
+    assert planned_repeats(20, 0.1) == 22          # 22 x 0.9 = 19.8 -> 20; 21 x 0.9 = 18.9 -> 19
+    assert planned_repeats(20, 0.15) == 23         # 23 x 0.85 = 19.55 -> 20; 22 x 0.85 = 18.7 -> 19
+    # a half rounds down: 5 x 0.9 = 4.5 counts as 4 scored episodes, so 5 planned can't cover n = 5
+    assert planned_repeats(5, 0.1) == 6
+    assert planned_repeats(5, 0.5) == 10           # 9 x 0.5 = 4.5 -> 4
+    # the rule, exactly: the smallest planned n whose rounded expected scored n is at least n
+    from fractions import Fraction
+
+    def scored(m, e):
+        x = m * (1 - Fraction(str(e)))
+        return math.ceil(x - Fraction(1, 2))       # nearest whole number, a half down
+
+    for e in (0.0, 0.05, 0.1, 0.125, 0.15, 0.3):
+        for n in range(1, 41):
+            m = planned_repeats(n, e)
+            assert scored(m, e) >= n and scored(m - 1, e) < n, (n, e, m)
+    with pytest.raises(ValueError):
+        planned_repeats(10, 1.0)
+    with pytest.raises(ValueError):
+        planned_repeats(10, -0.1)

@@ -103,6 +103,27 @@ def simulate_power(n_scenarios: int, repeats: int, c0: float, c3: float, spread:
             "mean_rate_c0": float(p0.mean()), "mean_rate_c3": float(p3.mean())}
 
 
+def planned_repeats(n: int, exclusion: float = 0.0) -> int:
+    """Episodes to plan per scenario and condition so that `n` are scored after exclusions.
+
+    The smallest n_planned with round(n_planned x (1 - exclusion)) >= n, where round is to the
+    nearest whole number and a half rounds down (a half episode is never counted as scored). The
+    arithmetic is exact on the decimal given (0.1 is one tenth). exclusion = 0 gives n.
+    """
+    import math
+    from fractions import Fraction
+
+    if n < 1:
+        raise ValueError("repeats must be at least 1")
+    if not 0.0 <= exclusion < 1.0:
+        raise ValueError(f"exclusion must be a rate in [0, 1), got {exclusion}")
+    keep = 1 - Fraction(str(exclusion))
+    m = n
+    while math.ceil(m * keep - Fraction(1, 2)) < n:
+        m += 1
+    return m
+
+
 def power_grid(c0: float, c3: float, scenarios=DEFAULT_SCENARIOS, repeats=DEFAULT_REPEATS, **kw) -> list[dict]:
     """simulate_power over every S in `scenarios` and n in `repeats`."""
     return [simulate_power(S, n, c0, c3, **kw) for S in scenarios for n in repeats]
