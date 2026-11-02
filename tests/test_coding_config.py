@@ -87,3 +87,21 @@ def test_the_http_client_waits_as_long_as_an_attempt():
     api = RawChatAPI("sim", base_url="http://localhost:1/v1", config=GenerateConfig(attempt_timeout=2400, timeout=3600))
     assert api.client_timeout == 2400
     assert RawChatAPI("sim", base_url="http://localhost:1/v1").client_timeout is None   # Inspect's default
+
+
+def test_pilot_config_keeps_session_5s_settings_and_concurrency():
+    """configs/coding/pilot.yaml (N2): the 6 flows scenarios in C0, C3 and C2, 3 epochs (18 per
+    condition), with session 5's models, sampling, limits, retries and max_connections (12): the
+    simulator's FP8 MoE output depends on what shares its batch, so concurrency stays pinned."""
+    pilot = load_config("configs/coding/pilot.yaml")
+    s5 = load_config("configs/coding/flows_dev_c3.yaml")
+    assert pilot["name"] == "n2-pilot"
+    assert pilot["scenarios"] == s5["scenarios"] and len(pilot["scenarios"]) == 6
+    assert pilot["conditions"] == ["C0", "C3", "C2"]   # Inspect runs them one after another, in this order
+    assert pilot["epochs"] == 3
+    for key in ("max_turns", "deadline", "agents", "simulators", "run"):
+        assert pilot[key] == s5[key], key
+    assert pilot["run"]["max_connections"] == 12
+    assert pilot["simulators_for"] == {"C3": ["agentworld"], "C2": ["agentworld"]}
+    header = open("configs/coding/pilot.yaml").read().split("\nfamily:")[0]
+    assert "DRAFT" in header and "max_connections" in header and "units" in header
