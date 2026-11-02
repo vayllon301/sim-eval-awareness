@@ -210,5 +210,16 @@ def kappa_files(results_path: Path, labels_path: Path, n_boot: int = 10000) -> d
     return compare(read_results(results_path), read_labels(labels_path), n_boot=n_boot)
 
 
+def _nan_to_none(x):
+    if isinstance(x, float) and math.isnan(x):
+        return None
+    if isinstance(x, dict):
+        return {k: _nan_to_none(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_nan_to_none(v) for v in x]
+    return x
+
+
 def dumps(rep: dict) -> str:
-    return json.dumps(rep, indent=1, default=lambda x: None)
+    """Strict JSON: an undefined kappa is null."""
+    return json.dumps(_nan_to_none(rep), indent=1, allow_nan=False)

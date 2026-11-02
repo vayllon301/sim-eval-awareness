@@ -421,8 +421,12 @@ def plan_calls(episodes: list[dict], read, prompts: dict[str, dict], prompt_vers
     return calls, refused
 
 
+def _print(line: str) -> None:
+    print(line, flush=True)
+
+
 async def run_calls(calls: list[dict], backend, store: ResultStore, concurrency: int = 4,
-                    progress=print) -> list[dict]:
+                    progress=_print) -> list[dict]:
     """Every planned call not already in the store; results are appended as they finish."""
     todo = [c for c in calls if store.done(c["key"]) is None]
     sem = asyncio.Semaphore(max(1, concurrency))

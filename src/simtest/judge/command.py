@@ -151,12 +151,16 @@ def _sizes(args) -> None:
         guard = E.TestSetGuard(args.source)
         eps, read = guard.drawn, (lambda ep: E.read_sample(guard.root, ep))
     else:
-        eps, _, root = E.tuning_set(args.source)
+        spec = E.load_tuning_spec(args.source)
+        guard = E.TestSetGuard((args.source.parent / spec["root"]).resolve() / spec["test_set"])
+        eps, _, root = E.tuning_set(args.source, guard=guard)
         read = lambda ep: E.read_sample(root, ep)  # noqa: E731
     sizes = []
     for ep in eps:
-        text = T.render_text(T.episode_steps(read(ep)))
-        sizes.append(J.count_tokens(J.build_prompt(longest["text"], text))[0])
+        steps = T.episode_steps(read(ep))
+        if args.source.suffix != ".json" and guard.reason(ep, steps):
+            continue                       # a tuning episode the test set refuses
+        sizes.append(J.count_tokens(J.build_prompt(longest["text"], T.render_text(steps)))[0])
     sizes.sort(reverse=True)
     over = sum(not J.fits(n, args.max_tokens, args.budget) for n in sizes)
     print(f"{len(sizes)} episodes; prompt tokens (the longest prompt, o200k_base): max {sizes[0]:,}, "

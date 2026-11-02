@@ -372,5 +372,6 @@ def test_compare_with_synthetic_labels():
     assert math.isnan(rep["labels"]["training"]["kappa"])         # one class on both sides
     assert rep["onset"]["primary"]["n"] == 5 and rep["onset"]["primary"]["same_step"] == 4
     assert "PRIMARY eval_awareness" in K.format_report(rep)
+    assert json.loads(K.dumps(rep))["labels"]["training"]["kappa"] is None
     hand["L3"]["transcript_sha256"] = "other"
     assert K.compare(rs, hand, n_boot=10)["labels"]["eval_awareness"]["transcript_mismatch"] == ["L3"]
