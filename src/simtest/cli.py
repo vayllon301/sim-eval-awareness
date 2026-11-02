@@ -1,10 +1,11 @@
-"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label}.
+"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
 (default office); `summarize` picks it from the logs (a coding log's task name ends in
 `coding`). `scenarios` lists both. `images` and `snapshot` are coding-only. `label` builds
-the hand-label sample and serves the labelling page (src/simtest/judge).
+the hand-label sample and serves the labelling page; `judge` runs and checks the awareness
+judge (src/simtest/judge).
 """
 
 from __future__ import annotations
@@ -133,6 +134,9 @@ def main(argv: list[str] | None = None) -> None:
     ls.add_argument("--labels", type=Path, default=None, help="default: labels.jsonl next to the manifest")
     ls.add_argument("--host", default="127.0.0.1")
     ls.add_argument("--port", type=int, default=8766)
+    from .judge.command import add_parser as add_judge_parser
+
+    add_judge_parser(sub)
     args = p.parse_args(argv)
 
     if args.cmd == "scenarios":
@@ -206,6 +210,10 @@ def main(argv: list[str] | None = None) -> None:
         from .judge.server import serve
 
         serve(args.manifest, args.labels, host=args.host, port=args.port)
+    elif args.cmd == "judge":
+        from .judge.command import main as judge_main
+
+        judge_main(args)
 
 
 if __name__ == "__main__":
