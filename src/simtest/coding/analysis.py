@@ -4,6 +4,9 @@ difference against C0, reusing the office analysis' statistics (src/simtest/anal
 Descriptive only. One row per agent x condition x simulator x scenario. A per-step
 divergence count (the simulator's observation vs C0's rendering of the real output) is a
 crude fidelity signal for N1; the graded fidelity audit is N2 (PLAN.md).
+
+The paired difference carries the primary test, the exact sign-flip test on the per-scenario
+differences (stats/signflip.py), next to the t interval.
 """
 
 from __future__ import annotations
@@ -13,8 +16,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from ..analysis import (  # reuse the office statistics and formatting helpers
-    _ratio, format_paired, paired_difference, wilson,
+    _ratio, format_paired as _format_paired, paired_difference as _paired_difference, wilson,
 )
+from ..stats.signflip import format_test, sign_flip_test
 from ..task import NO_SIMULATOR
 from .episode import VALID_END_REASONS
 from .machine import tool_output
@@ -93,6 +97,21 @@ def format_table(rows: list[dict]) -> str:
         lines.append(" | ".join([str(r[k]) for k in keys] + [str(r["n"]), str(r["n_excluded"])]
                                 + [f"{r[v]:.2f}" for v in COLUMNS.values()]))
     return "\n".join(lines)
+
+
+def paired_difference(episodes, *args, **kw) -> dict:
+    """The office analysis' scenario-level paired difference, plus the primary test: the exact
+    sign-flip test on its per-scenario differences (`sign_flip`)."""
+    res = _paired_difference(episodes, *args, **kw)
+    res["sign_flip"] = sign_flip_test(list(res["per_scenario"].values()))
+    return res
+
+
+def format_paired(res: dict) -> str:
+    text = _format_paired(res)
+    if "sign_flip" in res:
+        text += f"; primary test: {format_test(res['sign_flip'])}"
+    return text
 
 
 def design_cells(design: dict):

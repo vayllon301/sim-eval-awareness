@@ -6,6 +6,7 @@ requires-python = ">=3.14.1"
 dependencies = [
     "inspect-ai==0.3.281",
     "markdown-it-py==4.2.0",  # reads the Markdown agents write in report fields (fields.py)
+    "numpy>=2",               # the sign-flip test's power simulation (stats/); already locked through pandas
     "openai>=3.35.1",
     "pandas>=3.0.6",
     "pyyaml>=6",
