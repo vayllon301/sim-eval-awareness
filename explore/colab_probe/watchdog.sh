@@ -27,11 +27,10 @@
 # without grouping, an unread balance fell through to the time check alone. Each rule here is its
 # own test.
 set -u
-zmodload zsh/datetime
+source ${0:A:h}/lib.zsh   # say, balance, session_state, COLAB, NUM
 
 SESSION=${1:-}
 CAP=${2:-}
-NUM='^[0-9]+([.][0-9]+)?$'
 usage() { print -u2 "usage: watchdog.sh SESSION CAP_UNITS (env: IDLE_MIN=20 MAX_MIN= POLL=60 BAD_READS=5 START_BALANCE=)"; exit 2; }
 [[ -n $SESSION ]] || usage
 if ! { [[ $CAP =~ $NUM ]] && (( CAP > 0 )); }; then
@@ -49,27 +48,6 @@ for v in IDLE_MIN POLL BAD_READS; do
 done
 [[ -z $MAX_MIN || $MAX_MIN =~ $NUM ]] || { print -u2 "watchdog.sh: MAX_MIN must be a number (got '$MAX_MIN')"; exit 2; }
 [[ -z $START_BALANCE || $START_BALANCE =~ $NUM ]] || { print -u2 "watchdog.sh: START_BALANCE must be a number"; exit 2; }
-COLAB=(colab --auth adc)
-
-log() { print -r -- "$(date -u +%H:%M:%S) $*"; }
-
-# The balance in units, or a failure (the command failed, or its output has no balance line).
-balance() {
-  local out
-  out=$("${COLAB[@]}" usage 2>&1) || return 1
-  [[ $out =~ 'Current balance: ([0-9]+([.][0-9]+)?)' ]] || return 1
-  print -r -- $match[1]
-}
-
-# alive, gone or unknown. gone only when the list answered and doesn't name the session: either
-# "No active sessions" or other sessions' lines ("[name] endpoint | Hardware: ...").
-session_state() {
-  local out
-  out=$("${COLAB[@]}" sessions 2>&1) || { print unknown; return; }
-  if print -r -- "$out" | grep -qF -- "[$SESSION] "; then print alive
-  elif print -r -- "$out" | grep -qE -- '^(\[colab\] No active sessions|\[[^]]*\] )'; then print gone
-  else print unknown; fi
-}
 
 # A server's running/waiting requests ("3/0"), or "down" when /metrics can't be read.
 requests() {
@@ -83,7 +61,7 @@ requests() {
 busy_server() { [[ $1 != down && $1 != 0/0 ]]; }
 
 stop_vm() {
-  log "colab --auth adc stop -s $SESSION"
+  say "colab --auth adc stop -s $SESSION"
   "${COLAB[@]}" stop -s "$SESSION" 2>&1
 }
 
@@ -92,16 +70,16 @@ idle_since=$t0
 bad=0
 start=$START_BALANCE
 stopping=""
-log "watchdog: session $SESSION, cap $CAP units, idle $IDLE_MIN min, max ${${MAX_MIN:+$MAX_MIN min}:-none}, poll ${POLL}s," \
+say "watchdog: session $SESSION, cap $CAP units, idle $IDLE_MIN min, max ${${MAX_MIN:+$MAX_MIN min}:-none}, poll ${POLL}s," \
     "start balance ${start:-(first read)}"
 while true; do
-  state=$(session_state)
+  state=$(session_state $SESSION)
   if [[ $state == gone ]]; then
-    log "session $SESSION gone; watchdog ends"
+    say "session $SESSION gone; watchdog ends"
     exit 0
   fi
   if [[ -n $stopping ]]; then   # stopped already, and the session still shows (or the list failed)
-    log "session $SESSION is $state after the stop ($stopping): stopping again"
+    say "session $SESSION is $state after the stop ($stopping): stopping again"
     stop_vm
     sleep $POLL
     continue
@@ -129,7 +107,7 @@ while true; do
   else
     money="balance=? (failed read $bad of $BAD_READS) spent=?/$CAP"
   fi
-  log "$money agent=$agent simulator=$sim procs=$procs idle=$(printf %.1f $idle)m" \
+  say "$money agent=$agent simulator=$sim procs=$procs idle=$(printf %.1f $idle)m" \
       "elapsed=$(printf %.1f $elapsed)m"
 
   reason=""
@@ -143,7 +121,7 @@ while true; do
     reason="maximum time ($MAX_MIN min)"
   fi
   if [[ -n $reason ]]; then
-    log "STOP: $reason"
+    say "STOP: $reason"
     stopping=$reason
     stop_vm
   fi
