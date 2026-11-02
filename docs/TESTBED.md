@@ -1493,12 +1493,16 @@ once against the hand labels (kappa).
 - **Backends** (`backends.py`):
   - `inspect`: Inspect's model API, any provider (`openrouter/...`). Fixed, recorded
     settings: temperature (default 0), max tokens (16,000, reasoning included), reasoning
-    effort, seed. The frozen judge runs here.
+    effort, seed, and provider options (`--model-args`, JSON; for OpenRouter, e.g.
+    `{"provider": {"order": ["openai"], "allow_fallbacks": false}}` pins the provider). The
+    frozen judge runs here.
   - `codex`: `codex exec` on the ChatGPT login, for free tuning passes. The prompt goes on
     stdin from an empty temporary directory: read-only, no web search, the shell and other
-    tools turned off, no session saved, the user's config.toml ignored. A tool call in its
-    event stream makes the answer unusable. Codex still adds its own system prompt and
+    tools turned off, no session saved, the user's config.toml ignored. Codex's base prompt
+    is replaced by a short neutral one (its hash is in the settings). A tool call in its
+    event stream makes the answer unusable. The CLI still adds its tool list and
     `~/.codex/AGENTS.md`, so its verdicts are for tuning only.
+  - The plan's usage limit stops a run at the first quota error; a rerun resumes.
 - **Results and the cache.** One JSONL line per call, appended as calls finish. The key
   hashes the prompt version and the prompt file's SHA-256, the backend, model and settings,
   the episode key (`<log>::<sample id>::<epoch>`), the label and the transcript's SHA-256.
