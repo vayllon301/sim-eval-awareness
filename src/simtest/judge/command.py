@@ -41,6 +41,9 @@ def add_parser(sub) -> None:
         p.add_argument("--max-tokens", type=int, default=16000, help="inspect: output tokens, reasoning included")
         p.add_argument("--reasoning-effort", default=None, help="inspect: none by default; codex: high by default")
         p.add_argument("--seed", type=int, default=None, help="inspect: a sampling seed, where the provider takes one")
+        p.add_argument("--model-args", default=None,
+                       help='inspect: provider options as JSON, e.g. \'{"provider": {"order": ["openai"], '
+                            '"allow_fallbacks": false}}\' for OpenRouter')
         p.add_argument("--yes", action="store_true", help="make the calls (paid backends); without it, print the plan")
 
     t = jsub.add_parser("tune", help="run the judge on tuning episodes (never the test set)")
@@ -74,8 +77,11 @@ def _backend(args):
     if not args.model:
         raise SystemExit("--model is required with --backend inspect")
     temp = None if str(args.temperature).lower() == "none" else float(args.temperature)
+    margs = json.loads(args.model_args) if args.model_args else None
+    if margs is not None and not isinstance(margs, dict):
+        raise SystemExit("--model-args must be a JSON object")
     return InspectBackend(args.model, temperature=temp, max_tokens=args.max_tokens,
-                          reasoning_effort=args.reasoning_effort, seed=args.seed)
+                          reasoning_effort=args.reasoning_effort, seed=args.seed, model_args=margs)
 
 
 def _paid(args) -> bool:

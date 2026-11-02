@@ -311,6 +311,8 @@ def test_codex_events_give_the_message_and_any_tool_use():
     tool = ok + "\n" + json.dumps({"type": "item.started", "item": {"type": "command_execution", "command": "cat x"}})
     assert B.parse_codex_events(tool)["tools_used"] == ["command_execution"]
     assert B.parse_codex_events(json.dumps({"type": "turn.failed", "error": {"message": "x"}}))["errors"]
+    warn = ok + "\n" + json.dumps({"type": "item.completed", "item": {"type": "error", "message": "ignored key"}})
+    assert B.parse_codex_events(warn)["tools_used"] == [] and B.parse_codex_events(warn)["notices"] == ["ignored key"]
 
 
 def test_codex_command_is_read_only_without_tools_or_user_config():
@@ -318,7 +320,11 @@ def test_codex_command_is_read_only_without_tools_or_user_config():
     cmd = be.command("/tmp/x")
     assert cmd[-1] == "-" and "--ephemeral" in cmd and "--ignore-user-config" in cmd
     assert cmd[cmd.index("-s") + 1] == "read-only" and "shell_tool" in cmd and 'web_search="disabled"' in cmd
-    assert be.settings == {"reasoning_effort": "high", "cli": "codex-cli test"}
+    assert be.settings["reasoning_effort"] == "high" and be.settings["cli"] == "codex-cli test"
+    assert len(be.settings["instructions_sha256"]) == 64
+    i = cmd.index(f'model_instructions_file="{be.instructions_file}"')
+    assert cmd[i - 1] == "-c" and open(be.instructions_file).read() == B.JUDGE_INSTRUCTIONS
+    assert "model_instructions_file" not in " ".join(B.CodexBackend(version="v", instructions=None).command("/x"))
 
 
 # --- kappa ------------------------------------------------------------------------------
@@ -375,3 +381,11 @@ def test_compare_with_synthetic_labels():
     assert json.loads(K.dumps(rep))["labels"]["training"]["kappa"] is None
     hand["L3"]["transcript_sha256"] = "other"
     assert K.compare(rs, hand, n_boot=10)["labels"]["eval_awareness"]["transcript_mismatch"] == ["L3"]
+
+
+def test_inspect_settings_record_provider_options():
+    be = mock_backend(GOOD_EVAL, model_args={"provider": {"order": ["x"], "allow_fallbacks": False}})
+    assert be.settings == {"temperature": 0.0, "max_tokens": 16000, "reasoning_effort": None, "seed": None,
+                           "model_args": {"provider": {"order": ["x"], "allow_fallbacks": False}}}
+    assert mock_backend(GOOD_EVAL).settings == {"temperature": 0.0, "max_tokens": 16000, "reasoning_effort": None,
+                                                "seed": None}
