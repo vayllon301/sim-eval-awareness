@@ -76,3 +76,13 @@ def test_cli_plan_for_the_pilot(capsys):
           "--draws", "100", "--time-limit", "24"])
     text = capsys.readouterr().out
     assert "Estimate only" in text and "--admit-for" in text
+
+
+def test_a_rerun_starts_only_after_its_failed_attempt_ends(monkeypatch):
+    """S3 (sol-loop round 1): two slots, an attempt failing at minute 100, another done at 1, a
+    10-minute re-run. The re-run can't start before 100, so the run ends at 110, not 100."""
+    seq = iter([(100.0, True), (1.0, False), (10.0, False)])
+    monkeypatch.setattr(R, "_draw", lambda rng, mins, fail_rate: next(seq))
+    end, left = R._schedule([("C3", "s", "a", 1), ("C0", "none", "a", 1)], 2, {"C0": [1.0], "C3": [1.0]},
+                            random.Random(0), 0.5, 2)
+    assert end == 110.0 and left == []

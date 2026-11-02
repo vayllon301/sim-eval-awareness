@@ -58,24 +58,29 @@ def _draw(rng, minutes, fail_rate):
 
 def _schedule(queue, slots, minutes, rng, fail_rate, retries, start=0.0, requeue=True):
     """List scheduling of `queue` (keys) on `slots`; returns (end time, failed keys left over).
-    With `requeue`, a failed attempt goes to the back of the same queue while it has retries."""
-    queue = list(queue)
-    tries = {}
+    With `requeue`, a failed attempt's re-run joins the queue when that attempt ends (not before),
+    behind every first attempt not yet started, as in src/simtest/runqueue.py."""
+    pending = list(queue)
+    reruns: list = []          # (available from, sequence, key)
+    tries: dict = {}
     free = [start] * slots
     heapq.heapify(free)
-    end, left = start, []
-    i = 0
-    while i < len(queue):
-        key = queue[i]
-        i += 1
+    end, left, seq, i = start, [], 0, 0
+    while i < len(pending) or reruns:
         t = heapq.heappop(free)
+        if i < len(pending):
+            key, i = pending[i], i + 1
+        else:
+            avail, _, key = heapq.heappop(reruns)
+            t = max(t, avail)
         d, failed = _draw(rng, minutes[key[0]], fail_rate)
         heapq.heappush(free, t + d)
         end = max(end, t + d)
         if failed:
             tries[key] = tries.get(key, 0) + 1
             if requeue and tries[key] <= retries:
-                queue.append(key)
+                seq += 1
+                heapq.heappush(reruns, (t + d, seq, key))
             else:
                 left.append(key)
     return end, left
