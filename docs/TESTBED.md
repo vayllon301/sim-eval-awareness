@@ -1768,7 +1768,7 @@ primary test, and power by simulation for this test.
     - Never fewer than `--min-scenarios` scenarios (8, the plan's floor). Ties in cost go to
       more scenarios: the scenario is the unit of the test and of generalization.
     - The grid's n is the scored n. `--exclusion` plans the smallest n_planned with
-      round(n_planned × (1 − exclusion)) ≥ n, a half rounding down, exact on the decimal given
+      n_planned × (1 − exclusion) ≥ n, so ceil(n / (1 − exclusion)), exact on the decimal given
       (`planned_repeats`). The cost counts the planned episodes, excluded ones included.
     - When no design reaches the target, it says so and prints the best power found. Under
       `--budget`, it also prints the cheapest design over the budget that does.

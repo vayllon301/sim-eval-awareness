@@ -27,7 +27,7 @@ S x n_planned x (the sum of its conditions' units per episode). Over the grid:
   its estimate, so the cheapest cell isn't picked for its Monte Carlo noise.
 - No design below a floor of scenarios (8 by default); ties in cost go to more scenarios.
 - n_planned covers an expected exclusion rate: the smallest n_planned with
-  round(n_planned x (1 - exclusion)) >= n, a half rounding down (`planned_repeats`).
+  n_planned x (1 - exclusion) >= n, so ceil(n / (1 - exclusion)) (`planned_repeats`).
 The test, alpha and the simulation are the same with or without costs.
 """
 
@@ -120,9 +120,10 @@ def simulate_power(n_scenarios: int, repeats: int, c0: float, c3: float, spread:
 def planned_repeats(n: int, exclusion: float = 0.0) -> int:
     """Episodes to plan per scenario and condition so that `n` are scored after exclusions.
 
-    The smallest n_planned with round(n_planned x (1 - exclusion)) >= n, where round is to the
-    nearest whole number and a half rounds down (a half episode is never counted as scored). The
-    arithmetic is exact on the decimal given (0.1 is one tenth). exclusion = 0 gives n.
+    The smallest n_planned whose expected scored count, n_planned x (1 - exclusion), is at least n:
+    ceil(n / (1 - exclusion)). The expected count is never rounded up, so it never falls below
+    the n the power calculation asks for. The arithmetic is exact on the decimal given (0.1 is one
+    tenth). exclusion = 0 gives n.
     """
     import math
     from fractions import Fraction
@@ -133,7 +134,7 @@ def planned_repeats(n: int, exclusion: float = 0.0) -> int:
         raise ValueError(f"exclusion must be a rate in [0, 1), got {exclusion}")
     keep = 1 - Fraction(str(exclusion))
     m = n
-    while math.ceil(m * keep - Fraction(1, 2)) < n:
+    while m * keep < n:
         m += 1
     return m
 
@@ -305,7 +306,7 @@ def format_ranking(res: dict, label: str | None = None) -> str:
            f"repeat; at least {res['min_scenarios']} scenarios{budget}; ties in cost go to more scenarios"]
     if ex:
         out.append(f"- n is scored; planned n covers {ex * 100:g}% exclusions: the smallest planned n with "
-                   f"round(planned n x {1 - ex:g}) >= n, a half rounding down")
+                   f"planned n x {1 - ex:g} >= n")
     else:
         out.append("- no exclusion rate given: planned n = n")
     if res["designs"]:
@@ -365,8 +366,8 @@ def add_parser(sub) -> None:
                    help=f"never report a design with fewer scenarios (default {DEFAULT_MIN_SCENARIOS})")
     g.add_argument("--exclusion", type=float, default=None,
                    help="expected share of excluded episodes (default 0). The planned repeats are the smallest "
-                        "n_planned with round(n_planned x (1 - exclusion)) >= n, the grid's scored n, a half "
-                        "rounding down; costs count the planned episodes")
+                        "n_planned with n_planned x (1 - exclusion) >= n, the grid's scored n; costs count the "
+                        "planned episodes")
     g.add_argument("--budget", type=float, default=None, help="list only designs within this many units")
 
 

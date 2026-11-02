@@ -86,24 +86,24 @@ def test_grid_table_and_cli(capsys):
 
 
 def test_planned_repeats_cover_the_exclusion_rate():
+    """The expected scored n is never below the n the power calculation asks for: the smallest
+    n_planned with n_planned x (1 - exclusion) >= n, so ceil(n / (1 - exclusion)). Rounding
+    the expected count instead let it fall up to half an episode short (n=4 at 10% had no
+    inflation), and fewer episodes than the power calculation asks for lower the experiment."""
     assert [planned_repeats(n) for n in (1, 5, 30)] == [1, 5, 30]           # no exclusions: as designed
-    assert planned_repeats(10, 0.1) == 11          # 11 x 0.9 = 9.9 -> 10; 10 x 0.9 = 9
-    assert planned_repeats(20, 0.1) == 22          # 22 x 0.9 = 19.8 -> 20; 21 x 0.9 = 18.9 -> 19
-    assert planned_repeats(20, 0.15) == 23         # 23 x 0.85 = 19.55 -> 20; 22 x 0.85 = 18.7 -> 19
-    # a half rounds down: 5 x 0.9 = 4.5 counts as 4 scored episodes, so 5 planned can't cover n = 5
+    assert planned_repeats(4, 0.1) == 5            # 4 x 0.9 = 3.6 < 4; 5 x 0.9 = 4.5
+    assert planned_repeats(3, 0.1) == 4
+    assert planned_repeats(10, 0.1) == 12          # 11 x 0.9 = 9.9 < 10
+    assert planned_repeats(20, 0.1) == 23          # 22 x 0.9 = 19.8 < 20
     assert planned_repeats(5, 0.1) == 6
-    assert planned_repeats(5, 0.5) == 10           # 9 x 0.5 = 4.5 -> 4
-    # the rule, exactly: the smallest planned n whose rounded expected scored n is at least n
+    assert planned_repeats(9, 0.1) == 10           # exactly 9.0: enough
     from fractions import Fraction
 
-    def scored(m, e):
-        x = m * (1 - Fraction(str(e)))
-        return math.ceil(x - Fraction(1, 2))       # nearest whole number, a half down
-
     for e in (0.0, 0.05, 0.1, 0.125, 0.15, 0.3):
+        keep = 1 - Fraction(str(e))
         for n in range(1, 41):
             m = planned_repeats(n, e)
-            assert scored(m, e) >= n and scored(m - 1, e) < n, (n, e, m)
+            assert m * keep >= n and (m - 1) * keep < n, (n, e, m)
     with pytest.raises(ValueError):
         planned_repeats(10, 1.0)
     with pytest.raises(ValueError):
@@ -143,17 +143,17 @@ def test_cheapest_ties_in_cost_go_to_more_scenarios():
 
 def test_cheapest_costs_the_planned_episodes():
     ok = (0.9, 0.85, 0.95)
-    rows = [_row(10, 8, *ok), _row(8, 10, *ok)]
-    assert _cells(cheapest_designs(rows, COST)) == [(10, 8), (8, 10)]       # 80 = 80: more scenarios first
+    rows = [_row(12, 10, *ok), _row(10, 12, *ok)]
+    assert _cells(cheapest_designs(rows, COST)) == [(12, 10), (10, 12)]     # 120 = 120: more scenarios first
     res = cheapest_designs(rows, COST, exclusion=0.1)
-    assert _cells(res) == [(8, 10), (10, 8)]           # planned 8 x 11 = 88 < 10 x 9 = 90
+    assert _cells(res) == [(10, 12), (12, 10)]         # planned 10 x 14 = 140 < 12 x 12 = 144
     c = res["cheapest"]
-    assert c["planned_repeats"] == 11 and c["episodes"] == 8 * 11 * 4
-    assert c["units"] == pytest.approx(8 * 11 * 12.4) and c["power"] == 0.9     # power at the scored n
+    assert c["planned_repeats"] == 14 and c["episodes"] == 10 * 14 * 4
+    assert c["units"] == pytest.approx(10 * 14 * 12.4) and c["power"] == 0.9     # power at the scored n
     # only the run's conditions are paid for
     res = cheapest_designs(rows, COST, conditions=["C3", "C0"])
-    assert res["conditions"] == ["C0", "C3"] and res["cheapest"]["units"] == pytest.approx(80 * 4.4)
-    assert res["cheapest"]["episodes"] == 80 * 2
+    assert res["conditions"] == ["C0", "C3"] and res["cheapest"]["units"] == pytest.approx(120 * 4.4)
+    assert res["cheapest"]["episodes"] == 120 * 2
 
 
 def test_cheapest_never_reports_fewer_scenarios_than_the_floor():
@@ -221,14 +221,14 @@ def test_cli_ranks_designs_by_cost(capsys):
     assert ranking.startswith("C0 0, C3 0.9, logit spread 0 shared + 0 in the effect")
     assert "the lower end of its 95% Monte Carlo interval is at least 0.8, not the point estimate" in ranking
     assert "C0, C1, C2, C3 at 0.4 + 4 + 4 + 4 = 12.4 units per scenario and repeat; at least 8 scenarios" in ranking
-    assert "round(planned n x 0.9) >= n, a half rounding down" in ranking
+    assert "planned n x 0.9 >= n" in ranking
     lines = ranking.splitlines()
     table = lines[lines.index(HEADER) + 1:-1]
-    # every cell reaches the target; S=6 is cheaper but below the floor; 5 and 10 scored need 6 and 11 planned
+    # every cell reaches the target; S=6 is cheaper but below the floor; 5 and 10 scored need 6 and 12 planned
     assert [row.split(" | ")[:5] for row in table] == [["8", "5", "6", "192", "595.2"],
                                                        ["12", "5", "6", "288", "892.8"],
-                                                       ["8", "10", "11", "352", "1,091.2"],
-                                                       ["12", "10", "11", "528", "1,636.8"]]
+                                                       ["8", "10", "12", "384", "1,190.4"],
+                                                       ["12", "10", "12", "576", "1,785.6"]]
     assert lines[-1].startswith("Cheapest: S=8, n=5 (6 planned) per scenario and condition, 192 episodes, 595.2 units")
 
     main(RANKED[:4] + ["0.9", "0.95"] + RANKED[5:] + ["--json"])       # one ranking per (c0, c3) pair
@@ -255,8 +255,8 @@ def test_cli_ranking_when_none_reaches_and_within_a_budget(capsys):
     main(RANKED + ["--budget", "900", "--target", "0.9", "--min-scenarios", "6"])
     lines = capsys.readouterr().out.splitlines()
     table = lines[lines.index(HEADER) + 1:-1]
-    # 446.4, 595.2, 818.4 and 892.8 units
-    assert [row.split(" | ")[:2] for row in table] == [["6", "5"], ["8", "5"], ["6", "10"], ["12", "5"]]
+    # 446.4, 595.2, then 892.8 twice (n=10 plans 12 at 10%): the tie goes to more scenarios
+    assert [row.split(" | ")[:2] for row in table] == [["6", "5"], ["8", "5"], ["12", "5"], ["6", "10"]]
 
 
 @pytest.mark.parametrize("extra, why", [
