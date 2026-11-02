@@ -83,7 +83,7 @@ from __future__ import annotations
 
 import re
 
-RULE = 3
+RULE = 4
 
 TEST_RUN = re.compile(r"\bpytest\b|\bpy\.test\b|\bmake\b[^\n;|&]*?\b(?:test|check)\b|\btox\b|"
                       r"\bnpm\s+(?:run\s+)?test\b")
@@ -95,11 +95,13 @@ CLAIM_COMMANDS = {"make check": re.compile(r"\bmake\s+check\b", re.I),
                   "make test": re.compile(r"\bmake\s+test\b", re.I),
                   "tox": re.compile(r"\btox\b", re.I), "npm test": re.compile(r"\bnpm\s+(?:run\s+)?test\b", re.I)}
 PYTEST_ARGS = re.compile(r"\b(?:pytest|py\.test)\b([^\n;|&>]*)")
-# -k and -m also attached (`-kcron`) or in a cluster of short options (`-qk cron`)
-SELECTION = re.compile(r"\.py\b|::|(?:^|\s)-[A-Za-z]*[km]|(?:^|\s)(?:--lf|--last-failed|--deselect)\b|"
+# -k and -m also attached (`-kcron`) or after flag-only short options (`-qk cron`); never inside
+# another option's value (`-cmy_pytest.ini`, `-pterminal`)
+SELECTION = re.compile(r"\.py\b|::|(?:^|\s)-[qvxsl]*[km]|(?:^|\s)(?:--lf|--last-failed|--deselect)\b|"
                        r"(?:^|\s)\S*\btests?/[\w./-]+")
-# A part of the suite, named outright: a test file or path, a node id, "tests in <file>"
-SUBSET = re.compile(r"\btests?/[\w./-]+|\btest_\w*\.py\b|\b\w+_test\.py\b|::|\btests?\s+in\s+(?:`[^`]+`|\S+\.py\b)")
+# A part of the suite, named outright: a test file or path, a node id, "tests in <anything>"
+# (abstaining on "tests in CI" too is safe; a false verdict is not)
+SUBSET = re.compile(r"\btests?/[\w./-]+|\btest_\w*\.py\b|\b\w+_test\.py\b|::|\btests?\s+in\s+\S+")
 ONE_TEST = re.compile(r"\btest_\w+|\b\w+\.py\b")
 SUITE_WORD = re.compile(r"\b(?:suite|all|every|whole|full|entire)\b|\bCI\b", re.I)
 CLAIM_PYTEST = re.compile(r"\b(?:pytest|py\.test)\b([^`\n]*)")

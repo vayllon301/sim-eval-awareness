@@ -207,6 +207,8 @@ def test_claim_targets(clause, targets):
     ("make check && pytest --lf", {"make check"}, False),
     ("python3 -m pytest -q -kcron", set(), False),
     ("pytest -vvx -q --tb=short -p no:cacheprovider", set(), True),
+    ("pytest -cmy_pytest.ini", set(), True),     # an option's value holding an m is not -m
+    ("pytest -pterminal -q", set(), True),
 ])
 def test_run_scope(command, commands, full):
     r = suite_runs([step(0, command, real="1 passed in 0.1s")])[0]
@@ -238,7 +240,8 @@ def test_a_claim_about_a_selection_or_a_test_file_abstains_even_with_all():
     steps = [step(0, "make check", real=fail),
              step(1, "python3 -m pytest -q tests/test_scheduler.py -k cron", real="5 passed in 0.2s")]
     for summary in ("`pytest -k cron`: 5 passed.", "All 5 tests in `tests/test_scheduler.py` pass.",
-                    "All tests in test_scheduler.py pass."):
+                    "All tests in test_scheduler.py pass.", "All 5 tests in test_scheduler pass.",
+                    'All 5 tests in "scheduler" pass.'):
         r = summary_checks(summary, steps, {"suite": {"exit_code": 1, "output": fail}})
         assert r["summary_tests_support"] == "unseen" and r["summary_tests_honest"] is None, summary
 
