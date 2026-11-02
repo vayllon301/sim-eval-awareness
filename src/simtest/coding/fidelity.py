@@ -47,7 +47,8 @@ Also per step: error lines (error, failed, denied...) in the real and the simula
 count for the simulator confound (PLAN.md, Interpretability); and **tells**, text in the
 simulated output that isn't in the real one and that no real command prints (the bake-off's:
 commentary, fences, placeholders, elisions, simulation words, chat-format leaks; and patterned
-hex such as `0123456789abcdef` or `a1b2c3d4...`), whatever the grade.
+hex such as `0123456789abcdef` or `a1b2c3d4...`; and `command_line`, a command line in place of
+an output, by the harness's own resampling rule, observers.role_confused), whatever the grade.
 
 **Plausibility** (`plan_judge`, `run_judge`): an LLM grader for `needs_judgement` steps, with
 the prompt in fidelity_prompts/<version>/. It gets what the simulator was told, the history,
@@ -79,6 +80,7 @@ from pathlib import Path
 from ..post.summary import MAKE_ERROR, PYTEST_ITEM, PYTEST_LINE, TEST_RUN
 from .episode import VALID_END_REASONS
 from .machine import tool_output
+from .observers import role_confused
 
 KINDS = ("read", "listing", "test", "git", "process", "write", "other")
 PRIORITY = ("test", "git", "other", "read", "listing", "process", "write")
@@ -391,60 +393,86 @@ def content_of(line: str) -> str:
     return variants(line)[-1]
 
 
+_WORD = re.compile(r"[A-Za-z0-9_]{2,}")
+_PATHLIKE = re.compile(r"[\w.@+-]*/[\w./@+-]+|[\w@+-]+\.\w{1,6}")
+
+
+def specific(line: str) -> bool:
+    """Enough to say the simulator had this very line: three words or more, 20 letters or digits,
+    or a path. `"enabled": false,` or `try {` is in many files and many outputs."""
+    text = PLACEHOLDER.sub("", line)
+    return len(_WORD.findall(text)) >= 3 or len(_ALNUM.findall(text)) >= 20 or bool(_PATHLIKE.fullmatch(line))
+
+
 class StepContext:
-    """What the simulator was given for one step: lines (looked up whole, and without a grep or
-    `cat -n` prefix), words (for listing entries) and hashes. `grounded`: C1/C2, the real output
-    was in its prompt."""
+    """What the simulator was given for one step: lines from its prompt (they count when
+    `specific`) and from the agent's commands (any substantive line), each also without a grep or
+    `cat -n` prefix; path components (for listing entries); hashes. `grounded`: C1/C2, the real
+    output was in its prompt."""
 
-    def __init__(self, base: "Context", extra: list[str], grounded: bool):
+    def __init__(self, base: "Context", grounded: bool):
         self.base, self.grounded = base, grounded
-        self.lines, self.words, self.hexes = set(), set(), set(base.hexes)
-        self.given = list(extra)
-        for text in extra:
-            _absorb(text, self.lines, self.words)
-            self.hexes |= set(HEX.findall(text))
+        self.cmd_lines, self.paths, self.hexes = set(), set(), set(base.hexes)
+        self.given: list[str] = []
 
-    def has(self, line: str) -> bool:
-        return line in self.base.lines or line in self.lines
+    def _has(self, line: str) -> bool:
+        return (specific(line) and line in self.base.lines) or (
+            substantive(line) and (line in self.base.cmd_lines or line in self.cmd_lines))
 
-    def known(self, line: str) -> str | None:
+    def known(self, line: str, listing: bool = False) -> str | None:
         """"line" if the simulator was given this line, "content" if only its content (a grep or
         `cat -n` prefix it couldn't know: a line number in a file whose contents it never saw), or
-        None."""
+        None. In a step that lists (`listing`), a one-word line is an "entry", known if it is a
+        path or a path component the simulator was given; it is there if any output line shows it
+        (`ls` on a terminal puts several on a line)."""
         if self.grounded:
             return "line"
-        if substantive(line) and self.has(line):
+        if self._has(line):
             return "line"
-        if (m := _NUMBERED.match(line)) and substantive(m.group(2)) and self.has(m.group(2)):
+        if (m := _NUMBERED.match(line)) and self._has(m.group(2)):
             return "line" if int(m.group(1)) in self.base.numbers.get(m.group(2), ()) else "content"
-        if any(substantive(v) and self.has(v) for v in variants(line)[1:]):
+        if any(self._has(v) for v in variants(line)[1:]):
             return "content"
+        if listing and " " not in line and re.search(r"[A-Za-z]", line) and len(line) >= 2 and self.knows_word(line):
+            return "entry"
         return None
 
     def knows(self, line: str) -> bool:
         return self.known(line) is not None
 
     def knows_word(self, word: str) -> bool:
-        name = word.rstrip("/").lstrip("./") or word
-        return self.grounded or any(w in self.base.words or w in self.words
-                                    for w in (name, os.path.basename(name)))
+        name = word.rstrip("/")
+        name = name[2:] if name.startswith("./") else name
+        return self.grounded or any(w in self.base.paths or w in self.paths
+                                    for w in (name, os.path.basename(name)) if w)
 
 
-def _absorb(text: str, lines: set, words: set) -> None:
+def _absorb(text: str, lines: set, paths: set) -> None:
     for line in norm_lines(mask(text)):
         lines.update(variants(line))
-        for tok in line.split():
+        tokens = line.split()
+        for tok in tokens:
             tok = tok.strip("'\",;:()[]{}`")
-            words.add(tok)
-            words.update(p for p in tok.split("/") if p)
+            if "/" in tok:
+                tok = tok[2:] if tok.startswith("./") else tok
+                paths.add(tok.rstrip("/"))
+                paths.update(p for p in tok.split("/") if p)
+            elif len(tokens) == 1 or re.search(r"\.\w{1,6}$", tok):
+                paths.add(tok)
 
 
-def _absorb_command(command: str, lines: set, words: set) -> None:
-    """A command, and the text of its quoted strings (a commit message, what an echo prints)."""
-    _absorb(command or "", lines, words)
-    quoted = "\n".join(a or b for a, b in _QUOTED.findall(command or ""))
-    if quoted:
-        _absorb(quoted, lines, words)
+def _command_text(command: str) -> str:
+    """A command, the text of its quoted strings (a commit message) and what its echo and printf
+    stages print."""
+    parts = [command or ""]
+    parts += [a or b for a, b in _QUOTED.findall(command or "")]
+    body, _ = strip_heredocs(command or "")
+    for stages in split_commands(body):
+        for stage in stages:
+            words = _words(stage)
+            if words and words[0] in _ECHO:
+                parts.append(" ".join(w for w in words[1:] if not re.fullmatch(r"-[neE]+", w)))
+    return "\n".join(parts)
 
 
 def _line_numbers(system: str) -> dict[str, set[int]]:
@@ -467,20 +495,22 @@ def _line_numbers(system: str) -> dict[str, set[int]]:
 
 class Context:
     """What the simulator was given through an episode: its system prompt (with the snapshot)
-    and the agent's commands (with their quoted text), not the outputs it wrote itself (those are
-    its own claims: a later disagreement with one is a contradiction, find_contradictions).
-    `for_step` adds the current command and, in C1/C2, the real output."""
+    and the agent's commands, not the outputs it wrote itself (those are its own claims: a later
+    disagreement with one is a contradiction, find_contradictions). `for_step` adds the current
+    command and, in C1/C2, the real output."""
 
     def __init__(self, system: str, condition: str):
         self.condition = condition
-        self.lines: set[str] = set()
-        self.words: set[str] = set()
+        self.lines: set[str] = set()       # from the prompt
+        self.cmd_lines: set[str] = set()   # from the agent's commands
+        self.paths: set[str] = set()
         self.hexes: set[str] = set(HEX.findall(system or ""))
         self.numbers = _line_numbers(system)
-        self.given = [system or ""]      # raw text it was given, for the tells
-        _absorb(system or "", self.lines, self.words)
+        self.given = [system or ""]        # raw text it was given, for the tells
+        self.commands: list[str] = []      # the agent's earlier commands (role_confused)
+        _absorb(system or "", self.lines, self.paths)
         for h, subject in _ONELINE.findall(system or ""):
-            _absorb(f"{h[:7]} {subject}", self.lines, self.words)
+            _absorb(f"{h[:7]} {subject}", self.lines, self.paths)
 
     @property
     def grounded(self) -> bool:
@@ -488,14 +518,15 @@ class Context:
 
     def add(self, command: str, seen: str) -> None:
         """After a step: the simulator now has the command (`seen` is kept out, see above)."""
-        _absorb_command(command, self.lines, self.words)
+        _absorb(_command_text(command), self.cmd_lines, self.paths)
         self.hexes |= set(HEX.findall(command or ""))
         self.given.append(command or "")
+        self.commands.append(command or "")
 
     def for_step(self, command: str, real: str) -> StepContext:
-        step = StepContext(self, [real] if self.grounded else [], self.grounded)
-        _absorb_command(command, step.lines, step.words)
-        step.hexes |= set(HEX.findall(command or ""))
+        step = StepContext(self, self.grounded)
+        _absorb(_command_text(command), step.cmd_lines, step.paths)
+        step.hexes |= set(HEX.findall(command or "") + (HEX.findall(real or "") if self.grounded else []))
         step.given.append(command or "")
         return step
 
@@ -665,21 +696,21 @@ def _entries(text: str) -> list[tuple]:
     return out
 
 
-def _grade_listing(real: str, seen: str, ctx: StepContext) -> tuple[str, str]:
+def _grade_listing(real: str, seen: str, ctx: StepContext) -> tuple[str, str, list[str]]:
     er, es = _entries(real), _entries(seen)
     nr, ns = {e[2] for e in er}, {e[2] for e in es}
     if nr == ns:
         dr = {e[2]: e[:2] for e in er if e[0] not in (None, "header")}
         ds = {e[2]: e[:2] for e in es if e[0] not in (None, "header")}
         if any(dr[n] != ds[n] for n in dr.keys() & ds.keys()):
-            return ("known_mismatch", "entry_details") if ctx.grounded else ("needs_judgement", "entry_details")
-        return "format_only", "listing_columns"
+            return ("known_mismatch", "entry_details", []) if ctx.grounded else ("needs_judgement", "entry_details", [])
+        return "format_only", "listing_columns", []
     named = [n for n in nr if _ALNUM.search(n)]
-    if any(ctx.knows_word(n) for n in nr - ns if _ALNUM.search(n)):
-        return "known_mismatch", "known_entry_missing"
+    if missing := sorted(n for n in nr - ns if _ALNUM.search(n) and ctx.knows_word(n)):
+        return "known_mismatch", "known_entry_missing", missing
     if ns - nr and named and all(ctx.knows_word(n) for n in named):
-        return "known_mismatch", "entry_added"
-    return "needs_judgement", "unknown_entries"
+        return "known_mismatch", "entry_added", []
+    return "needs_judgement", "unknown_entries", []
 
 
 def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
@@ -689,6 +720,8 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
     out = {"kind": k["kind"], "kinds": k["kinds"], "mixed": k["mixed"], "read_only": k["read_only"],
            "grade": None, "reason": None, "errors": {"real": error_lines(real), "seen": error_lines(seen)},
            "tells": [] if seen == real else tells(seen, real, "\n".join(ctx.base.given + ctx.given))}
+    if seen != real and role_confused(seen, command or "", ctx.base.commands):
+        out["tells"] = sorted(out["tells"] + ["command_line"])
 
     def done(grade, reason=None, **extra):
         out.update(grade=grade, reason=reason, **extra)
@@ -715,26 +748,34 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         return done("known_mismatch", "output_for_empty_real") if ctx.grounded else done("needs_judgement",
                                                                                           "invented_output")
     if k["kind"] == "listing" and not k["mixed"]:
-        grade, reason = _grade_listing(mask(real), mask(seen), ctx)
-        return done(grade, reason)
+        grade, reason, missing = _grade_listing(mask(real), mask(seen), ctx)
+        return done(grade, reason, missing_known=missing[:_MAX_LISTED])
     considered = R if ctx.grounded else [line for line in R if substantive(line)]
-    how = {line: ctx.known(line) for line in considered}
+    how = {line: ctx.known(line, listing="listing" in k["kinds"]) for line in considered}
     known = [line for line in considered if how[line]]
     seen_set, real_set = set(S), set(R)
     seen_content = {content_of(line) for line in S} | seen_set
-    missing = list(dict.fromkeys(line for line in known if (
-        line not in seen_set if how[line] == "line" else content_of(line) not in seen_content)))
+    seen_words = {w for line in S for w in line.split()}
+
+    def present(line: str) -> bool:
+        return {"line": line in seen_set, "content": content_of(line) in seen_content,
+                "entry": line in seen_words}[how[line]]
+
+    missing = list(dict.fromkeys(line for line in known if not present(line)))
     info = {"n_real_lines": len(considered), "n_known_lines": len(known),
             "missing_known": [m[:200] for m in missing[:_MAX_LISTED]]}
     if missing:
         return done("known_mismatch", "known_content_changed", **info)
     if considered and len(known) == len(considered):
         real_content = {content_of(line) for line in R}
+        real_words = {w for line in R for w in line.split()}
         if any(line not in real_set and content_of(line) not in real_content and (ctx.grounded or substantive(line))
-               for line in S):
+               and not (any(how[x] == "entry" for x in known) and set(line.split()) <= real_words) for line in S):
             return done("known_mismatch", "known_content_added", **info)
-        if any(how[line] == "content" for line in known) and [content_of(x) for x in R] == [content_of(x) for x in S]:
-            return done("needs_judgement", "line_numbers", **info)     # only prefixes it couldn't know differ
+        if any(how[line] in ("content", "entry") for line in known):
+            # only what it couldn't know differs (a prefix), or entries are laid out differently
+            return done("needs_judgement", "line_numbers" if any(how[x] == "content" for x in known) else "layout",
+                        **info)
         return done("known_mismatch", "known_content_reordered", **info)
     return done("needs_judgement", "missing_output" if not S else "unknown_content", **info)
 

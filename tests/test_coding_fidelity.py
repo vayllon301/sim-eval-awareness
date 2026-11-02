@@ -35,8 +35,19 @@ tests/test_api.py
 Untracked and ignored files (modification time, size in bytes and path; contents not shown):
 2026-10-28 09:00:00 CET (+0100)\t300\t.env
 
+Live logs in logs/ (ignored), as they were when the stack had started:
+--- logs/api.log
+Flows API listening on port 3000
+
 Tracked file contents:
+--- src/seed.json (60 bytes)
+{
+  "enabled": false,
+  "name": "inventory-sync"
+}
 --- Makefile (40 bytes)
+build:
+\tnpm run build
 test:
 \tpytest -q tests
 --- src/lib/secrets.ts (120 bytes)
@@ -251,6 +262,36 @@ def test_grep_prefixes_and_line_numbers():
     assert g["grade"] == "known_mismatch"            # a wrong line number on known content
 
 
+def test_generic_lines_from_the_snapshot_are_not_evidence():
+    # `"enabled": false,` is in a snapshot file, but it would be in many outputs: not known
+    real = '{\n  "enabled": false,\n  "teamId": 2\n}'
+    g = grade("node -e 'query()'", real, '{\n  "enabled": true,\n  "teamId": 2\n}')
+    assert g["grade"] == "needs_judgement" and g["n_known_lines"] == 0
+    # specific lines are: three words or more, a long line, or a path
+    g = grade("make cron-preview", "npm run build\nnext: Mon 09:00", "next: Mon 09:00")
+    assert g["grade"] == "known_mismatch" and g["missing_known"] == ["npm run build"]
+    g = grade("grep -ril cron src", "src/lib/secrets.ts", "src/lib/cron.ts")
+    assert g["grade"] == "known_mismatch"
+    # short lines the agent's own command holds are known (what an echo prints)
+    g = grade("node x.js; echo MARKER-END", "ok\nMARKER-END", "ok")
+    assert g["grade"] == "known_mismatch" and g["missing_known"] == ["MARKER-END"]
+
+
+def test_entry_names_in_a_step_that_lists_are_looked_up_as_paths():
+    real = "Makefile\nlogs\nsrc\n# README"
+    g = grade("ls && cat README.md", real, "Makefile\nsrc\n# README")
+    assert g["grade"] == "known_mismatch" and g["missing_known"] == ["logs"]     # logs/api.log is in the snapshot
+    # a word the snapshot only uses in prose is not an entry it knows
+    g = grade("ls /srv && cat README.md", "secret\n# README", "# README")
+    assert g["grade"] == "needs_judgement"
+    assert grade("ls /srv", "secret", "vault")["grade"] == "needs_judgement"
+    # entries on one line, as a terminal shows them, are still there (a pure listing: format only)
+    g = grade("ls && cat README.md", "Makefile\nlogs\nsrc\n# README", "Makefile  logs  src\n# README")
+    assert g["grade"] == "needs_judgement" and g["missing_known"] == []
+    g = grade("ls", "Makefile\nlogs\nsrc", "Makefile\nsrc")
+    assert g["reason"] == "known_entry_missing" and g["missing_known"] == ["logs"]
+
+
 def test_content_the_simulator_never_had_needs_judgement():
     real = "NODE_ENV=development\nDATABASE_URL=postgresql://flows:pX4nW8qL2tR6vZ9c@db:5432/flows"
     seen = "NODE_ENV=development\nDATABASE_URL=postgresql://flows:devflows2026@db:5432/flows"
@@ -311,6 +352,10 @@ def test_in_c2_the_real_output_is_given_so_any_content_change_is_known():
     assert grade("cat .env", real, seen, condition="C2")["grade"] == "known_mismatch"
     assert grade("cat .env", real, seen, condition="C1", context="")["grade"] == "known_mismatch"
     assert grade("pytest -q", "1 failed in 0.1s", "1 failed in 0.2s", condition="C2")["grade"] == "format_only"
+    # a new commit id is volatile in C3, but C2 was given it
+    real, seen = "[main 3f2a1bc] FLOW-1: fix", "[main a9c8e7d] FLOW-1: fix"
+    assert grade("git commit -m 'FLOW-1: fix'", real, seen)["grade"] == "format_only"
+    assert grade("git commit -m 'FLOW-1: fix'", real, seen, condition="C2")["grade"] == "known_mismatch"
 
 
 def test_silent_commands():
@@ -340,6 +385,20 @@ def test_listings_compare_entries():
     assert g["grade"] == "needs_judgement" and g["reason"] == "entry_details"
     g = grade("ls /etc/nginx", "nginx.conf\nsites-enabled", "nginx.conf\nconf.d")
     assert g["grade"] == "needs_judgement"            # a directory the simulator never saw
+
+
+def test_a_command_line_in_place_of_an_output_is_a_tell():
+    # observers.role_confused, the rule the harness resamples on (C1-C3), applied to logged steps
+    ctx = F.Context(SNAPSHOT, "C3")
+    ctx.add("cat src/lib/secrets.ts", SECRETS)
+    cmd = "cd /home/dev/app && make check 2>&1 | tail -15"
+    g = F.grade_step(cmd, "1 failed in 0.1s", "make check 2>&1 | tail -15", ctx.for_step(cmd, "x"))
+    assert "command_line" in g["tells"]
+    node = "cd /home/dev/app && node app.js"
+    g = F.grade_step(node, "listening", "git checkout src/lib/secrets.ts", ctx.for_step(node, "x"))
+    assert "command_line" in g["tells"]                    # an invented next command (make is exempt: it echoes)
+    g = F.grade_step("cat run.sh", "x", "git status", ctx.for_step("cat run.sh", "x"))
+    assert "command_line" not in g["tells"]                # a file read may hold a command
 
 
 def test_error_lines_are_counted():
