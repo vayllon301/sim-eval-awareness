@@ -82,6 +82,7 @@ def test_grid_table_and_cli(capsys):
           "--label", "development, not the pilot", "--json"])
     out = json.loads(capsys.readouterr().out)
     assert out["label"] == "development, not the pilot" and out["rows"][0]["scenarios"] == 8
+    assert "ranking" not in out                     # no --cost, no ranking
 
 
 def test_planned_repeats_cover_the_exclusion_rate():
@@ -204,3 +205,73 @@ def test_cheapest_bad_inputs():
         cheapest_designs(rows, {"C0": 0.0, "C3": 0.0})                    # nothing costs anything
     with pytest.raises(ValueError):
         cheapest_designs(rows + [_row(8, 10, 0.9, 0.85, 0.95, c3=0.5)], COST)    # one (c0, c3) pair at a time
+
+
+RANKED = ["power", "--c0", "0", "--c3", "0.9", "--scenarios", "6", "8", "12", "--repeats", "5", "10", "--reps", "200",
+          "--cost", "C0=0.4", "C1=4", "C2=4", "C3=4", "--exclusion", "0.1", "--label", "development"]
+HEADER = "S | n | planned n | episodes | units | power [95% MC interval]"
+
+
+def test_cli_ranks_designs_by_cost(capsys):
+    from simtest.cli import main
+
+    main(RANKED)
+    grid, ranking = capsys.readouterr().out.split("\n\n[development] Cheapest designs that reach power 0.8: ")
+    assert "S=6 | S=8 | S=12" in grid               # the grid keeps every cell
+    assert ranking.startswith("C0 0, C3 0.9, logit spread 0 shared + 0 in the effect")
+    assert "the lower end of its 95% Monte Carlo interval is at least 0.8, not the point estimate" in ranking
+    assert "C0, C1, C2, C3 at 0.4 + 4 + 4 + 4 = 12.4 units per scenario and repeat; at least 8 scenarios" in ranking
+    assert "round(planned n x 0.9) >= n, a half rounding down" in ranking
+    lines = ranking.splitlines()
+    table = lines[lines.index(HEADER) + 1:-1]
+    # every cell reaches the target; S=6 is cheaper but below the floor; 5 and 10 scored need 6 and 11 planned
+    assert [row.split(" | ")[:5] for row in table] == [["8", "5", "6", "192", "595.2"],
+                                                       ["12", "5", "6", "288", "892.8"],
+                                                       ["8", "10", "11", "352", "1,091.2"],
+                                                       ["12", "10", "11", "528", "1,636.8"]]
+    assert lines[-1].startswith("Cheapest: S=8, n=5 (6 planned) per scenario and condition, 192 episodes, 595.2 units")
+
+    main(RANKED[:4] + ["0.9", "0.95"] + RANKED[5:] + ["--json"])       # one ranking per (c0, c3) pair
+    out = json.loads(capsys.readouterr().out)
+    assert [r["c3"] for r in out["ranking"]] == [0.9, 0.95]
+    first = out["ranking"][0]
+    assert first["cheapest"]["scenarios"] == 8 and first["cheapest"]["planned_repeats"] == 6
+    assert first["exclusion"] == 0.1 and first["target"] == 0.8 and first["rule"] == "ci[0] >= target"
+    assert all(d["ci"][0] >= 0.8 and d["scenarios"] >= 8 for d in first["designs"])
+
+
+def test_cli_ranking_when_none_reaches_and_within_a_budget(capsys):
+    from simtest.cli import main
+
+    main(["power", "--c0", "0.1", "--c3", "0.12", "--scenarios", "8", "--repeats", "5", "--reps", "100",
+          "--cost", "C0=1", "C3=1"])
+    text = capsys.readouterr().out
+    assert "No design in the grid reaches power 0.8 with at least 8 scenarios" in text
+    assert "Best power found: S=8, n=5 (5 planned): " in text
+    main(RANKED + ["--budget", "500"])
+    text = capsys.readouterr().out
+    assert "No design within 500 units reaches power 0.8 with at least 8 scenarios" in text
+    assert "The cheapest that does costs 595.2 units: S=8, n=5 (6 planned)" in text
+    main(RANKED + ["--budget", "900", "--target", "0.9", "--min-scenarios", "6"])
+    lines = capsys.readouterr().out.splitlines()
+    table = lines[lines.index(HEADER) + 1:-1]
+    # 446.4, 595.2, 818.4 and 892.8 units
+    assert [row.split(" | ")[:2] for row in table] == [["6", "5"], ["8", "5"], ["6", "10"], ["12", "5"]]
+
+
+@pytest.mark.parametrize("extra, why", [
+    (["--cost", "C0=x", "C3=4"], "COND=UNITS"), (["--cost", "C0", "C3=4"], "COND=UNITS"),
+    (["--cost", "C0=0.4", "C9=4"], "unknown condition C9"), (["--cost", "C0=-1", "C3=4"], "at least 0"),
+    (["--cost", "C0=0.4", "C0=1", "C3=4"], "C0 is given twice"), (["--cost", "C1=4", "C3=4"], "C0 and C3"),
+    (["--target", "0.9"], "need --cost"), (["--exclusion", "0.1"], "need --cost"),
+    (["--cost", "C0=0.4", "C3=4", "--exclusion", "1"], "exclusion"),
+    (["--cost", "C0=0.4", "C3=4", "--target", "1.2"], "target"),
+    (["--cost", "C0=0.4", "C3=4", "--budget", "0"], "budget"),
+    (["--cost", "C0=0.4", "C3=4", "--min-scenarios", "0"], "min_scenarios")])
+def test_cli_rejects_bad_ranking_options(extra, why, capsys):
+    from simtest.cli import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["power", "--c0", "0.1", "--c3", "0.3", "--scenarios", "8", "--repeats", "5", "--reps", "50"] + extra)
+    message = f"{exc.value.code} {capsys.readouterr().err}"
+    assert why in message and "unrecognized" not in message, message
