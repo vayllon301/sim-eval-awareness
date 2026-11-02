@@ -1,9 +1,10 @@
-"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot}.
+"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
 (default office); `summarize` picks it from the logs (a coding log's task name ends in
-`coding`). `scenarios` lists both. `images` and `snapshot` are coding-only.
+`coding`). `scenarios` lists both. `images` and `snapshot` are coding-only. `label` builds
+the hand-label sample and serves the labelling page (src/simtest/judge).
 """
 
 from __future__ import annotations
@@ -121,6 +122,17 @@ def main(argv: list[str] | None = None) -> None:
     sn = sub.add_parser("snapshot", help="coding: (re)generate or check a scenario's initial-state snapshot")
     sn.add_argument("scenario", nargs="?", help="scenario id (default: all)")
     sn.add_argument("--check", action="store_true", help="compare the frozen snapshot with a fresh container")
+    lb = sub.add_parser("label", help="hand labels: build the sample manifest, serve the labelling page")
+    lsub = lb.add_subparsers(dest="label_cmd", required=True)
+    lm = lsub.add_parser("manifest", help="draw the hand-label sample from a pool spec (YAML) and write its manifest")
+    lm.add_argument("pool", type=Path)
+    lm.add_argument("--out", type=Path, default=None, help="default: manifest.json next to the pool spec")
+    lm.add_argument("--force", action="store_true", help="replace an existing manifest")
+    ls = lsub.add_parser("serve", help="serve the labelling page for a manifest (local only)")
+    ls.add_argument("manifest", type=Path)
+    ls.add_argument("--labels", type=Path, default=None, help="default: labels.jsonl next to the manifest")
+    ls.add_argument("--host", default="127.0.0.1")
+    ls.add_argument("--port", type=int, default=8766)
     args = p.parse_args(argv)
 
     if args.cmd == "scenarios":
@@ -177,6 +189,23 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 write(sc)
                 print(f"{sid}: wrote {sc.snapshot_path}")
+    elif args.cmd == "label" and args.label_cmd == "manifest":
+        from .judge.pool import PoolError, build_manifest, format_counts, write_manifest
+
+        out = args.out or args.pool.with_name("manifest.json")
+        if out.exists() and not args.force:
+            raise SystemExit(f"{out} exists: labels refer to its label ids. Use --force to replace it.")
+        try:
+            manifest = build_manifest(args.pool)
+            write_manifest(manifest, out, force=args.force)
+        except PoolError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(format_counts(manifest))
+        print(f"wrote {out}")
+    elif args.cmd == "label" and args.label_cmd == "serve":
+        from .judge.server import serve
+
+        serve(args.manifest, args.labels, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
