@@ -1751,6 +1751,29 @@ primary test, and power by simulation for this test.
     on the rest of the grid. Excluded episodes would lower n; the simulation assumes none.
   - `--label` is printed on every table, so a grid run on development rates can't be read as
     the pilot's.
+  - **The cheapest design for a power target**: `--cost C0=0.4 C1=4 C2=4 C3=4 [--target 0.8]
+    [--min-scenarios 8] [--exclusion 0.1] [--budget …]`. The keys are the run's conditions
+    (C0 and C3 required), the values the units one episode costs in each. After the grid, one
+    ranking per (c0, c3) pair: the designs that reach the target, cheapest first, with S, n,
+    planned n, episodes, units and power, then one line naming the cheapest. `--json` adds it
+    as `ranking`. Nothing here changes the test, alpha or the simulation.
+    - Cost: every scenario runs every condition with the same n, so a design costs
+      S × planned n × (the sum of the conditions' units). The order is therefore the order of
+      S × planned n; the units give the totals and the budget.
+    - A design reaches the target when the lower end of its 95% Monte Carlo interval does
+      (ci[0] ≥ target), not its estimate. On the estimate, the cheapest cell would often be the
+      one Monte Carlo noise pushed up, and its power would be overstated. The chosen cell's
+      power still comes from the runs that picked it: rerun it alone with another `--seed` to
+      confirm it.
+    - Never fewer than `--min-scenarios` scenarios (8, the plan's floor). Ties in cost go to
+      more scenarios: the scenario is the unit of the test and of generalization.
+    - The grid's n is the scored n. `--exclusion` plans the smallest n_planned with
+      round(n_planned × (1 − exclusion)) ≥ n, a half rounding down, exact on the decimal given
+      (`planned_repeats`). The cost counts the planned episodes, excluded ones included.
+    - When no design reaches the target, it says so and prints the best power found. Under
+      `--budget`, it also prints the cheapest design over the budget that does.
+    - N3, with the Colab G4 costs (C1's is a guess until measured):
+      `uv run simtest power --c0 0.1 --c3 0.35 --cost C0=0.4 C1=4 C2=4 C3=4 --exclusion 0.1`.
 
 ## Post-episode measures (`post/`)
 
