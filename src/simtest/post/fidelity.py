@@ -1466,7 +1466,7 @@ def main(args) -> None:
         except FidelityError as exc:
             raise SystemExit(str(exc)) from exc
     rows = summarize(episodes, by=by)
-    print("Simulator fidelity per simulated bash step (coding/fidelity.py). Logs:")
+    print("Simulator fidelity per simulated bash step (post/fidelity.py). Logs:")
     _print_logs(episodes)
     print()
     print(format_table(rows))
