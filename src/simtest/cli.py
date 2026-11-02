@@ -1,4 +1,4 @@
-"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,power,post,equiv}.
+"""Command line: simtest {scenarios,demo,run,preflight,plan,summarize,images,snapshot,label,judge,power,post,equiv}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
@@ -7,7 +7,9 @@ coding family (src/simtest/coding). `run` picks the family from the config's `fa
 the hand-label sample and serves the labelling page; `judge` runs and checks the awareness
 judge (src/simtest/judge). `power` simulates the power of the primary test (src/simtest/stats);
 `post` runs and reports the post-episode measures (src/simtest/post). `equiv` checks that two
-vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md).
+vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md). `plan`
+estimates a run's GPU hours and units, and splits it into jobs (src/simtest/stats/replay.py);
+`preflight` runs a config end to end offline before a GPU session (src/simtest/preflight.py).
 """
 
 from __future__ import annotations
@@ -105,6 +107,11 @@ def print_summary_coding(log_dir: Path, by=None) -> list[dict]:
     if post := A.format_post_table(rows):
         print()
         print(post)
+    from .runqueue import batch_mix, format_batch_mix
+
+    if mix := format_batch_mix(batch_mix(log_dir)):
+        print()
+        print(mix)
     return rows
 
 
@@ -118,6 +125,11 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("config", type=Path)
     r.add_argument("--allow-dirty", action="store_true")
     r.add_argument("--no-build", action="store_true", help="coding: don't build images before the run")
+    r.add_argument("--epochs", default=None, help="coding: only these epochs this session (N or A-B)")
+    r.add_argument("--admit-for", type=float, default=None,
+                   help="coding: start no episode after this many hours (running ones finish)")
+    r.add_argument("--carry-under", type=int, default=0,
+                   help="coding: when fewer than K episodes are left, leave the rest for the next session")
     s = sub.add_parser("summarize", help="summarise a log directory")
     s.add_argument("log_dir", type=Path)
     s.add_argument("--by", default=None)
@@ -147,8 +159,12 @@ def main(argv: list[str] | None = None) -> None:
     add_power_parser(sub)
     add_post_parser(sub)
     from .equiv import add_parser as add_equiv_parser
+    from .preflight import add_parser as add_preflight_parser
+    from .stats.replay import add_parser as add_plan_parser
 
     add_equiv_parser(sub)
+    add_plan_parser(sub)
+    add_preflight_parser(sub)
     args = p.parse_args(argv)
 
     if args.cmd == "scenarios":
@@ -171,13 +187,19 @@ def main(argv: list[str] | None = None) -> None:
         if _is_coding_config(args.config):
             from .coding.run import run_config
 
-            success, _, log_dir = run_config(args.config, allow_dirty=args.allow_dirty, build=not args.no_build)
+            success, _, log_dir = run_config(args.config, allow_dirty=args.allow_dirty, build=not args.no_build,
+                                             epochs=args.epochs, admit_for=args.admit_for,
+                                             carry_under=args.carry_under)
         else:
+            if args.epochs or args.admit_for is not None or args.carry_under:
+                raise SystemExit("--epochs, --admit-for and --carry-under are for coding configs")
             from .run import run_config
 
             success, _, log_dir = run_config(args.config, allow_dirty=args.allow_dirty)
         print(f"\nLogs: {log_dir} ({'complete' if success else 'INCOMPLETE: re-run to resume'})")
         print_summary(log_dir)
+        if not success:
+            raise SystemExit(3)   # resumable: session scripts tell this from an error
     elif args.cmd == "summarize":
         by = tuple(args.by.split(",")) if args.by else None
         rows = print_summary(args.log_dir, by=by or BY) if not _is_coding_logdir(args.log_dir) \
@@ -234,6 +256,14 @@ def main(argv: list[str] | None = None) -> None:
         from .post.command import main as post_main
 
         post_main(args)
+    elif args.cmd == "preflight":
+        from .preflight import main as preflight_main
+
+        raise SystemExit(preflight_main(args))
+    elif args.cmd == "plan":
+        from .stats.replay import main as plan_main
+
+        plan_main(args)
     elif args.cmd == "equiv":
         from .equiv import main as equiv_main
 
