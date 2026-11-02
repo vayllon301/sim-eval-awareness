@@ -120,12 +120,14 @@ The other scripts (the episode reader, the SAE transfer check, the steering chec
 for development only. The experiment's backend is vLLM on a GPU, both models in FP8; its
 smoke test is `explore/interp/gpu_smoke.sh` (docs/INTERP.md, "GPU smoke test").
 
-### Both models on one GPU (Colab)
+### Serving the models (Colab, Hopper)
 
 `explore/colab_probe/serve.sh` serves the agent (Qwen3.8-27B) and the simulator
-(Qwen-AgentWorld-35B-A3B) with vLLM on one 80–96 GB GPU. Its header has the full
-sequence: start a Colab VM, run the script, open the SSH tunnel to ports 18000 and 18001,
-and stop the VM at the end. Colab compute units are paid.
+(Qwen-AgentWorld-35B-A3B) with vLLM: both on one 80–141 GB GPU, or one per GPU on two. Its
+header has the full sequence: start a Colab VM, run the script, open the SSH tunnel to ports
+18000 and 18001, and stop the VM at the end. Colab compute units are paid. The profiles, and
+`simtest equiv`, which checks that two backends compute the same models, are in
+[`docs/BACKENDS.md`](docs/BACKENDS.md).
 
 ### The testbed runner
 
