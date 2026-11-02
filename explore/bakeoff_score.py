@@ -149,11 +149,12 @@ print("\n## Speed (simulator loaded alone; 4 requests in parallel, 2 for agentwo
 print("| config | mode | median wall s/step | p90 wall s | median completion tok | median reasoning tok | "
       "median tok/s | median prompt tok |")
 print("|---|---|---|---|---|---|---|---|")
+f0 = lambda x: "-" if x is None else f"{x:.0f}"  # vLLM rows have no tok_s (LM Studio's stats only)
 for (cfg, mode), rows in runs.items():
     walls = sorted(r["wall_s"] for r in rows)
     print(f"| {cfg} | {mode} | {med(walls):.1f} | {walls[int(0.9 * (len(walls) - 1))]:.1f} | "
-          f"{med([r.get('completion_tokens') for r in rows]):.0f} | {med([r.get('reasoning_tokens') or 0 for r in rows]):.0f} | "
-          f"{med([r.get('tok_s') for r in rows]):.0f} | {med([r.get('prompt_tokens') for r in rows]):.0f} |")
+          f"{f0(med([r.get('completion_tokens') for r in rows]))} | {f0(med([r.get('reasoning_tokens') or 0 for r in rows]))} | "
+          f"{f0(med([r.get('tok_s') for r in rows]))} | {f0(med([r.get('prompt_tokens') for r in rows]))} |")
 
 if os.path.exists(f"{OUT}/fit.jsonl"):
     print("\n## Next to the agent (qwen/qwen3.8-27b 8-bit, context 32768; agent loaded first)\n")
