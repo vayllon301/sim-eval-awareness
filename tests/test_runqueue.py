@@ -250,3 +250,19 @@ def test_never_started():
     assert Q.never_started("CancelledError()", {}, True)           # cancelled while waiting
     assert not Q.never_started("CancelledError()", admitted, True)  # cancelled while running: an attempt
     assert not Q.never_started("CancelledError()", {}, False)       # a log from before the queue
+
+
+def test_a_torn_last_line_does_not_swallow_the_next_admission(tmp_path):
+    """S6 (sol-loop round 3): a killed process can leave half a line; the next session's first
+    admission must start on a line of its own."""
+    (tmp_path / "queue.jsonl").write_text('{"event": "admit", "key": ["C0", "none", "a", 1], "id": "x"}\n{"event": "adm')
+    order = [("C0", "none", "a", 1)]
+    q = Q.EpisodeQueue(order, 1, log_dir=tmp_path, settle=0)
+
+    async def main():
+        async with q.slot(order[0]):
+            pass
+
+    anyio.run(main)
+    admits = [e for e in Q.queue_events(tmp_path) if e["event"] == "admit"]
+    assert [a["id"] for a in admits][0] == "x" and len(admits) == 2

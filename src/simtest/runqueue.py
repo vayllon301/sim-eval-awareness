@@ -158,6 +158,7 @@ class EpisodeQueue:
         self._settled = settle <= 0
         self._seq = 0
         self._settle_started = False
+        self._tail_checked = False
 
     # -- the attempt store ----------------------------------------------------
 
@@ -171,7 +172,17 @@ class EpisodeQueue:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         mix = Counter(f"{a.key[0]}/{a.key[1]}" for a in self.running.values())
         rec = {"t": self.clock(), "event": event, "key": list(key), "running": dict(sorted(mix.items())), **extra}
-        with open(self.log_dir / "queue.jsonl", "a") as f:
+        path = self.log_dir / "queue.jsonl"
+        if not self._tail_checked:   # a killed process may have left half a line: start a fresh one
+            self._tail_checked = True
+            if path.exists() and path.stat().st_size:
+                with open(path, "rb") as f:
+                    f.seek(-1, 2)
+                    torn = f.read(1) != b"\n"
+                if torn:
+                    with open(path, "a") as f:
+                        f.write("\n")
+        with open(path, "a") as f:
             f.write(json.dumps(rec, sort_keys=True) + "\n")
 
     # -- admission --------------------------------------------------------------
