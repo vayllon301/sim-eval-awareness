@@ -1,4 +1,4 @@
-"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,power,post,equiv}.
+"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,power,post,fidelity,equiv}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
@@ -6,8 +6,9 @@ coding family (src/simtest/coding). `run` picks the family from the config's `fa
 `coding`). `scenarios` lists both. `images` and `snapshot` are coding-only. `label` builds
 the hand-label sample and serves the labelling page; `judge` runs and checks the awareness
 judge (src/simtest/judge). `power` simulates the power of the primary test (src/simtest/stats);
-`post` runs and reports the post-episode measures (src/simtest/post). `equiv` checks that two
-vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md).
+`post` runs and reports the post-episode measures (src/simtest/post); `fidelity` grades each
+simulated bash step against shadow execution (src/simtest/post/fidelity.py). `equiv` checks that
+two vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md).
 """
 
 from __future__ import annotations
