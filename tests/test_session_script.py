@@ -121,7 +121,8 @@ def index(calls, text):
 # --- the dry run ------------------------------------------------------------------------------------
 
 def test_dry_run_prints_every_step_and_touches_nothing(tmp_path):
-    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "EPOCHS": "1-2", "ADMIT_FOR": "13.5"})
+    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "EPOCHS": "1-2", "ADMIT_FOR": "13.5",
+                                             "STEPS": "run equiv readings"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     # read-only checks only: no colab, ssh, uv or curl, and nothing created
     assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv", "curl", "caffeinate")]
@@ -180,7 +181,7 @@ def test_keep_skips_the_final_stop_in_the_dry_run(tmp_path):
     ("no-mix", {"MIX": ""}, HEAD, "MIX"),
     ("bad-step", {"STEPS": "run train"}, HEAD, "train"),
     ("port-taken", {"PORT_BUSY": "18001"}, HEAD, "18001"),
-    ("no-contexts", {"EQUIV_CONTEXTS": "/nonexistent/contexts.jsonl"}, HEAD, "contexts"),
+    ("no-contexts", {"EQUIV_CONTEXTS": "/nonexistent/contexts.jsonl", "STEPS": "equiv"}, HEAD, "contexts"),
 ], ids=lambda v: v if isinstance(v, str) and len(v) < 16 else None)
 def test_refuses_to_start(tmp_path, case, env, preflight, needle):
     proc, calls, out, state = run(tmp_path, env, preflight=preflight)
@@ -198,7 +199,7 @@ def test_a_bad_cap_is_refused(tmp_path):
 # --- a session --------------------------------------------------------------------------------------
 
 def test_a_full_session_runs_every_step_and_stops_the_vm(tmp_path):
-    proc, calls, out, state = run(tmp_path, {"EPOCHS": "1-2", "ADMIT_FOR": "13.5"})
+    proc, calls, out, state = run(tmp_path, {"EPOCHS": "1-2", "ADMIT_FOR": "13.5", "STEPS": "run equiv readings"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     order = ["colab --auth adc usage", "colab --auth adc new -s probe --gpu G4", "sim-session-step serve",
              "localhost:18000/v1/models", "simtest run", "simtest equiv score", "sim-session-step free-gpu",
@@ -242,7 +243,7 @@ def test_a_failing_vm_creation_still_stops_it(tmp_path):
 
 
 def test_an_incomplete_run_goes_on_to_the_next_steps(tmp_path):
-    proc, calls, out, state = run(tmp_path, {"RUN_RC": "3"})
+    proc, calls, out, state = run(tmp_path, {"RUN_RC": "3", "STEPS": "run equiv readings"})
     assert proc.returncode == 3, proc.stderr
     assert "INCOMPLETE" in proc.stdout
     assert index(calls, "simtest run") < index(calls, "simtest equiv score") < index(calls, "sim-session-step readings")
@@ -301,3 +302,29 @@ def test_keep_leaves_the_vm_up_with_the_watchdog_on_it(tmp_path):
 def test_the_script_is_zsh_and_executable():
     assert SCRIPT.read_text().startswith("#!/bin/zsh")
     assert os.access(SCRIPT, os.X_OK)
+
+
+# --- defaults (02-11-2026) -----------------------------------------------------------------------------
+
+def test_by_default_no_gpu_time_goes_to_the_smoke_test(tmp_path):
+    """The readings step runs gpu_smoke.sh, which reads no episode (about 50 GPU minutes). Until a
+    reader for the pilot's episodes exists it runs only when STEPS asks for it."""
+    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "simtest run" in proc.stdout and "simtest equiv score" in proc.stdout
+    assert "gpu_smoke.sh" not in proc.stdout and "free-gpu" not in proc.stdout
+
+
+def test_missing_contexts_are_built_from_the_runs_own_episodes(tmp_path):
+    ctx = tmp_path / "new" / "contexts.jsonl"
+    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "EQUIV_CONTEXTS": str(ctx)})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    cmds = [x for x in proc.stdout.splitlines() if x.startswith("+ ")]
+    run_i = next(i for i, c in enumerate(cmds) if "simtest run" in c)
+    build = next(i for i, c in enumerate(cmds) if "simtest equiv contexts" in c)
+    score = next(i for i, c in enumerate(cmds) if "simtest equiv score" in c)
+    assert run_i < build < score
+    assert f"--out {ctx}" in cmds[build] and "logs/n2-pilot" in cmds[build].replace(str(tmp_path / "logs"), "logs")
+    # Without a run in this session there is nothing to build them from: refused, as before.
+    proc, *_ = run(tmp_path / "b", {"EQUIV_CONTEXTS": str(ctx), "STEPS": "equiv"})
+    assert proc.returncode == 1 and "contexts" in proc.stderr

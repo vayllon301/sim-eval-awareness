@@ -12,15 +12,19 @@
 #   3. If run or equiv is selected: serve.sh once, as it is (MIX given), then the tunnel, then waits
 #      until both /v1/models answer. On an attached VM, old servers are stopped first, so the
 #      servers run what serve.sh says.
-#   4. The steps in STEPS (default "run equiv readings"), always in this order:
+#   4. The steps in STEPS (default "run equiv"; add readings to run them), always in this order:
 #        run       uv run --env-file ENV_FILE simtest run CONFIG [--epochs EPOCHS] [--admit-for
 #                  ADMIT_FOR] [--carry-under CARRY_UNDER]. Exit 3 (incomplete, resumable) is
 #                  reported, and the next steps run.
 #        equiv     simtest equiv score EQUIV_CONTEXTS, one request at a time and 12 at once
 #                  (EQUIV_CONCURRENCY): this backend's scores and its batching noise
-#                  (docs/BACKENDS.md). After the run, so no episode shares its batches.
+#                  (docs/BACKENDS.md). After the run, so no episode shares its batches. If the
+#                  contexts file doesn't exist yet and the run is a step, it is built first from
+#                  this run's own logs (simtest equiv contexts); keep it: every backend is scored
+#                  on the same contexts.
 #        readings  the GPU readings after the episodes: explore/interp/gpu_smoke.sh, the one GPU
-#                  script of docs/INTERP.md so far. It needs the GPU alone, so the servers are
+#                  script of docs/INTERP.md so far. It reads no episode yet (about 50 GPU
+#                  minutes), so it runs only when STEPS names it. It needs the GPU alone, so the servers are
 #                  stopped first. The code goes over at HEAD (a git bundle, so it records the
 #                  commit). READINGS_STEPS and READINGS_BUDGET_MIN are its STEPS and BUDGET_MIN.
 #   5. Always stops the VM at the end, also on an error or Ctrl-C, unless KEEP=1 (the watchdog
@@ -54,7 +58,7 @@ fi
 DRY=${DRY_RUN:-}
 SESSION=${SESSION:-probe}
 GPU=${GPU:-G4}
-STEPS=${STEPS:-run equiv readings}
+STEPS=${STEPS:-run equiv}
 LOGS=${LOGS:-logs}
 ENV_FILE=${ENV_FILE:-../.env}
 EQUIV_CONTEXTS=${EQUIV_CONTEXTS:-$LOGS/equiv/contexts.jsonl}
@@ -87,7 +91,7 @@ for s in ${=STEPS}; do
 done
 [[ ! -f $CONFIG ]] || problems+=(${(f)"$(preflight_problems $CONFIG)"})
 if want run && [[ ! -f $ENV_FILE ]]; then problems+=("no env file $ENV_FILE (ENV_FILE): simtest run reads its keys there"); fi
-if want equiv && [[ ! -f $EQUIV_CONTEXTS ]]; then
+if want equiv && [[ ! -f $EQUIV_CONTEXTS ]] && ! want run; then
   problems+=("no contexts at $EQUIV_CONTEXTS: build them with 'uv run simtest equiv contexts' (docs/BACKENDS.md)")
 fi
 if (( need_servers )); then
@@ -244,6 +248,9 @@ if want run; then
 fi
 if want equiv; then
   guard
+  if [[ ! -f $EQUIV_CONTEXTS ]]; then
+    x uv run simtest equiv contexts $LOGS/$name --out $EQUIV_CONTEXTS || fail "equiv: could not build the contexts"
+  fi
   x uv run simtest equiv score $EQUIV_CONTEXTS --agent-url http://localhost:18000/v1 \
     --simulator-url http://localhost:18001/v1 --concurrency ${=EQUIV_CONCURRENCY} --out $OUTDIR/equiv \
     --label "${EQUIV_LABEL:-$GPU, ${OUTDIR:t}}" || fail "equiv: FAILED"

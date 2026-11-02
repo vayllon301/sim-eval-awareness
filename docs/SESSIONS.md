@@ -34,13 +34,16 @@ One VM session does all of a config's GPU work, so the setup is paid once (741 s
    cap (the second argument, in units).
 3. Runs `serve.sh` once with the given `MIX` (required: `c3` or `default`), opens the tunnel and
    waits for both `/v1/models`.
-4. Runs the steps in `STEPS`, always in this order (default: all three):
+4. Runs the steps in `STEPS`, always in this order (default: `run equiv`):
    - `run`: `simtest run`, with `EPOCHS`, `ADMIT_FOR` and `CARRY_UNDER` passed on. If the run is
      incomplete (exit 3), it says so and goes on.
    - `equiv`: `simtest equiv score` on the contexts, one request at a time and 12 at once
-     (BACKENDS.md). It runs after the episodes, so they don't share its batches.
-   - `readings`: stops the servers to free the GPU, sends the code at HEAD (a git bundle), and
-     runs `explore/interp/gpu_smoke.sh` (INTERP.md, "GPU smoke test").
+     (BACKENDS.md). It runs after the episodes, so they don't share its batches. With no
+     contexts file yet, it first builds one from this run's logs (`simtest equiv contexts`).
+     Keep that file: every backend is scored on the same contexts.
+   - `readings` (only when named): stops the servers to free the GPU, sends the code at HEAD (a
+     git bundle), and runs `explore/interp/gpu_smoke.sh` (INTERP.md, "GPU smoke test"). It reads
+     no episode yet and takes about 50 GPU minutes, so it is off by default.
 5. Always stops the VM at the end, also after an error or Ctrl-C, unless `KEEP=1`. The VM's
    `$WORK/probe` and the readings come back first.
 
