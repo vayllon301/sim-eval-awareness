@@ -32,7 +32,7 @@ from pathlib import Path
 import yaml
 
 from . import transcript as T
-from ..runqueue import is_not_started
+from ..runqueue import summary_never_started
 from .pool import _path
 
 SPEC_KEYS = {"name", "root", "test_set", "from_test_manifest", "dirs", "exclude"}
@@ -172,7 +172,7 @@ def _dir_episodes(root: Path, d: str) -> list[dict]:
             continue
         rel = p.resolve().relative_to(root.resolve()).as_posix()
         for s in read_eval_log_sample_summaries(str(p)):
-            if is_not_started(s.error):   # the run queue never started it: not an episode
+            if summary_never_started(p, head, s):   # the run queue never started it: not an episode
                 continue
             ep = _ep({"log": rel, "sample_id": s.id, "epoch": s.epoch, "uuid": s.uuid}, source=d)
             if s.uuid:

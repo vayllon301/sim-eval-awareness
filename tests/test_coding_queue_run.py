@@ -176,3 +176,38 @@ def test_the_judge_pool_and_tuning_reader_skip_not_started_and_report_kept_attem
     assert len(skipped) == 1 and "error" in skipped[0]["reason"]
     listed = J._dir_episodes(tmp_path / "logs", "q")
     assert len(listed) == 4   # no not-started sample listed for tuning
+
+
+def test_episodes_still_waiting_when_a_run_is_interrupted_are_not_attempts(machines, tmp_path, monkeypatch):
+    """S1 (sol-loop round 1): Ctrl-C with one slot. Inspect logs every waiting episode as cancelled,
+    but only the one admitted ran: it is the only attempt reported, and the others start on resume."""
+    from inspect_ai.log import list_eval_logs, read_eval_log
+
+    from simtest.judge import episodes as J
+    from simtest.judge.pool import scan
+
+    original = episode.session_start
+
+    async def session_start(machine, scenario):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(episode, "session_start", session_start)
+    path = config(tmp_path, max_connections=1)
+    with pytest.raises(KeyboardInterrupt):
+        run(path, tmp_path)
+    log_dir = tmp_path / "logs" / "q"
+    cancelled = [s for i in list_eval_logs(str(log_dir)) for s in read_eval_log(i).samples or [] if s.error]
+    assert len(cancelled) >= 3   # Inspect did log waiting episodes as errored
+    episodes, design = load_run(log_dir)
+    assert [(e["condition"], e["end_reason"]) for e in episodes] == [("C0", "error")]   # the admitted one
+    assert len(design_gaps(episodes, design)) == 4
+    pool, skipped, _ = scan({"dirs": ["q"], "n": 1, "seed": 1, "take_all": "C3", "fill": "C0", "scenarios": None},
+                            tmp_path / "logs")
+    assert not pool and len(skipped) == 1
+    assert J._dir_episodes(tmp_path / "logs", "q") == []
+    # The next session starts every episode.
+    monkeypatch.setattr(episode, "session_start", original)
+    success, _, _ = run(path, tmp_path)
+    episodes, design = load_run(log_dir)
+    assert success and not design_gaps(episodes, design)
+    assert sorted(e["end_reason"] for e in episodes) == ["error"] + [episode.FINISHED] * 8

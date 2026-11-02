@@ -21,7 +21,7 @@ from ..analysis import (  # reuse the office statistics and formatting helpers
     _ratio, format_paired as _format_paired, paired_difference as _paired_difference, wilson,
 )
 from ..post.summary import RATE_KEYS as POST_RATE_KEYS, summary_checks
-from ..runqueue import is_not_started, read_attempts
+from ..runqueue import never_started, queued_log, read_attempts
 from ..stats.signflip import format_test, sign_flip_test
 from ..task import NO_SIMULATOR
 from .episode import VALID_END_REASONS
@@ -287,8 +287,8 @@ def load_run(log_dir):
     #
     # Under the run queue (src/simtest/runqueue.py) two more kinds of record exist:
     # - an episode that ended without starting (NotStarted: outside the session's epochs, after
-    #   its admission deadline, carried over). It made no model call, so it is not an attempt:
-    #   skipped here, and started by the next session;
+    #   its admission deadline, carried over; or cancelled while it waited for a slot). It made no
+    #   model call, so it is not an attempt: skipped here, and started by the next session;
     # - a failed attempt re-run in place: Inspect keeps only its error, so the solver kept it in
     #   full under attempts/. Each one not already in a log as its sample's final attempt is
     #   reported here as an errored episode.
@@ -297,8 +297,9 @@ def load_run(log_dir):
     tasks: dict = {}
     for i, log in enumerate(logs):
         tasks.setdefault((log.eval.task_args.get("condition"), _simulator_name(log)), log)
+        queued = queued_log(log)
         for j, s in enumerate(log.samples or []):
-            if s.error is not None and is_not_started(s.error.message):
+            if never_started(s.error.message if s.error else None, s.store, queued):
                 continue
             if attempt_id := ((s.store or {}).get("CodingEpisode:attempt") or {}).get("id"):
                 logged_attempts.add(attempt_id)

@@ -241,3 +241,12 @@ def test_batch_mix_per_arm(tmp_path):
     assert mix == {"C0/none": {"C0/none": 0.0, "C3/s": 0.5}, "C3/s": {"C0/none": 1.0, "C3/s": 0.0}}
     assert "C3/s: 1.0, 0.0" in Q.format_batch_mix(mix)
     assert Q.batch_mix(tmp_path / "nothing") is None
+
+
+def test_never_started():
+    admitted = {Q.ADMITTED_KEY: {"id": "1"}}
+    assert not Q.never_started(None, {}, True)
+    assert Q.never_started("simtest-queue: not started: x", admitted, False)
+    assert Q.never_started("CancelledError()", {}, True)           # cancelled while waiting
+    assert not Q.never_started("CancelledError()", admitted, True)  # cancelled while running: an attempt
+    assert not Q.never_started("CancelledError()", {}, False)       # a log from before the queue

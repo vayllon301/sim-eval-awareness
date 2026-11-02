@@ -42,7 +42,7 @@ from urllib.parse import unquote, urlparse
 
 import yaml
 
-from ..runqueue import is_not_started
+from ..runqueue import summary_never_started
 
 from . import transcript as T
 
@@ -114,7 +114,7 @@ def scan(spec: dict, root: Path) -> tuple[list[dict], list[dict], list[dict]]:
                                 "condition": head.eval.task_args.get("condition"), "samples": len(sums),
                                 "counted": 0, "duplicates": 0}
             for s in sums:
-                if is_not_started(s.error):   # the run queue never started it: not an episode
+                if summary_never_started(path, head, s):   # the run queue never started it: not an episode
                     files[path.name]["not_started"] = files[path.name].get("not_started", 0) + 1
                     continue
                 key = (path.name, (s.metadata or {}).get("scenario", s.id), s.epoch)

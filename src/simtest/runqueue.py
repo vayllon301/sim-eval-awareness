@@ -62,6 +62,23 @@ def is_not_started(message: str | None) -> bool:
     return bool(message) and NOT_STARTED in message
 
 
+ADMITTED_KEY = "CodingEpisode:attempt"   # the solver stores its admission here as soon as it has a slot
+
+
+def queued_log(log) -> bool:
+    """Whether the log was written under the run queue (`simtest run` records it in the metadata)."""
+    return "queue" in (log.eval.metadata or {})
+
+
+def never_started(error: str | None, store: dict | None, queued: bool) -> bool:
+    """An errored sample that never got a slot: NotStarted, or, in a log written under the queue,
+    any error (a cancellation while waiting, for example) before its admission was stored. It made
+    no model call and is not an attempt; the next `simtest run` starts it."""
+    if error is None:
+        return False
+    return is_not_started(error) or (queued and not (store or {}).get(ADMITTED_KEY))
+
+
 def episode_order(arms, scenarios, epochs: int, seed: int) -> list[tuple]:
     """Every (condition, simulator, scenario, epoch) of the run, in a seeded blocked order:
     epoch by epoch, scenarios shuffled, and in each (scenario, epoch) block one episode of each
@@ -303,6 +320,22 @@ def format_batch_mix(mix: dict | None) -> str:
     lines = ["Batch mix (mean episodes running beside each start, from queue.jsonl): " + ", ".join(arms)]
     lines += [f"  {a}: " + ", ".join(f"{mix[a][b]:.1f}" for b in arms) for a in arms]
     return "\n".join(lines)
+
+
+def summary_never_started(path, head, summary) -> bool:
+    """`never_started` for a sample summary (which has no store): reads the sample's store only
+    for an errored sample of a log written under the queue."""
+    if summary.error is None:
+        return False
+    if is_not_started(summary.error):
+        return True
+    if not queued_log(head):
+        return False
+    from inspect_ai.log import read_eval_log_sample
+
+    sample = read_eval_log_sample(str(path), id=summary.id, epoch=summary.epoch,
+                                  exclude_fields={"messages", "events", "attachments", "output"})
+    return never_started(summary.error, sample.store, True)
 
 
 def write_attempt(directory: Path | None, record: dict) -> Path | None:
