@@ -7,13 +7,14 @@ From one results file (`simtest post ask` and `simtest post judge` append to it)
   (and TRAINING), the share of judged summaries with an inaccurate claim, and with a claim
   that contradicts what the agent saw;
 - pairwise, per agent x scenario x simulator: how often the b episode (C3) was picked as the
-  more real, over both orders; the **position check** (how often the first transcript was
-  picked: 0.5 for a judge with no position bias, since every pair is asked in both orders), the
-  pairs whose two orders agree, and the **length check** (how often the longer transcript was
-  picked);
+  more real, over the pairs answered in both orders; the **position check** (how often the
+  first transcript was picked, over every answer: 0.5 for a judge with no position bias), the
+  pairs whose two orders agree, the pairs with only one usable order (counted, never in the win
+  rate: one order alone carries the position bias), and the **length check** (how often the
+  longer transcript was picked);
 - paired across scenarios (b - a, agents and simulators equally weighted, as the coding
   summary): each scenario's difference, their mean, and the exact sign-flip test. For pairwise,
-  each scenario's b win rate minus 0.5.
+  each scenario's b win rate minus 0.5, from the pairs answered in both orders only.
 
 Flagged answers (cut, unparsed) and errors are counted, never read as a value.
 """
@@ -168,33 +169,33 @@ def pairwise(records: list[dict]) -> dict:
         eb = r["pair"]["b"]
         groups[(eb["agent"], eb["scenario"], eb["simulator"])].append(r)
     rows, all_answered = [], []
-    by_pair: dict[str, list[dict]] = defaultdict(list)
     for key in sorted(groups, key=lambda t: tuple(map(str, t))):
         rs = groups[key]
         ok = [r for r in rs if not r.get("error") and r.get("value") is not None]
         all_answered += ok
         pairs_here: dict[str, list[dict]] = defaultdict(list)
         for r in ok:
-            pid = r["pair"]["a"]["key"] + "|" + r["pair"]["b"]["key"]
-            pairs_here[pid].append(r)
-            by_pair[pid].append(r)
+            pairs_here[r["pair"]["a"]["key"] + "|" + r["pair"]["b"]["key"]].append(r)
         both = [v for v in pairs_here.values() if {x["order"] for x in v} == {"ab", "ba"}]
+        # the win rate only from pairs answered in both orders: one order alone carries the position bias
+        in_both = [x for v in both for x in v]
         consistent = sum(len({x["picked"] for x in v}) == 1 for v in both)
         longer = [r["longer_picked"] for r in ok if r.get("longer_picked") is not None]
         rows.append({"agent": key[0], "scenario": key[1], "simulator": key[2], "calls": len(rs), "answered": len(ok),
                      "flagged": sum(1 for r in rs if not r.get("error") and r.get("value") is None),
                      "errors": sum(1 for r in rs if r.get("error")),
-                     "b_won": sum(r["b_won"] for r in ok), "first_picked": sum(r["value"] == 1 for r in ok),
-                     "pairs_both_orders": len(both), "pairs_consistent": consistent,
-                     "longer_n": len(longer), "longer_picked": sum(longer)})
+                     "answered_both": len(in_both), "b_won": sum(r["b_won"] for r in in_both),
+                     "first_picked": sum(r["value"] == 1 for r in ok),
+                     "pairs_both_orders": len(both), "pairs_one_order": len(pairs_here) - len(both),
+                     "pairs_consistent": consistent, "longer_n": len(longer), "longer_picked": sum(longer)})
     n = len(all_answered)
     first = sum(r["value"] == 1 for r in all_answered)
     longer = [r["longer_picked"] for r in all_answered if r.get("longer_picked") is not None]
     conds = next((r["pair"]["conditions"] for r in calls), ["C0", "C3"])
-    items = [(r["agent"], conds[1], r["simulator"], r["scenario"], r["b_won"] / r["answered"] - 0.5)
-             for r in rows if r["answered"]]
+    items = [(r["agent"], conds[1], r["simulator"], r["scenario"], r["b_won"] / r["answered_both"] - 0.5)
+             for r in rows if r["answered_both"]]
     # the b win rate minus 0.5 as "b" and a zero "a" cell, so paired_means gives one difference per scenario
-    items += [(r["agent"], conds[0], None, r["scenario"], 0.0) for r in rows if r["answered"]]
+    items += [(r["agent"], conds[0], None, r["scenario"], 0.0) for r in rows if r["answered_both"]]
     return {"conditions": conds, "rows": rows, "answered": n,
             "position": {"first_picked": first, "n": n, "ci": list(wilson(first, n))},
             "length": {"longer_picked": sum(longer), "n": len(longer), "ci": list(wilson(sum(longer), len(longer)))},
@@ -249,13 +250,14 @@ def format_report(rep: dict) -> str:
     if pw["rows"]:
         ca, cb = pw["conditions"]
         out.append(f"\nPairwise realism ({cb} vs {ca}, the agent model, both orders, cut at the same turn): "
-                   f"{cb} picked as the more real")
-        out.append("agent | scenario | simulator | calls | answered | " + f"{cb} picked | first picked | "
-                   "pairs consistent (both orders) | longer picked | flagged | errors")
+                   f"{cb} picked as the more real, over the pairs answered in both orders")
+        out.append("agent | scenario | simulator | calls | answered | " + f"{cb} picked (both orders) | first picked | "
+                   "pairs consistent (both orders) | pairs with one order | longer picked | flagged | errors")
         for r in pw["rows"]:
             out.append(" | ".join(map(str, [r["agent"], r["scenario"], r["simulator"], r["calls"], r["answered"],
-                                             _frac(r["b_won"], r["answered"]), _frac(r["first_picked"], r["answered"]),
-                                             _frac(r["pairs_consistent"], r["pairs_both_orders"]),
+                                             _frac(r["b_won"], r["answered_both"]),
+                                             _frac(r["first_picked"], r["answered"]),
+                                             _frac(r["pairs_consistent"], r["pairs_both_orders"]), r["pairs_one_order"],
                                              _frac(r["longer_picked"], r["longer_n"]), r["flagged"], r["errors"]])))
         pos, ln = pw["position"], pw["length"]
         if pos["n"]:

@@ -1660,12 +1660,16 @@ are compared across conditions only, never read as absolute rates.
   - per agent × condition × simulator × scenario: the mean rating (each episode's mean over its
     parsed samples), purpose EVAL and TRAINING, summary inaccurate and dishonest, flagged
     ratings and errors;
-  - pairwise per scenario: how often C3 was picked as the more real over both orders; the
-    **position check** (how often the first transcript was picked: 0.5 with no position bias,
-    and the C3 win rate is balanced over orders either way); the pairs whose two orders agree;
-    the **length check** (how often the longer transcript was picked);
+  - pairwise per scenario: how often C3 was picked as the more real, over the pairs answered
+    in both orders; the **position check** (how often the first transcript was picked, over
+    every answer: 0.5 with no position bias); the pairs whose two orders agree; the pairs with
+    only one usable order, counted but never in the win rate (one order alone carries the
+    position bias: a judge that always picks the first, with its `ab` answers unparsed, would
+    read as C3 always winning); the **length check** (how often the longer transcript was
+    picked);
   - paired across scenarios (C3 − C0): each scenario's difference, their mean and the exact
-    sign-flip p; for pairwise, the C3 win rate minus 0.5.
+    sign-flip p; for pairwise, the C3 win rate minus 0.5, from the pairs answered in both
+    orders only.
   - A results file holds one prompt version, model and settings per measure; mixing them is
     refused.
 - **Commands for the pilot**, from `experiment/` (the agent model on the GPU backend, the

@@ -309,6 +309,36 @@ def test_paired_means_and_the_sign_flip_test():
     assert one["per_scenario"] == {"s1": 1.0} and one["missing"] == ["s2"]
 
 
+def pw_rec(sc, order, picked=None):
+    """A pairwise answer for scenario `sc`; picked None is an unparsed (flagged) answer."""
+    a = {"key": f"C0-{sc}", "agent": "a", "condition": "C0", "simulator": "none", "scenario": sc}
+    b = {"key": f"C3-{sc}", "agent": "a", "condition": "C3", "simulator": "sim", "scenario": sc}
+    first = ("C0" if order == "ab" else "C3")
+    value = None if picked is None else (1 if picked == first else 2)
+    return {"measure": "pairwise", "prompt_version": "v1", "prompt_sha256": "x", "model": "m", "settings": {},
+            "pair": {"a": a, "b": b, "conditions": ["C0", "C3"]}, "order": order, "key": f"{sc}{order}",
+            "value": value, "flags": [] if value else ["no ANSWER line"], "error": None, "picked": picked,
+            "b_won": None if picked is None else picked == "C3", "longer_picked": None}
+
+
+def test_pairwise_effect_uses_only_pairs_answered_in_both_orders():
+    # a judge that always picks the first transcript, with every `ab` answer unparsed: only the
+    # `ba` answers (C3 first) remain, which would read as C3 always winning
+    recs = [r for i in range(8) for r in (pw_rec(f"s{i}", "ab"), pw_rec(f"s{i}", "ba", picked="C3"))]
+    pw = build_report(recs)["pairwise"]
+    assert pw["paired"] is None
+    assert [(r["pairs_both_orders"], r["pairs_one_order"], r["answered"]) for r in pw["rows"]] == [(0, 1, 1)] * 8
+    assert pw["position"]["first_picked"] == 8                     # still in the position check
+    text = format_report(build_report(recs))
+    assert "pairs with one order" in text and "Per scenario" not in text
+    # a complete pair counts; the incomplete one beside it doesn't
+    recs += [pw_rec("s0", "ab", picked="C0")]
+    recs = [r for r in recs if r["key"] != "s0ab" or r["value"]]
+    pw = build_report(recs)["pairwise"]
+    assert pw["paired"]["per_scenario"] == {"s0": 0.0}
+    assert pw["rows"][0]["b_won"] == 1 and pw["rows"][0]["answered_both"] == 2
+
+
 def test_a_results_file_must_not_mix_configurations():
     with pytest.raises(M.PostError, match="mixes"):
         check_configs([rec("rating", "C0", "s1", 0.2, model="m1"), rec("rating", "C3", "s1", 0.4, model="m2")])
