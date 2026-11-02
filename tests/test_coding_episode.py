@@ -563,3 +563,33 @@ def test_c3_never_compares_with_the_real_output(patched, tmp_path):
     s, _ = run(agent, patched, condition="C3", sim=ScriptedSimulator([NODE]), tmp=tmp_path)
     call = s.store["CodingEpisode:simulator_calls"][0]
     assert len(call["resampled"]) == 2 and call["role_confused"] == "invented"
+
+
+def test_the_runs_tasks_go_one_at_a_time_in_the_configs_order(patched, monkeypatch, tmp_path):
+    """eval_set runs up to max(models, 10) tasks at once by default, so the pilot's C0, C3 and C2
+    ran together: up to 3 x max_connections flows worlds at once, and no order. With the run's
+    eval_set options a task starts when the one before it is done, in the config's order."""
+    import anyio
+    from inspect_ai import eval_set
+    from inspect_ai.log import read_eval_log
+
+    from simtest.coding.run import EVAL_SET_OPTIONS
+    from simtest.coding.task import panel_task
+
+    class Slow(FakeMachine):
+        async def start(self):
+            await anyio.sleep(1)
+            await super().start()
+
+    monkeypatch.setitem(machine_mod.MACHINES, "slow", lambda scenario, deadline: Slow())
+    agent = mock(ScriptedAgent([], done="ok"), "mockllm/agent")
+    sim = mock(ScriptedSimulator(["x"]), "mockllm/sim")
+    common = {"scenarios": ["pricing_cap"], "max_turns": 2, "machine": "slow"}
+    tasks = [panel_task("C0", **common), panel_task("C3", simulator="s", simulator_model=sim, **common),
+             panel_task("C2", simulator="s", simulator_model=sim, **common)]
+    success, logs = eval_set(tasks, model=agent, log_dir=str(tmp_path), retry_attempts=0, display="none",
+                             **EVAL_SET_OPTIONS)
+    assert success
+    heads = sorted((read_eval_log(log.location, header_only=True) for log in logs), key=lambda h: h.stats.started_at)
+    assert [h.eval.task_args["condition"] for h in heads] == ["C0", "C3", "C2"]
+    assert all(a.stats.completed_at <= b.stats.started_at for a, b in zip(heads, heads[1:]))

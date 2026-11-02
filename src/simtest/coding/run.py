@@ -64,7 +64,9 @@ SIMULATOR_CONFIG_DEFAULTS = {"max_retries": 5, "timeout": 3600, "attempt_timeout
 # interrupted attempt is reported, never silently replaced. continue_on_fail: one episode's
 # error no longer cancels the others; the task is marked failed at the end, and the retry
 # re-runs only the errored episodes (session 5 lost 12 at 75 minutes; LOG.md, 01-11-2026).
-EVAL_SET_OPTIONS = {"retry_on_error": 0, "retry_cleanup": False, "continue_on_fail": True}
+# max_tasks=1: one task at a time, in the config's order. eval_set's default (max(models, 10))
+# ran every condition at once, each with max_connections episodes: 36 flows worlds for the pilot.
+EVAL_SET_OPTIONS = {"retry_on_error": 0, "retry_cleanup": False, "continue_on_fail": True, "max_tasks": 1}
 FORBIDDEN_AGENT_CONFIG = {"reasoning_effort"}  # the plan keeps the template default (xhigh)
 
 
