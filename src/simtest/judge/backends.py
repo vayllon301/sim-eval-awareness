@@ -24,7 +24,7 @@ import shutil
 import subprocess
 import tempfile
 
-from .judge import BackendError
+from .judge import BackendError, QuotaError
 
 CODEX_DISABLE = ("shell_tool", "unified_exec", "apps", "plugins", "memories", "multi_agent", "image_generation",
                  "browser_use", "computer_use", "in_app_browser", "goals", "skill_search", "hooks", "view_image",
@@ -166,7 +166,8 @@ class CodexBackend:
         ev = parse_codex_events(out.decode(errors="replace"))
         if proc.returncode != 0 or ev["errors"] or ev["text"] is None:
             tail = err.decode(errors="replace").strip().splitlines()[-3:]
-            raise BackendError(f"codex exec exit {proc.returncode}: {ev['errors'] or tail}"[:2000])
+            msg = f"codex exec exit {proc.returncode}: {ev['errors'] or tail}"[:2000]
+            raise (QuotaError if "usage limit" in msg.lower() else BackendError)(msg)
         out = {"text": ev["text"], "usage": ev["usage"], "tools_used": ev["tools_used"]}
         if ev["notices"]:
             out["notices"] = ev["notices"]

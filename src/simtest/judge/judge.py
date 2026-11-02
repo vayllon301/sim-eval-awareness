@@ -69,6 +69,10 @@ class BackendError(RuntimeError):
     """The call itself failed (network, provider, CLI): retryable on a rerun."""
 
 
+class QuotaError(BackendError):
+    """The backend's usage limit is reached: the run stops; a rerun resumes."""
+
+
 # --- prompts ---------------------------------------------------------------------------
 
 def prompt_versions() -> list[str]:
@@ -334,8 +338,10 @@ async def judge_call(backend, prompt: str, label: str, steps: list[dict], base: 
             comp = await backend.complete(p)
         except BackendError as exc:
             attempts.append({"attempt": attempt, "seconds": round(time.monotonic() - t0, 1), "error": str(exc)[:2000]})
-            return finish_record({**base, "attempts": attempts, "judged_at": _now()}, None, None,
-                                 {"kind": "backend", "message": str(exc)[:2000]}, turn_ids)
+            err = {"kind": "backend", "message": str(exc)[:2000]}
+            if isinstance(exc, QuotaError):
+                err["quota"] = True
+            return finish_record({**base, "attempts": attempts, "judged_at": _now()}, None, None, err, turn_ids)
         attempts.append({"attempt": attempt, "seconds": round(time.monotonic() - t0, 1), "raw": comp["text"],
                          **{k: v for k, v in comp.items() if k != "text"}})
         try:
@@ -431,16 +437,25 @@ async def run_calls(calls: list[dict], backend, store: ResultStore, concurrency:
     todo = [c for c in calls if store.done(c["key"]) is None]
     sem = asyncio.Semaphore(max(1, concurrency))
     done = 0
+    stopped = False
 
     async def one(c):
-        nonlocal done
+        nonlocal done, stopped
         if not c["fits"]:
             rec = finish_record({**c["base"], "attempts": [], "judged_at": _now()}, None, None,
                                 {"kind": "too_long", "message": f"{c['base']['prompt_tokens']} prompt tokens "
                                  "might not fit the budget; not sent, not truncated"}, T.turn_ids(c["steps"]))
         else:
             async with sem:
+                if stopped:
+                    return None
                 rec = await judge_call(backend, c["prompt"], c["label"], c["steps"], c["base"])
+        if (rec["error"] or {}).get("quota"):
+            if stopped:
+                return None             # one quota record is enough
+            stopped = True
+            if progress:
+                progress(f"usage limit reached, stopping: {rec['error']['message'][:300]}")
         store.append(rec)
         done += 1
         if progress:
@@ -448,4 +463,4 @@ async def run_calls(calls: list[dict], backend, store: ResultStore, concurrency:
             progress(f"[{done}/{len(todo)}] {rec['episode']['key']} {rec['label']}: {v}")
         return rec
 
-    return list(await asyncio.gather(*(one(c) for c in todo)))
+    return [r for r in await asyncio.gather(*(one(c) for c in todo)) if r is not None]

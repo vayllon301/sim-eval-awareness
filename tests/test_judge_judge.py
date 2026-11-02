@@ -389,3 +389,21 @@ def test_inspect_settings_record_provider_options():
                            "model_args": {"provider": {"order": ["x"], "allow_fallbacks": False}}}
     assert mock_backend(GOOD_EVAL).settings == {"temperature": 0.0, "max_tokens": 16000, "reasoning_effort": None,
                                                 "seed": None}
+
+
+def test_a_usage_limit_stops_the_run(tmp_path):
+    class Quota:
+        name, model, settings, max_output = "fake", "fake", {}, 0
+        calls = 0
+
+        async def complete(self, prompt):
+            Quota.calls += 1
+            raise J.QuotaError("You've hit your usage limit")
+
+    prompts = {lab: {"text": "{{TRANSCRIPT}}", "sha256": lab} for lab in J.LABELS}
+    eps = [{"key": f"a::s{i}::1", "log": "a", "sample_id": f"s{i}", "epoch": 1} for i in range(4)]
+    calls, _ = J.plan_calls(eps, lambda ep: synthetic_sample(), prompts, "v1", Quota(), 200_000)
+    store = J.ResultStore(tmp_path / "r.jsonl")
+    recs = asyncio.run(J.run_calls(calls, Quota(), store, concurrency=1, progress=None))
+    assert len(recs) == 1 and recs[0]["error"]["quota"] and Quota.calls == 1
+    assert store.done(recs[0]["key"]) is None         # retried on the next run
