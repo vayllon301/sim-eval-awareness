@@ -63,6 +63,16 @@ def test_a_torn_last_line_is_skipped_not_fatal(tmp_path):
     assert set(store.latest()) == {"L001"} and store.skipped_lines == 1
 
 
+def test_a_save_after_a_torn_last_line_survives_a_restart(tmp_path):
+    path = tmp_path / "labels.jsonl"
+    L.LabelStore(path).append("L001", L.validate(FULL, STEPS, TURNS))
+    with open(path, "a") as f:
+        f.write('{"label_id": "L002", "verd')
+    L.LabelStore(path).append("L003", L.validate(FULL, STEPS, TURNS))
+    again = L.LabelStore(path)
+    assert set(again.latest()) == {"L001", "L003"} and again.skipped_lines == 1
+
+
 # -- the server ---------------------------------------------------------------------
 
 
