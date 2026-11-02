@@ -7,7 +7,7 @@
 #   2. opens the tunnel to that node through the login host
 #      (SSH_TARGET=<node> SSH_JUMP=<login> explore/colab_probe/tunnel.sh) and waits for both
 #      /v1/models;
-#   3. EQUIV=1, first chunk only: simtest equiv score on these servers before any episode
+#   3. EQUIV=1, the first job that comes up only: simtest equiv score on its servers before any episode
 #      (configs/coding/pilot.yaml: on a backend other than the G4, the check runs in the same session,
 #      before the episodes; docs/BACKENDS.md);
 #   4. uv run --env-file ENV_FILE simtest run CONFIG --epochs <chunk> --admit-for <hours>;
@@ -157,6 +157,7 @@ wait_job() {
 
 final=0
 k=0
+equiv_done=0
 for row in $rows; do
   k=$((k + 1))
   id=${row%% *} rest=${row#* }
@@ -178,11 +179,12 @@ for row in $rows; do
     (( final )) || final=3
     continue
   fi
-  if [[ ${EQUIV:-} == 1 && $k == 1 ]]; then
+  if [[ ${EQUIV:-} == 1 ]] && (( ! equiv_done )); then   # the first usable job, before any episode
     x uv run simtest equiv score $EQUIV_CONTEXTS --agent-url http://localhost:18000/v1 \
       --simulator-url http://localhost:18001/v1 --concurrency ${=EQUIV_CONCURRENCY} --out $OUTDIR/equiv \
       --label "Hopper, job $id on $NODE" || { note "equiv: FAILED"; exit 1; }
     note "equiv: scored ($OUTDIR/equiv-c*.jsonl)"
+    equiv_done=1
   fi
   # The admission window, against the job's real end (the dry run assumes the plan's timing).
   reserve=$(( TIME_LIMIT - SETUP_HOURS - plan_admit ))

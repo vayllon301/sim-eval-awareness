@@ -57,7 +57,7 @@ if (( ${#problems} )); then
   exit 1
 fi
 
-# 2. The plan (offline). Each chunk: epochs A-B and the hours to admit episodes.
+# 2. The plan (offline). Each chunk: epochs (N or A-B) and the hours to admit episodes.
 plan=$(mktemp "${TMPDIR:-/tmp}/sim-plan.XXXXXX")
 sbout=$(mktemp "${TMPDIR:-/tmp}/sim-sbatch.XXXXXX")
 trap 'rm -f $plan $sbout' EXIT
@@ -71,7 +71,7 @@ for c in json.load(open(sys.argv[1]))["chunks"]:
 (( ${#chunks} )) || { print -u2 "submit_chunks.sh: the plan has no chunks"; exit 1; }
 for c in $chunks; do
   e=${c%% *} a=${c#* }
-  if ! { [[ $e =~ '^[0-9]+-[0-9]+$' && $a =~ $NUM ]] && (( a > 0 )); }; then
+  if ! { [[ $e =~ '^[0-9]+(-[0-9]+)?$' && $a =~ $NUM ]] && (( a > 0 )); }; then   # N or A-B, as simtest plan writes
     print -u2 "submit_chunks.sh: a chunk the plan can't mean: '$c'"
     exit 1
   fi

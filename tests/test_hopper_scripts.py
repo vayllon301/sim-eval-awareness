@@ -444,3 +444,37 @@ def test_the_scripts_are_executable():
     for s in (SUBMIT, RUN):
         assert s.read_text().startswith("#!/bin/zsh") and os.access(s, os.X_OK)
     assert SLURM.read_text().startswith("#!/bin/bash")
+
+
+# --- sol-loop round 1 (02-11-2026) ---------------------------------------------------------------------
+
+def test_the_planners_own_chunks_are_submitted(tmp_path, monkeypatch):
+    """S2: simtest plan writes a one-epoch chunk as "3", not "3-3"."""
+    from simtest.stats import replay as R
+
+    plan = R.plan_chunks([("C0", "none"), ("C3", "s")], ["a", "b"], 3, 4, {"C0": [60.0], "C3": [120.0]}, 5.0,
+                         setup_hours=0.5, draws=20)
+    assert [c["epochs"] for c in plan["chunks"]] == ["1-2", "3"]
+    monkeypatch.setitem(PLAN, "chunks", plan["chunks"])
+    proc, state, logs = submit(tmp_path)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    rows = [x.split() for x in next((logs / "hopper").glob("n2-pilot-*.jobs")).read_text().splitlines()
+            if not x.startswith("#")]
+    assert rows == [["1001", "1-2", "2.5"], ["1002", "3", "2.5"]]
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_equiv_runs_on_the_first_usable_job_when_the_first_fails(tmp_path):
+    """S4: with EQUIV=1 the check runs before any episode, also when the first job failed."""
+    def jobs(state):
+        job(state, "1001", ["RUNNING", ""], ["node=gpu07;state=failed;start=1;end=2"])
+        job(state, "1002", ["RUNNING"], [ready("gpu11", 20)])
+        job(state, "1003", ["RUNNING"], [ready("gpu12", 20)])
+    ctx = tmp_path / "contexts.jsonl"
+    ctx.write_text("{}\n")
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5"), ("1002", "2-2", "9.5"), ("1003", "3-3", "9.5")],
+                             jobs, env={"EQUIV": "1", "EQUIV_CONTEXTS": str(ctx)})
+    calls = calls_of(state)
+    eq = [i for i, c in enumerate(calls) if "simtest equiv score" in c]
+    first_run = next(i for i, c in enumerate(calls) if "simtest run " in c)
+    assert len(eq) == 1 and eq[0] < first_run, proc.stdout
