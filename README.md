@@ -140,6 +140,9 @@ uv run inspect view --log-dir logs/<name>                 # transcripts
 
 - Runs refuse a dirty working tree, so every result maps to a commit.
 - Re-running the same `run` command resumes it.
+- Coding configs run every condition in one seeded queue with a fixed total in flight;
+  `simtest preflight` runs a config offline first, and `simtest plan` estimates its GPU hours
+  ([`docs/TESTBED.md`](docs/TESTBED.md)).
 - Logs go to `logs/<name>/` and are not in git. Published logs are in `experiments/`.
 
 ## Status
