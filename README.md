@@ -28,6 +28,7 @@ behaviour is measured on real state.
 | --- | --- |
 | `src/simtest/` | The testbed, built on [Inspect AI](https://inspect.aisi.org.uk/) (pinned 0.3.281). The coding family is `src/simtest/coding/`. Reference: [`docs/TESTBED.md`](docs/TESTBED.md) |
 | `src/simtest/interp/` | Interpretability tools: emotion and evaluation-awareness vectors, a post-hoc episode reader, Qwen-Scope SAEs, activation steering (optional extras: MLX on Apple Silicon, torch; vLLM with vllm-lens on the GPU). Reference: [`docs/INTERP.md`](docs/INTERP.md) |
+| `src/simtest/judge/` | The transcript that hand labellers and the awareness judge read, the seeded hand-label sample, and a local labelling page (`simtest label manifest`, `simtest label serve`). Reference: [`docs/TESTBED.md`](docs/TESTBED.md), "Hand labels" |
 | `envs/` | The dev-machine image (`envs/devbox/`: a real init, reached over SSH), one image per scenario repo (`envs/coding/`), and the bake-off's `pyrepo` |
 | `scenarios/`, `configs/` | Tasks, and the configs that were run. Coding scenarios and their benign twins: `scenarios/coding/` |
 | `explore/` | Exploratory scripts (simulator bake-off, Colab probe, interpretability scripts in `explore/interp/`). Not part of the testbed |
