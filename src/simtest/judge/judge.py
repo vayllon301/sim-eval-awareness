@@ -436,8 +436,11 @@ def _print(line: str) -> None:
 
 
 async def run_calls(calls: list[dict], backend, store: ResultStore, concurrency: int = 4,
-                    progress=_print) -> list[dict]:
-    """Every planned call not already in the store; results are appended as they finish."""
+                    progress=_print, call=None) -> list[dict]:
+    """Every planned call not already in the store; results are appended as they finish.
+    `call(c)` makes one call's record (default: `judge_call` on the backend); the second
+    judge (scout.py) passes its own."""
+    call = call or (lambda c: judge_call(backend, c["prompt"], c["label"], c["steps"], c["base"]))
     todo = [c for c in calls if store.done(c["key"]) is None]
     sem = asyncio.Semaphore(max(1, concurrency))
     done = 0
@@ -453,7 +456,7 @@ async def run_calls(calls: list[dict], backend, store: ResultStore, concurrency:
             async with sem:
                 if stopped:
                     return None
-                rec = await judge_call(backend, c["prompt"], c["label"], c["steps"], c["base"])
+                rec = await call(c)
         if (rec["error"] or {}).get("quota"):
             if stopped:
                 return None             # one quota record is enough

@@ -4,13 +4,16 @@ the hand labels. See docs/TESTBED.md, "The awareness judge".
     simtest judge tune <tuning.yaml> --backend codex --prompts v1 --out tune.jsonl
     simtest judge run <manifest.json> --backend inspect --model openrouter/... --prompts v3 --out kappa.jsonl --yes
     simtest judge kappa <kappa.jsonl> <labels.jsonl>
+    simtest judge kappa <scout.jsonl> --judge <kappa.jsonl>          # two judges on the same episodes
+    simtest judge scout <manifest.json> --model openrouter/... --out scout.jsonl --yes
     simtest judge sizes <manifest.json | tuning.yaml> --prompts v3
     simtest judge show <results.jsonl>
 
 `tune` reads only tuning episodes and refuses the test set. `run` reads only the test set,
 with a frozen prompt version (a FROZEN file, committed: the prompt directory must be clean),
 on Inspect's model API. Any paid call (Inspect with a model other than mockllm) needs
-`--yes`; without it the command prints the plan and stops.
+`--yes`; without it the command prints the plan and stops. `scout` runs the second judge
+(scout.py), Scout's published eval-awareness scanner, on the same test set.
 """
 
 from __future__ import annotations
@@ -55,11 +58,29 @@ def add_parser(sub) -> None:
     r = jsub.add_parser("run", help="run the frozen judge on a manifest's drawn episodes (the kappa pass)")
     r.add_argument("manifest", type=Path)
     common(r, "inspect")
-    k = jsub.add_parser("kappa", help="Cohen's kappa per label against the hand labels, with a bootstrap 95%% CI")
+    k = jsub.add_parser("kappa", help="Cohen's kappa per label against the hand labels (or another judge), with a "
+                                      "bootstrap 95%% CI")
     k.add_argument("results", type=Path)
-    k.add_argument("labels", type=Path)
+    k.add_argument("labels", type=Path, nargs="?", default=None, help="the hand labels (labels.jsonl)")
+    k.add_argument("--judge", type=Path, default=None, dest="reference",
+                   help="another judge's results on the same test set, as the reference instead of the hand labels")
     k.add_argument("--boot", type=int, default=10000)
     k.add_argument("--json", action="store_true")
+    sc = jsub.add_parser("scout", help="the second judge: Scout's published eval-awareness scanner on a manifest's "
+                                       "drawn episodes (never tuned)")
+    sc.add_argument("manifest", type=Path)
+    sc.add_argument("--model", required=True, help="an Inspect model id (openrouter/...; mockllm/model in tests)")
+    sc.add_argument("--out", type=Path, required=True, help="results JSONL (appended; cached calls are skipped)")
+    sc.add_argument("--concurrency", type=int, default=4)
+    sc.add_argument("--budget", type=int, default=200_000,
+                    help="token budget for one call; also Scout's context window, so it never splits a transcript")
+    sc.add_argument("--temperature", default="none", help="a number, or 'none' for the provider default (as published)")
+    sc.add_argument("--max-tokens", type=int, default=16000, help="output tokens, reasoning included")
+    sc.add_argument("--reasoning-effort", default=None)
+    sc.add_argument("--seed", type=int, default=None)
+    sc.add_argument("--model-args", default=None, help='provider options as JSON, e.g. \'{"provider": {"order": '
+                                                       '["anthropic"], "allow_fallbacks": false}}\'')
+    sc.add_argument("--yes", action="store_true", help="make the calls (paid models); without it, print the plan")
     s = jsub.add_parser("sizes", help="prompt sizes in tokens against the budget (numbers only, no text)")
     s.add_argument("source", type=Path, help="a manifest (its drawn episodes) or a tuning spec")
     s.add_argument("--prompts", required=True)
@@ -77,9 +98,7 @@ def _backend(args):
     if not args.model:
         raise SystemExit("--model is required with --backend inspect")
     temp = None if str(args.temperature).lower() == "none" else float(args.temperature)
-    margs = json.loads(args.model_args) if args.model_args else None
-    if margs is not None and not isinstance(margs, dict):
-        raise SystemExit("--model-args must be a JSON object")
+    margs = _model_args(args.model_args)
     return InspectBackend(args.model, temperature=temp, max_tokens=args.max_tokens,
                           reasoning_effort=args.reasoning_effort, seed=args.seed, model_args=margs)
 
@@ -146,6 +165,34 @@ def show(results: list[dict], keys: set[str] | None = None) -> str:
     return "\n".join(lines)
 
 
+def _model_args(raw):
+    margs = json.loads(raw) if raw else None
+    if margs is not None and not isinstance(margs, dict):
+        raise SystemExit("--model-args must be a JSON object")
+    return margs
+
+
+def _scout(args) -> None:
+    from . import scout as S
+
+    temp = None if str(args.temperature).lower() == "none" else float(args.temperature)
+    settings = S.run_settings(temperature=temp, max_tokens=args.max_tokens, reasoning_effort=args.reasoning_effort,
+                              seed=args.seed, model_args=_model_args(args.model_args), budget=args.budget)
+    guard = E.TestSetGuard(args.manifest)
+    calls, refused = S.plan_calls(guard.drawn, lambda ep: E.read_sample(guard.root, ep), args.model, settings)
+    for r in refused:
+        print(f"refused {r['key']}: {r['reason']}")
+    store = J.ResultStore(args.out)
+    print(S.plan_summary(calls, store, args.model, settings))
+    if not args.model.startswith("mockllm/") and not args.yes:
+        print("Not called: this model spends credit. Add --yes to make the calls.")
+        return
+    scanner = S.build_scanner(S.recording(S.make_model(args.model, settings)), args.budget)
+    asyncio.run(S.run_calls(calls, scanner, store, concurrency=args.concurrency))
+    print(show(list(store.latest.values()), keys={c["key"] for c in calls}))
+    print(f"results: {args.out}")
+
+
 def _sizes(args) -> None:
     import statistics
 
@@ -202,8 +249,12 @@ def main(args: argparse.Namespace) -> None:
         guard = E.TestSetGuard(args.manifest)
         _execute(args, guard.drawn, lambda ep: E.read_sample(guard.root, ep))
     elif args.judge_cmd == "kappa":
-        rep = kappa_files(args.results, args.labels, n_boot=args.boot)
+        if (args.labels is None) == (args.reference is None):
+            raise SystemExit("give the hand labels (labels.jsonl) or --judge <results.jsonl>, one of the two")
+        rep = kappa_files(args.results, args.labels, n_boot=args.boot, judge_path=args.reference)
         print(dumps(rep) if args.json else format_report(rep))
+    elif args.judge_cmd == "scout":
+        _scout(args)
     elif args.judge_cmd == "sizes":
         _sizes(args)
     elif args.judge_cmd == "show":
