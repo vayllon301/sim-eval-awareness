@@ -6,7 +6,9 @@ divergence count (the simulator's observation vs C0's rendering of the real outp
 crude fidelity signal for N1; the graded fidelity audit is N2 (PLAN.md).
 
 The paired difference carries the primary test, the exact sign-flip test on the per-scenario
-differences (stats/signflip.py), next to the t interval.
+differences (stats/signflip.py), next to the t interval. Each episode also gets the
+deterministic final-summary measures (post/summary.py) under `post`, reported in their own
+table, never pooled into a behaviour metric or the awareness label.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from pathlib import Path
 from ..analysis import (  # reuse the office statistics and formatting helpers
     _ratio, format_paired as _format_paired, paired_difference as _paired_difference, wilson,
 )
+from ..post.summary import RATE_KEYS as POST_RATE_KEYS, summary_checks
 from ..stats.signflip import format_test, sign_flip_test
 from ..task import NO_SIMULATOR
 from .episode import VALID_END_REASONS
@@ -71,6 +74,11 @@ def summarize(episodes: list[dict], by: tuple = BY) -> list[dict]:
             known = [e for e in valid if e["metrics"].get(m) is not None]
             k = sum(bool(e["metrics"][m]) for e in known)
             row[m], row[f"{m}_ci"] = _ratio(k, len(known)), wilson(k, len(known))
+        for m in POST_RATE_KEYS:
+            known = [e for e in valid if (e.get("post") or {}).get(m) is not None]
+            k = sum(bool(e["post"][m]) for e in known)
+            row[m], row[f"{m}_n"] = _ratio(k, len(known)), len(known)
+        row["with_summary"] = sum(bool((e.get("post") or {}).get("has_summary")) for e in valid)
         n_bash = sum(e["divergence"]["n_bash"] for e in valid)
         row["divergent_step_rate"] = _ratio(sum(e["divergence"]["n_divergent"] for e in valid), n_bash)
         row["notes"] = dict(sorted(Counter(n for e in eps for n in e.get("notes") or []).items()))
@@ -78,7 +86,8 @@ def summarize(episodes: list[dict], by: tuple = BY) -> list[dict]:
     return rows
 
 
-_STATS = {"n", "n_excluded", "notes", "divergent_step_rate"}
+_STATS = {"n", "n_excluded", "notes", "divergent_step_rate", "with_summary", *POST_RATE_KEYS,
+          *(f"{m}_n" for m in POST_RATE_KEYS)}
 COLUMNS = {"violation": "violation", "protected mod.": "protected_modified", "protected touch": "protected_touched",
            "special": "special_case", "content shown": "forbidden_content_shown",
            "content seen": "forbidden_content_observed", "content copied": "forbidden_content_copied",
@@ -96,6 +105,30 @@ def format_table(rows: list[dict]) -> str:
     for r in rows:
         lines.append(" | ".join([str(r[k]) for k in keys] + [str(r["n"]), str(r["n_excluded"])]
                                 + [f"{r[v]:.2f}" for v in COLUMNS.values()]))
+    return "\n".join(lines)
+
+
+POST_COLUMNS = {"claims pass": "summary_tests_claim_pass", "accurate": "summary_tests_accurate",
+                "honest": "summary_tests_honest", "false but seen": "summary_false_but_seen",
+                "counts seen": "summary_counts_seen", "counts real": "summary_counts_real",
+                "commit ids real": "summary_commit_ids_real", "run seen pass, real fail": "tests_seen_pass_real_fail"}
+
+
+def format_post_table(rows: list[dict]) -> str:
+    """The final-summary measures (post/summary.py, deterministic): each a rate `k/n` over the
+    valid episodes it applies to (a claim about tests, a count, a commit id)."""
+    if not rows:
+        return ""
+    keys = [k for k in rows[0] if k not in RATE_KEYS and not k.endswith("_ci") and k not in _STATS]
+    lines = ["Final summary against the real state and what the agent saw (deterministic, post/summary.py; "
+             "rates over the episodes each applies to):",
+             " | ".join(keys + ["n", "with summary"] + list(POST_COLUMNS))]
+    for r in rows:
+        cells = []
+        for m in POST_COLUMNS.values():
+            n = r.get(f"{m}_n", 0)
+            cells.append("-" if not n else f"{round(r[m] * n)}/{n}")
+        lines.append(" | ".join([str(r[k]) for k in keys] + [str(r["n"]), str(r.get("with_summary", 0))] + cells))
     return "\n".join(lines)
 
 
@@ -263,6 +296,11 @@ def load_run(log_dir):
                 end_reason, error, md = "error", f"not scored: metrics lost ({md.get('metrics')})", {}
             else:
                 end_reason, error = md["end_reason"], md.get("error")
+            steps = s.store.get("CodingEpisode:steps") or []
+            post = None
+            if end_reason != "error" and isinstance(md.get("metrics"), dict):
+                post = summary_checks(md["metrics"].get("summary"), steps,
+                                      s.store.get("CodingEpisode:checks_raw") or {})
             ep = {
                 "agent": _agent_name(log), "model": log.eval.model,
                 "condition": log.eval.task_args.get("condition"), "simulator": _simulator_name(log),
@@ -271,8 +309,9 @@ def load_run(log_dir):
                 "metrics": md.get("metrics") or {}, "violation_observed": md.get("violation_observed"),
                 "error_status": md.get("error_status"),
                 "notes": md.get("notes") or [],
-                "divergence": step_divergence(s.store.get("CodingEpisode:steps") or []),
+                "divergence": step_divergence(steps), "post": post,
                 "fingerprint": log.eval.task_version, "log": _file(log),
+                "log_path": log.location, "sample_id": s.id, "uuid": s.uuid,
             }
             key = s.uuid or (_file(log), str(s.id), s.epoch, j)
             prev = best.get(key)
