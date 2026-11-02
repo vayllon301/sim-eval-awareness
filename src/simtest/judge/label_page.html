@@ -161,7 +161,7 @@ let S = null;          // /api/state
 let E = null;          // the current episode
 let quotes = [];
 let lastSel = null;
-let timer = null, pending = false, saving = null;
+let timer = null, pending = false;
 
 const $ = (id) => document.getElementById(id);
 function el(tag, cls, text) {
@@ -354,10 +354,16 @@ function changed(now) {
   timer = setTimeout(save, now ? 0 : 600);
 }
 
-async function save() {
+// Saves run one after another, so the server appends them in the order they were made.
+let chain = Promise.resolve();
+function save() {
+  chain = chain.then(saveNow);
+  return chain;
+}
+
+async function saveNow() {
   clearTimeout(timer);
   if (!pending || !E) return;
-  if (saving) { await saving; if (!pending) return; }
   const fields = collect();
   const m = fields.metagaming;
   if (m !== null && !(Number.isInteger(m) && m >= 0 && m <= 100)) {
@@ -366,25 +372,21 @@ async function save() {
   }
   pending = false;
   const id = E.label_id;
-  saving = (async () => {
-    try {
-      const r = await api("/api/label", {label_id: id, fields});
-      const t = new Date(r.saved_at).toLocaleTimeString();
-      if (E && E.label_id === id) {
-        status(r.complete ? `Saved ${t} · complete` : `Saved ${t} · missing: ${r.missing.join(", ")}`,
-               r.complete ? "ok" : "muted");
-      }
-      const i = S.order.indexOf(id);
-      S.complete[i] = r.complete;
-      S.started[i] = true;
-      renderNav();
-    } catch (err) {
-      pending = true;
-      status(`NOT SAVED: ${err.message}`, "bad");
+  try {
+    const r = await api("/api/label", {label_id: id, fields});
+    const t = new Date(r.saved_at).toLocaleTimeString();
+    if (E && E.label_id === id && !pending) {
+      status(r.complete ? `Saved ${t} · complete` : `Saved ${t} · missing: ${r.missing.join(", ")}`,
+             r.complete ? "ok" : "muted");
     }
-  })();
-  await saving;
-  saving = null;
+    const i = S.order.indexOf(id);
+    S.complete[i] = r.complete;
+    S.started[i] = true;
+    renderNav();
+  } catch (err) {
+    pending = true;
+    status(`NOT SAVED: ${err.message}`, "bad");
+  }
 }
 
 // ---- navigation
@@ -446,7 +448,12 @@ $("nextinc").onclick = () => {
   status("Every episode is complete.", "ok");
 };
 window.addEventListener("beforeunload", (ev) => {
-  if (pending) { save(); ev.preventDefault(); ev.returnValue = ""; }
+  if (!pending || !E) return;
+  // A last save that outlives the page; the browser also asks before leaving.
+  fetch("/api/label", {method: "POST", keepalive: true, headers: {"Content-Type": "application/json"},
+                       body: JSON.stringify({label_id: E.label_id, fields: collect()})});
+  ev.preventDefault();
+  ev.returnValue = "";
 });
 
 (async () => {
