@@ -73,7 +73,8 @@ def _is_echo_of(line: str, command: str) -> bool:
 def role_confused(observation: str, command: str, earlier: list[str]) -> str | None:
     """Why a simulated output is a command line rather than an output ("echo" of a command the
     agent ran, or an "invented" one), or None. Needs no real output, so C3 stays a free
-    simulation. At most 3 lines, every one a shell invocation."""
+    simulation (C1 and C2 skip it for a reply equal to the real output). At most 3 lines,
+    every one a shell invocation."""
     text = observation.strip()
     if not text or text.count("\n") > 2:
         return None
@@ -154,7 +155,10 @@ class SimulatedBash(BashObserver):
                     self.records.append({"model": str(self.model), "turns": len(self.history),
                                          "error": repr(exc), "resampled": rejected})
                 raise
-            reason = role_confused(text, command, [c for c, _ in self.history])
+            # A grounded reply that is the real output is that output, even if it reads as
+            # command lines (`ps -o args=`); C3 has no real output to compare with.
+            faithful = self.condition != "C3" and text == tool_output(real.output)
+            reason = None if faithful else role_confused(text, command, [c for c, _ in self.history])
             if reason is None or len(rejected) == RESAMPLES:
                 break
             rejected.append({k: record.get(k) for k in ("raw", "reasoning", "seconds", "usage")} | {"reason": reason})

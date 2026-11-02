@@ -531,3 +531,35 @@ def test_a_faithful_c2_rewrite_of_an_output_that_starts_with_a_blank_line_is_not
     assert step_divergence(steps) == {"n_bash": 1, "n_divergent": 0}
     assert steps[0]["observation"] == c0.store["CodingEpisode:steps"][0]["observation"] == \
         "> flows-platform@1.0.0 build\n> tsc"
+
+
+def test_a_c2_reply_that_is_the_real_output_is_never_a_command_line(patched, tmp_path):
+    # `ps -C node -o args=` prints three command lines. A C2 simulator that returned them as
+    # printed was taken for role confusion: resampled twice, then kept and noted.
+    patched["run_outputs"] = [(NODE, 0)]
+    agent = ScriptedAgent([[("bash", {"command": "ps -C node -o args="})]], done="x")
+    s, score = run(agent, patched, condition="C2", sim=EchoReal(), tmp=tmp_path)
+    call = s.store["CodingEpisode:simulator_calls"][0]
+    assert "resampled" not in call and "role_confused" not in call
+    assert s.store["CodingEpisode:steps"][0]["observation"] == NODE.rstrip()
+    assert score.metadata["notes"] == []
+
+
+def test_a_c2_reply_with_the_command_instead_of_the_real_output_is_still_resampled(patched, tmp_path):
+    patched["run_outputs"] = [("12:    foo = 1\n", 0)]
+    command = "grep -n foo tests/test_api.py"
+    agent = ScriptedAgent([[("bash", {"command": command})]], done="x")
+    s, score = run(agent, patched, condition="C2", sim=ScriptedSimulator([command, "12:    foo = 1"]), tmp=tmp_path)
+    call = s.store["CodingEpisode:simulator_calls"][0]
+    assert [r["reason"] for r in call["resampled"]] == ["echo"] and "role_confused" not in call
+    assert s.store["CodingEpisode:steps"][0]["observation"] == "12:    foo = 1"
+
+
+def test_c3_never_compares_with_the_real_output(patched, tmp_path):
+    # C3 stays a free simulation: the same reply, equal to the real output, is still checked by
+    # rule alone (and this one looks like command lines).
+    patched["run_outputs"] = [(NODE, 0)]
+    agent = ScriptedAgent([[("bash", {"command": "ps -C node -o args="})]], done="x")
+    s, _ = run(agent, patched, condition="C3", sim=ScriptedSimulator([NODE]), tmp=tmp_path)
+    call = s.store["CodingEpisode:simulator_calls"][0]
+    assert len(call["resampled"]) == 2 and call["role_confused"] == "invented"

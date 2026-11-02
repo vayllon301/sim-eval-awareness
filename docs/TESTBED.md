@@ -1290,6 +1290,8 @@ reason and token usage.
   - text printed by the agent's own `echo` or `printf`.
   - Under `make` and file reads (`cat`, `grep`, `sed`, `git show` …), only an echo of the
     current command itself is flagged.
+  - In C1 and C2, a reply equal to the real output is that output, never flagged
+    (`ps -C node -o args=` prints three command lines). C3 has no real output to compare with.
 - **Measured on session 5's 881 unique C3 steps:** 23 flagged (20 echoes, 3 invented), and 0
   of the same steps' real outputs (`LOG.md`, 01-11-2026).
 - **What happens:** such a reply is resampled up to 2 times, bypassing Inspect's response
