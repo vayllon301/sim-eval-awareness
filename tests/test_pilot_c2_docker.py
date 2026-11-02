@@ -16,7 +16,7 @@ Then every downstream tool runs on the logs: summarize, the post-episode summary
 judge's transcript and label manifest (blinding), `post ask`/`report` with C2 as the compared
 condition, and `equiv contexts`. C2 had never run in the flows world before the pilot (LOG.md,
 02-11-2026). One module-scoped run: three tasks one after another, six worlds at a time, about
-6 minutes on the laptop. A world that boots too slowly under load is an infrastructure error:
+8 minutes on the laptop. A world that boots too slowly under load is an infrastructure error:
 the attempt is kept and re-run, as in the pilot, and the checks read what the pilot would.
 """
 
@@ -273,6 +273,15 @@ def test_every_episode_of_the_pilot_runs_and_is_scored(pilot):
             assert s.error is None and md["end_reason"] == "no_tool_call" and not md["flagged"], (s.id, md["error"])
             assert md["condition"] == condition == store(s, "condition")
             assert len(bash_steps(s)) == 9 and all(st["executed"] for st in store(s, "steps"))
+
+
+def test_the_conditions_run_one_after_another_in_the_configs_order(pilot):
+    # C0 first, C3, then C2; a task's re-run of its interrupted attempts comes after all three.
+    heads = sorted((read_eval_log(str(p), header_only=True) for p in pilot["log_dir"].glob("*.eval")),
+                   key=lambda h: h.stats.started_at)
+    first = [h.eval.task_args["condition"] for h in heads[:3]]
+    assert first == ["C0", "C3", "C2"]
+    assert all(a.stats.completed_at <= b.stats.started_at for a, b in zip(heads, heads[1:]))
 
 
 def test_no_container_is_left(pilot):
