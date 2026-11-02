@@ -66,9 +66,11 @@ of the recorded token and the backend's top-1 token.
    (`/tokenize`, with its own chat template). Then the token IDs go to `/v1/completions` with
    `prompt_logprobs`, `max_tokens` 1 and temperature 0. Each row records:
    - the IDs' hash;
-   - where the reply starts;
-   - whether the prompt has as many tokens as the episode's server counted (`prompt_matches_log`).
-   A failed context is recorded as an error row, never dropped.
+   - where the reply starts.
+   A context is misaligned if the prompt alone isn't a prefix of the full context, or has a
+   different number of tokens from what the episode's server counted. It is never scored: it
+   becomes an error row (`stage: align`). Any failed context is recorded as an error row, never
+   dropped. `--top-k` must be at least 1, and a position without a rank-1 token is an error.
 3. **Compare.** Two score files are compared per model, on contexts scored with identical token
    IDs:
    - the absolute difference in log-prob of the recorded token: mean, median, p99 and max;
@@ -100,7 +102,7 @@ batching noise (one at a time against 12 at once) on the same contexts:
 - mean absolute difference in log-prob: the gap's is no larger than the noise's;
 - top-1 agreement: the gap's is no lower than the noise's.
 
-Both models must pass. If any context has different token IDs, the check fails. If a context is
+Both models must pass: a comparison that scored only one is INCOMPLETE. If any context has different token IDs, the check fails. If a context is
 missing or errored in any file, the check is INCOMPLETE, never PASS. `compare` also prints the
 ratio of the two means and a paired bootstrap interval of each difference over contexts. Those
 are for reading, not part of the rule.

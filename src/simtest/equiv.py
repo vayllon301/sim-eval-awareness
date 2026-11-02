@@ -185,7 +185,9 @@ def parse_prompt_logprobs(entries: list, tokens: list[int]) -> tuple[list, list]
             raise EquivError(f"position {i}: no log-prob for its token {tokens[i]}")
         lp.append(float(forced["logprob"]))
         ranked = [int(k) for k, v in d.items() if v.get("rank") == 1]
-        top1.append(min(ranked) if ranked else int(max(d, key=lambda k: d[k]["logprob"])))
+        if not ranked:
+            raise EquivError(f"position {i}: no rank-1 token (prompt_logprobs must be at least 1)")
+        top1.append(min(ranked))
     return lp, top1
 
 
@@ -226,6 +228,8 @@ async def score(contexts: list[dict], servers: dict[str, Server], concurrency: i
     an error row, never an exception."""
     import httpx
 
+    if top_k < 1:
+        raise EquivError(f"top_k must be at least 1 (got {top_k}): top-1 agreement needs the server's top token")
     todo = [c for c in contexts if c["model"] in servers]
     rows: dict[str, dict] = {}
     prepared: list[tuple[dict, list[int], int | None]] = []
@@ -240,6 +244,14 @@ async def score(contexts: list[dict], servers: dict[str, Server], concurrency: i
                                  "error": f"{type(exc).__name__}: {exc}"[:500]}
                 continue
             start = len(prompt) if full[:len(prompt)] == prompt else None
+            logged = c.get("prompt_tokens")
+            if start is None or (logged is not None and start != logged):
+                # the rebuilt context isn't what the episode's server saw: never compared
+                why = ("the prompt is not a prefix of the full context" if start is None
+                       else f"the prompt has {start} tokens, the episode's server counted {logged}")
+                rows[c["id"]] = {"kind": "error", "id": c["id"], "model": c["model"], "stage": "align",
+                                 "error": why}
+                continue
             prepared.append((c, full, start))
 
         sems = {m: asyncio.Semaphore(concurrency) for m in servers}
@@ -389,7 +401,7 @@ def _bootstrap(cross: list[dict], noise: list[dict], reps: int = 2000, seed: int
 def verdict(cross: dict[str, dict], noise: dict[str, dict], models=None) -> dict:
     """The DRAFT pass rule (module docstring): per model, cross mean |d log-prob| <= noise's
     and cross top-1 agreement >= noise's. PASS only if every model passes on complete data."""
-    models = sorted(models or set(cross) | set(noise))
+    models = sorted(models or MODELS)
     result, statuses = {}, []
     for m in models:
         c, n = cross.get(m), noise.get(m)

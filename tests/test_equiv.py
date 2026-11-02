@@ -286,9 +286,47 @@ def test_scoring_teacher_forces_the_server_tokens_without_sampling():
     assert row["prompt_matches_log"] is True
 
 
-def test_a_prompt_that_differs_from_the_logged_count_is_flagged():
-    rows, _ = score([ctx(0, prompt_tokens=7)])
-    assert rows[0]["prompt_matches_log"] is False
+def test_a_prompt_that_differs_from_the_logged_count_is_an_error_not_a_score():
+    rows, servers = score([ctx(0, prompt_tokens=7)])
+    assert rows[0]["kind"] == "error" and rows[0]["stage"] == "align"
+    assert not [p for p, _ in servers["agent"].requests if p == "/v1/completions"]
+
+
+def test_a_prompt_that_is_not_a_prefix_of_the_full_context_is_an_error():
+    srv = FakeVLLM()
+    real = srv.__call__
+
+    async def shifted(request):      # the generation prompt renders differently from the history
+        r = await real(request)
+        body = json.loads(request.content) if request.content else {}
+        if request.url.path == "/tokenize" and body.get("add_generation_prompt"):
+            t = r.json()["tokens"] + [999]
+            return httpx.Response(200, json={"tokens": t, "count": len(t)})
+        return r
+
+    rows = asyncio.run(Q.score([ctx(0)], {"agent": URLS["agent"]},
+                               transport=httpx.MockTransport(shifted)))
+    assert rows[0]["kind"] == "error" and rows[0]["stage"] == "align"
+
+
+def test_misaligned_contexts_make_the_comparison_incomplete():
+    contexts = [ctx(i, prompt_tokens="auto") for i in range(3)]
+    bad = [dict(c) for c in contexts]
+    bad[0]["prompt_tokens"] = 7
+    ref, _ = score(bad)
+    noisy, _ = score(contexts, agent=FakeVLLM(offset=0.02))
+    cand, _ = score(contexts, agent=FakeVLLM(offset=0.01))
+    assert Q.verdict(Q.gap(ref, cand), Q.gap(ref, noisy), models=("agent",))["status"] == "INCOMPLETE"
+
+
+def test_top_k_below_one_is_refused():
+    with pytest.raises(Q.EquivError, match="top_k"):
+        asyncio.run(Q.score([ctx(0)], {"agent": URLS["agent"]}, top_k=0, transport=transport(agent=FakeVLLM())))
+
+
+def test_a_position_without_a_rank_1_token_is_refused():
+    with pytest.raises(Q.EquivError, match="rank-1"):
+        Q.parse_prompt_logprobs([None, {"7": {"logprob": -0.1, "rank": 4}}], [5, 7])
 
 
 def test_max_tokens_cuts_every_context_the_same_way():
@@ -359,7 +397,7 @@ def _gate(cross_offset, noise, flip_cross=0, flip_noise=0):
     ref, _ = score(contexts)
     noisy, _ = score(contexts, agent=FakeVLLM(offset=noise, flip_every=flip_noise))
     cand, _ = score(contexts, agent=FakeVLLM(offset=cross_offset, flip_every=flip_cross))
-    return Q.verdict(Q.gap(ref, cand), Q.gap(ref, noisy))
+    return Q.verdict(Q.gap(ref, cand), Q.gap(ref, noisy), models=("agent",))
 
 
 def test_pass_when_the_cross_backend_gap_is_within_the_batching_noise():
@@ -382,14 +420,25 @@ def test_a_token_mismatch_fails_and_a_missing_context_is_incomplete():
     ref, _ = score(contexts)
     noisy, _ = score(contexts, agent=FakeVLLM(offset=0.02))
     cand, _ = score(contexts, agent=FakeVLLM(offset=0.01))
-    v = Q.verdict(Q.gap(ref, cand[:2]), Q.gap(ref, noisy))
+    v = Q.verdict(Q.gap(ref, cand[:2]), Q.gap(ref, noisy), models=("agent",))
     assert v["status"] == "INCOMPLETE"
     cand[0] = {**cand[0], "tokens_sha256": "x"}
-    assert Q.verdict(Q.gap(ref, cand), Q.gap(ref, noisy))["status"] == "FAIL"
+    assert Q.verdict(Q.gap(ref, cand), Q.gap(ref, noisy), models=("agent",))["status"] == "FAIL"
 
 
 def test_a_model_with_no_contexts_is_incomplete_never_pass():
     v = Q.verdict({}, {})
+    assert v["status"] == "INCOMPLETE"
+
+
+def test_overall_pass_needs_both_models():
+    contexts = [ctx(i) for i in range(6)]
+    ref, _ = score(contexts)
+    noisy, _ = score(contexts, agent=FakeVLLM(offset=0.02))
+    cand, _ = score(contexts, agent=FakeVLLM(offset=0.01))
+    v = Q.verdict(Q.gap(ref, cand), Q.gap(ref, noisy))      # only the agent was scored
+    assert v["models"]["agent"]["status"] == "PASS"
+    assert v["models"]["simulator"]["status"] == "INCOMPLETE"
     assert v["status"] == "INCOMPLETE"
 
 
@@ -421,6 +470,9 @@ def test_cli_contexts_score_and_compare(tmp_path, monkeypatch, capsys):
     cfile = tmp_path / "contexts.jsonl"
     main(["equiv", "contexts", str(tmp_path / "logs"), "--out", str(cfile), "--episodes", "3", "--sim-calls", "1"])
     assert len(cfile.read_text().splitlines()) == 6
+    # the fixture's logged prompt counts (123, 20) don't match the toy template, and a
+    # misaligned context is never compared: drop them so the pipeline can PASS
+    Q.write_contexts(cfile, [{**c, "prompt_tokens": None} for c in Q.read_contexts(cfile)], force=True)
 
     servers = {"g4": dict(agent=FakeVLLM("agent", batch_noise=0.05), simulator=FakeVLLM("simulator", batch_noise=0.05)),
                "hopper": dict(agent=FakeVLLM("agent", offset=0.001), simulator=FakeVLLM("simulator", offset=0.001))}
