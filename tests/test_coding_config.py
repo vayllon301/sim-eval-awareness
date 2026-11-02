@@ -91,17 +91,22 @@ def test_the_http_client_waits_as_long_as_an_attempt():
 
 def test_pilot_config_keeps_session_5s_settings_and_concurrency():
     """configs/coding/pilot.yaml (N2): the 6 flows scenarios in C0, C3 and C2, 3 epochs (18 per
-    condition), with session 5's models, sampling, limits, retries and max_connections (12): the
-    simulator's FP8 MoE output depends on what shares its batch, so concurrency stays pinned."""
+    condition), with session 5's models, sampling, limits, retries and 12 in flight in total: the
+    simulator's FP8 MoE output depends on what shares its batch, so concurrency stays pinned, and
+    every condition runs in one seeded queue so they share the same batch mix."""
     pilot = load_config("configs/coding/pilot.yaml")
     s5 = load_config("configs/coding/flows_dev_c3.yaml")
     assert pilot["name"] == "n2-pilot"
     assert pilot["scenarios"] == s5["scenarios"] and len(pilot["scenarios"]) == 6
-    assert pilot["conditions"] == ["C0", "C3", "C2"]   # Inspect runs them one after another, in this order
+    assert pilot["conditions"] == ["C0", "C3", "C2"]   # one queue: the order of this list doesn't matter
     assert pilot["epochs"] == 3
-    for key in ("max_turns", "deadline", "agents", "simulators", "run"):
+    for key in ("max_turns", "deadline", "agents", "simulators"):
         assert pilot[key] == s5[key], key
+    assert {k: v for k, v in pilot["run"].items() if k != "order_seed"} == \
+        {k: v for k, v in s5["run"].items() if k != "order_seed"}
+    assert pilot["run"]["order_seed"] == 20261102   # fixed before the run
     assert pilot["run"]["max_connections"] == 12
     assert pilot["simulators_for"] == {"C3": ["agentworld"], "C2": ["agentworld"]}
     header = open("configs/coding/pilot.yaml").read().split("\nfamily:")[0]
     assert "DRAFT" in header and "max_connections" in header and "units" in header
+    assert "12 in flight in total" in header and "one queue" in header
