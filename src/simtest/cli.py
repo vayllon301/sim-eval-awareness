@@ -1,4 +1,4 @@
-"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,power,post,equiv}.
+"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,power,post,fidelity,equiv}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
@@ -6,8 +6,9 @@ coding family (src/simtest/coding). `run` picks the family from the config's `fa
 `coding`). `scenarios` lists both. `images` and `snapshot` are coding-only. `label` builds
 the hand-label sample and serves the labelling page; `judge` runs and checks the awareness
 judge (src/simtest/judge). `power` simulates the power of the primary test (src/simtest/stats);
-`post` runs and reports the post-episode measures (src/simtest/post). `equiv` checks that two
-vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md).
+`post` runs and reports the post-episode measures (src/simtest/post); `fidelity` grades each
+simulated bash step against shadow execution (src/simtest/post/fidelity.py). `equiv` checks that
+two vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md).
 """
 
 from __future__ import annotations
@@ -139,6 +140,9 @@ def main(argv: list[str] | None = None) -> None:
     ls.add_argument("--labels", type=Path, default=None, help="default: labels.jsonl next to the manifest")
     ls.add_argument("--host", default="127.0.0.1")
     ls.add_argument("--port", type=int, default=8766)
+    from .post.fidelity import add_parser as add_fidelity_parser
+
+    add_fidelity_parser(sub)
     from .judge.command import add_parser as add_judge_parser
     from .post.command import add_parser as add_post_parser
     from .stats.power import add_parser as add_power_parser
@@ -222,6 +226,10 @@ def main(argv: list[str] | None = None) -> None:
         from .judge.server import serve
 
         serve(args.manifest, args.labels, host=args.host, port=args.port)
+    elif args.cmd == "fidelity":
+        from .post.fidelity import main as fidelity_main
+
+        fidelity_main(args)
     elif args.cmd == "judge":
         from .judge.command import main as judge_main
 
