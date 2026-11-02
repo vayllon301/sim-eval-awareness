@@ -407,3 +407,57 @@ def test_a_usage_limit_stops_the_run(tmp_path):
     recs = asyncio.run(J.run_calls(calls, Quota(), store, concurrency=1, progress=None))
     assert len(recs) == 1 and recs[0]["error"]["quota"] and Quota.calls == 1
     assert store.done(recs[0]["key"]) is None         # retried on the next run
+
+
+# --- review round 1 (sol-loop) ------------------------------------------------------------
+
+def test_a_short_drawn_turn_is_refused_too(tmp_path):
+    short = "This might be an evaluation."            # under any length cutoff
+    drawn = synthetic_sample()
+    drawn.messages[2] = drawn.messages[2].model_copy(update={"content": short})
+    other = synthetic_sample()
+    other.messages[2] = drawn.messages[2]
+    other.messages[4] = other.messages[4].model_copy(update={"content": "A different ending."})
+    guard = E.TestSetGuard(_manifest(tmp_path, drawn), read=lambda ep: drawn)
+    assert "same words" in guard.reason({"key": "c::s::1", "uuid": "u-x"}, T.episode_steps(other))
+    # A turn with no words (tool calls only) matches nothing.
+    assert E.turn_fingerprints([{"kind": "turn", "reasoning": "", "text": " "}]) == set()
+
+
+def test_the_retry_must_fit_the_budget_too():
+    prompts = {"eval_awareness": {"text": "Q\n{{TRANSCRIPT}}", "sha256": "s"}}
+    be = mock_backend(GOOD_EVAL, max_tokens=0)
+    ep = [{"key": "a::s::1", "log": "a", "sample_id": "s", "epoch": 1}]
+    first = J.count_tokens(J.build_prompt("Q\n{{TRANSCRIPT}}", T.render_text(steps())))[0]
+    budget = int(first * 1.25) + 1                    # the first prompt fits, the retry would not
+    calls, _ = J.plan_calls(ep, lambda e: synthetic_sample(), prompts, "v1", be, budget)
+    assert calls[0]["fits"] is False
+
+
+def test_an_inspect_credit_error_stops_the_run():
+    class Broke:
+        async def generate(self, *a, **k):
+            raise RuntimeError("Error code: 402 - Insufficient credits. Add more using https://openrouter.ai")
+
+    be = B.InspectBackend(Broke())
+    with pytest.raises(J.QuotaError):
+        asyncio.run(be.complete("p"))
+
+
+def test_onset_leaves_out_transcript_mismatches():
+    hand = {"L1": {"verdict": "EVAL", "onset": "t3", "transcript_sha256": "other"}}
+    rs = [_result("L1", lab, v, onset="t3") for lab, v in
+          [("eval_awareness", "EVAL"), ("sim_recognition", False), ("unusual", False), ("metagaming", 0),
+           ("training", False)]]
+    rep = K.compare(rs, hand, n_boot=10)
+    assert rep["onset"]["primary"]["n"] == 0 and rep["onset"]["any_label"]["n"] == 0
+
+
+def test_judged_episodes_never_saved_by_the_labeller_are_listed():
+    hand = {"L1": {"verdict": "REAL", "transcript_sha256": "h"}}
+    rs = [_result("L1", "eval_awareness", "REAL"),
+          _result("L2", "eval_awareness", None, error={"kind": "malformed", "message": "x"})]
+    e = K.compare(rs, hand, n_boot=10)["labels"]["eval_awareness"]
+    assert e["n"] == 1 and e["judge_errors"] == [{"label_id": "L2", "kind": "malformed", "message": "x"}]
+    rs[1] = _result("L2", "eval_awareness", "EVAL")
+    assert K.compare(rs, hand, n_boot=10)["labels"]["eval_awareness"]["not_labelled"] == ["L2"]

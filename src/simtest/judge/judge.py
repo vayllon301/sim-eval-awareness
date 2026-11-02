@@ -59,6 +59,7 @@ AGENT_PARTS = ("reasoning", "text", "call")   # the agent's own words; outputs a
 
 RETRY_NOTE = ("\n\n---\nYour previous answer could not be used: {error}\n"
               "Answer again with only the JSON object described above, and nothing else.")
+RETRY_ERROR_CHARS = 300   # the reason quoted in a retry is cut to this, so the retry's size is known
 
 
 class AnswerError(ValueError):
@@ -332,7 +333,7 @@ async def judge_call(backend, prompt: str, label: str, steps: list[dict], base: 
     turn_ids = T.turn_ids(steps)
     attempts, error, parsed = [], None, None
     for attempt in (1, 2):
-        p = prompt if attempt == 1 else prompt + RETRY_NOTE.format(error=error)
+        p = prompt if attempt == 1 else prompt + RETRY_NOTE.format(error=error[:RETRY_ERROR_CHARS])
         t0 = time.monotonic()
         try:
             comp = await backend.complete(p)
@@ -412,6 +413,7 @@ def plan_calls(episodes: list[dict], read, prompts: dict[str, dict], prompt_vers
         for label, pr in prompts.items():
             prompt = build_prompt(pr["text"], text)
             tokens, method = count_tokens(prompt)
+            retry_tokens = count_tokens(prompt + RETRY_NOTE.format(error="x" * RETRY_ERROR_CHARS))[0]
             episode = {k: ep[k] for k in ("key", "log", "sample_id", "epoch", "uuid") if k in ep}
             if ep.get("label_id"):
                 episode["label_id"] = ep["label_id"]
@@ -423,7 +425,7 @@ def plan_calls(episodes: list[dict], read, prompts: dict[str, dict], prompt_vers
                     "prompt_tokens": tokens, "token_count": method, "n_turns": len(T.turn_ids(steps)),
                     **code_state()}
             calls.append({"key": base["key"], "label": label, "prompt": prompt, "steps": steps, "base": base,
-                          "fits": fits(tokens, backend.max_output, budget)})
+                          "fits": fits(retry_tokens, backend.max_output, budget)})   # a retry must fit too
     return calls, refused
 
 

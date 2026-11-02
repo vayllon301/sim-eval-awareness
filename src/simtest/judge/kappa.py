@@ -108,7 +108,9 @@ def compare(results: list[dict], labels: dict[str, dict], n_boot: int = 10000, s
         hand, judge, ids = [], [], []
         errors, unlabelled, mismatch, missing = [], [], [], []
         qf = qn = 0
-        for lid, rec in sorted(labels.items()):
+        judged = {lid for lid, lab in by if lab == label}
+        for lid in sorted(set(labels) | judged):
+            rec = labels.get(lid) or {}       # never saved by the labeller: unlabelled
             r = by.get((lid, label))
             if r is None:
                 missing.append(lid)
@@ -152,14 +154,15 @@ def _onset(by: dict, labels: dict[str, dict]) -> dict:
             hand = rec.get("onset")
             if hand is None:
                 continue
+            same = lambda r: not rec.get("transcript_sha256") or rec["transcript_sha256"] == r["transcript_sha256"]  # noqa: E731
             if reading == "primary":
                 r = by.get((lid, PRIMARY))
-                if r is None or r.get("error"):
+                if r is None or r.get("error") or not same(r):
                     continue
                 j = r["onset"] if r["positive"] else "none"
             else:
                 rs = [by.get((lid, lab)) for lab in LABELS]
-                if any(r is None or r.get("error") for r in rs):
+                if any(r is None or r.get("error") or not same(r) for r in rs):
                     continue
                 turns = [r["onset"] for r in rs if r["positive"] and r["onset"] not in (None, "none")]
                 j = min(turns, key=lambda t: int(t[1:])) if turns else "none"

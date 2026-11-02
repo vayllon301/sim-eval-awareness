@@ -16,7 +16,7 @@ Two sets, kept apart:
 
 `TestSetGuard` refuses any tuning episode that is in the test set: by log, sample id and
 epoch, by sample uuid, by transcript hash, or because one of its agent turns has exactly the
-words (reasoning and visible text) of an agent turn in a drawn episode. The last catches an
+words (reasoning and visible text, however short) of an agent turn in a drawn episode. The last catches an
 earlier attempt of a drawn sample that began the same way. Refused episodes are listed with
 the reason, never dropped silently.
 
@@ -36,7 +36,7 @@ from .pool import _path
 
 SPEC_KEYS = {"name", "root", "test_set", "from_test_manifest", "dirs", "exclude"}
 MANIFEST_LISTS = ("not_drawn", "skipped")
-MIN_FINGERPRINT = 40   # shorter agent turns ("Done.") are too common to say anything
+MIN_FINGERPRINT = 1    # any agent turn with words; one with tool calls only has none
 
 
 class EpisodeError(ValueError):
@@ -52,7 +52,7 @@ def episode_key(log: str, sample_id, epoch) -> str:
 
 
 def turn_fingerprints(steps: list[dict]) -> set[str]:
-    """Hashes of the agent's own words, one per agent turn long enough to be telling."""
+    """Hashes of the agent's own words, one per agent turn that has any."""
     out = set()
     for s in steps:
         if s["kind"] != "turn":

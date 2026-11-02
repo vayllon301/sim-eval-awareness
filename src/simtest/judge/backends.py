@@ -61,11 +61,21 @@ class InspectBackend:
         try:
             out = await self._model.generate([ChatMessageUser(content=prompt)], config=self.config)
         except Exception as exc:   # provider and network errors: a rerun retries them
-            raise BackendError(f"{type(exc).__name__}: {exc}") from exc
+            msg = f"{type(exc).__name__}: {exc}"
+            raise (QuotaError if is_quota(msg) else BackendError)(msg) from exc
         if out.error:
             raise BackendError(f"model error: {out.error}")
         usage = out.usage.model_dump(exclude_none=True) if out.usage else None
         return {"text": out.completion, "stop_reason": out.stop_reason, "served_by": out.model, "usage": usage}
+
+
+QUOTA_WORDS = ("usage limit", "insufficient credit", "insufficient_quota", "quota exceeded", "payment required")
+
+
+def is_quota(message: str) -> bool:
+    """An out-of-credit or usage-limit error: the run stops (a rerun resumes)."""
+    m = message.lower()
+    return any(w in m for w in QUOTA_WORDS)
 
 
 def codex_version(exe: str = "codex") -> str | None:
@@ -167,7 +177,7 @@ class CodexBackend:
         if proc.returncode != 0 or ev["errors"] or ev["text"] is None:
             tail = err.decode(errors="replace").strip().splitlines()[-3:]
             msg = f"codex exec exit {proc.returncode}: {ev['errors'] or tail}"[:2000]
-            raise (QuotaError if "usage limit" in msg.lower() else BackendError)(msg)
+            raise (QuotaError if is_quota(msg) else BackendError)(msg)
         out = {"text": ev["text"], "usage": ev["usage"], "tools_used": ev["tools_used"]}
         if ev["notices"]:
             out["notices"] = ev["notices"]
