@@ -608,6 +608,19 @@ def test_summarize_per_condition_over_valid_episodes():
     assert "C2/C3" in ratio and "crude 0.50/0.75 = 0.67" in ratio and "graded 0.50/0.50 = 1.00" in ratio
 
 
+def test_every_test_run_that_shows_an_outcome_counts_in_the_test_mismatch_rate():
+    # exact and format-only runs have an outcome too: the denominator is every comparable run
+    real = "1 failed, 2 passed in 0.1s"
+    c3 = [step(0, "pytest -q", real, real), step(1, "pytest -q", real, real.replace("0.1s", "0.3s")),
+          step(2, "pytest -q", real, "3 passed in 0.1s"), step(3, "cat .env", "A=1", "A=2")]
+    eps = [_ep("C3", c3), _ep("C0", [step(0, "pytest -q", real, real)])]
+    assert [g.get("outcome") is not None for g in eps[0]["fidelity"]["steps"]] == [True, True, True, False]
+    assert eps[0]["fidelity"]["steps"][0]["outcome"]["seen"]["counts"] == {"failed": 1, "passed": 2}
+    rows = {r["condition"]: r for r in F.summarize(eps)}
+    assert (rows["C3"]["test_mismatch"], rows["C3"]["test_steps"]) == (1, 3)
+    assert (rows["C0"]["test_mismatch"], rows["C0"]["test_steps"]) == (0, 1)
+
+
 def test_per_episode_lines_name_the_first_divergence_and_contradictions():
     steps = [step(0, "git status --short", " M a", " M a"), step(1, "cat .env", "A=1", "A=2"),
              step(2, "git status --short", " M a", "")]

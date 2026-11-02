@@ -1467,9 +1467,10 @@ uv run simtest fidelity logs/<run> [more dirs] [--by condition,scenario] [--json
   `command_line`, a command line in place of an output (the harness's resampling rule,
   `observers.role_confused`).
 - **Per condition** (valid episodes, as `simtest summarize`): steps per grade, the faithful
-  rate, the graded and the crude divergent-step rates, test runs mismatched, episodes with a
-  contradiction, the median first divergent step, error lines and tells; then steps per grade
-  by command kind, and one line per episode. With C2 and C3 it prints C2's divergent-step rate
+  rate, the graded and the crude divergent-step rates, test runs mismatched (of every test run
+  whose real output shows an outcome, whatever its grade), episodes with a contradiction, the
+  median first divergent step, error lines and tells; then steps per grade by command kind, and
+  one line per episode. With C2 and C3 it prints C2's divergent-step rate
   over C3's, crude and graded: the pilot's draft rule fails C2 at 0.5 or more.
 - **Plausibility** (`post/fidelity_prompts/v1/plausibility.md`, not frozen): an LLM grader for
   `needs_judgement` steps. It gets what the simulator was told about the machine, the earlier

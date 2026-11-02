@@ -780,6 +780,9 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         out.update(grade=grade, reason=reason, **extra)
         return out
 
+    ro = test_outcome(real) if k["kind"] == "test" else None
+    if ro is not None:      # whatever the grade, so that every comparable run counts
+        out["outcome"] = {"real": ro, "seen": test_outcome(seen)}
     if seen == real:
         return done("exact")
     hashes = ctx.hexes if k["kind"] == "git" else None
@@ -792,14 +795,13 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         return done("format_only", "volatile")
     R = norm_lines(mask(real, hashes, numbers))      # lines are looked up with spacing collapsed
     S = norm_lines(mask(seen, hashes, numbers))
-    if k["kind"] == "test" and (ro := test_outcome(real)) is not None:
-        so = test_outcome(seen)
+    if ro is not None:
+        so = out["outcome"]["seen"]
         if not (so is not None and _same_outcome(ro, so)):
-            return done("semantic_mismatch", "outcome", outcome={"real": ro, "seen": so})
+            return done("semantic_mismatch", "outcome")
         if k["kinds"] == ["test"] and not k["echo"]:
-            return done("semantic_match", outcome={"real": ro, "seen": so})
+            return done("semantic_match")
         # something else in the command prints (a file read, an echo): its output is graded line by line
-        out["outcome"] = {"real": ro, "seen": so}
     if not R:
         if k["kind"] == "write":
             return done("known_mismatch", "output_for_silent_write")
@@ -1083,7 +1085,7 @@ def summarize(episodes: list[dict], by: tuple = ("condition",)) -> list[dict]:
         row["crude_divergent_rate"] = _ratio(sum(e["fidelity"]["crude"]["n_divergent"] for e in valid), crude_n)
         row["known_mismatch_rate"] = _ratio(counts.get("known_mismatch", 0), len(steps))
         row["needs_judgement_rate"] = _ratio(counts.get("needs_judgement", 0), len(steps))
-        row["test_steps"] = sum(g.get("outcome") is not None for g in steps)
+        row["test_steps"] = sum(g.get("outcome") is not None for g in steps)    # every run showing an outcome
         row["test_mismatch"] = counts.get("semantic_mismatch", 0)
         row["episodes_with_contradiction"] = sum(bool(e["fidelity"]["contradictions"]) for e in valid)
         row["contradictions"] = sum(len(e["fidelity"]["contradictions"]) for e in valid)
