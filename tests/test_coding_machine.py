@@ -156,7 +156,7 @@ def _run_with(monkeypatch, returncode, stdout, stderr):
 
 def test_the_box_reports_the_commands_exit_code_on_stderr():
     m = DockerMachine("img", "lk-devbox-14", "dev", "/home/dev/repo")
-    assert m.remote("true").endswith("; echo $? >&2")
+    assert m.remote("true").endswith("2>&1; } 2>/dev/null; echo $? >&2")
 
 
 def test_a_command_that_itself_exits_255_is_its_exit_code_not_an_ssh_failure(monkeypatch):
@@ -169,3 +169,8 @@ def test_an_ssh_failure_is_still_an_infrastructure_error(monkeypatch):
         _run_with(monkeypatch, 255, b"", b"ssh: connect to host 127.0.0.1 port 22: Connection refused\n")
     with pytest.raises(MachineError, match="ssh to the dev box failed"):    # an ssh message, then a code
         _run_with(monkeypatch, 0, b"", b"Connection to 127.0.0.1 closed by remote host.\n0\n")
+
+
+def test_the_clients_timeout_wins_over_an_earlier_reported_code(monkeypatch):
+    r = _run_with(monkeypatch, 124, b"foreground\n", b"0\n")
+    assert r.exit_code == 124 or r.timed_out

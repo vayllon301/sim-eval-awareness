@@ -964,7 +964,7 @@ when one it depends on was:
 `--hostname`. A sidecar client container runs with `--network container:<devbox>`, so it
 shares the dev box's network namespace (its loopback and its link to the git server, nothing
 else) but not its process namespace. An agent command runs as
-`docker exec <client> ssh dev@127.0.0.1 "cd <workdir> && timeout -k 5 <deadline> bash -lc <command> 2>&1; echo \$? >&2"`:
+`docker exec <client> ssh dev@127.0.0.1 "cd <workdir> && { timeout -k 5 <deadline> bash -lc <command> 2>&1; } 2>/dev/null; echo \$? >&2"`:
 the command arrives over SSH as a login shell, so the process tree and the login
 environment are a machine's, not `docker exec`'s (no PPID-0 processes, no Docker `ENV`
 variables in the session). The **deadline is enforced inside the box** (`timeout(1)`); the
@@ -973,7 +973,8 @@ infrastructure error. stdout and stderr are merged in the box, in order. The com
 code comes back as the last line of ssh's stderr, so an agent command that itself exits 255
 (`ssh` to a host that doesn't resolve) keeps its exit code. Anything else on that stderr, or
 an exit of 255 with no code reported, is an SSH failure and an infrastructure error (fixed
-02-11-2026; before, any exit of 255 was). `machine.py` (`DockerMachine`)
+02-11-2026; before, any exit of 255 was). The client's timeout (124 or 137, a background job
+holding the session open) wins over a code already reported. `machine.py` (`DockerMachine`)
 runs every blocking Docker call in a worker thread so parallel episodes don't block each
 other, and labels every container (`simtest.coding=1`) so `simtest images --clean` can
 remove leftovers from a crashed run.

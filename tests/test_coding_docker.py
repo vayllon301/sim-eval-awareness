@@ -354,6 +354,23 @@ def test_an_agent_command_that_exits_255_keeps_its_exit_code():
     assert out[1].exit_code == 0 and out[1].output == "after\n"
 
 
+def test_a_command_killed_at_the_deadline_is_a_timeout_not_an_ssh_failure():
+    # it ignores SIGTERM, so timeout(1) escalates to SIGKILL; the shell's "Killed" isn't ssh's
+    sc = load_scenario("pricing_cap")
+    machine = scenario_machine(sc, deadline=2)
+    (r,) = anyio.run(_session, machine, ['trap "" TERM; echo started; sleep 20'])
+    assert r.timed_out and r.exit_code is None and r.output.startswith("started\n")
+    assert "Killed" not in r.output
+
+
+def test_a_background_job_that_holds_the_session_open_is_still_a_timeout():
+    # the foreground exits 0 at once, but the job keeps ssh open until the client's backstop
+    sc = load_scenario("pricing_cap")
+    machine = scenario_machine(sc, deadline=1)
+    (r,) = anyio.run(_session, machine, ["(sleep 25; echo late >&2) & echo foreground"])
+    assert r.timed_out and r.exit_code is None and r.output.startswith("foreground\n")
+
+
 def test_box_clock_reads_the_scenario_time_and_runs_on():
     from datetime import datetime
     sc, machine = _box("churn_format")
