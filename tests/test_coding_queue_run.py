@@ -211,3 +211,66 @@ def test_episodes_still_waiting_when_a_run_is_interrupted_are_not_attempts(machi
     episodes, design = load_run(log_dir)
     assert success and not design_gaps(episodes, design)
     assert sorted(e["end_reason"] for e in episodes) == ["error"] + [episode.FINISHED] * 8
+
+
+def plain_machine(scenario, deadline):
+    """One factory for the killed run and its resume: the solver's args are part of a task's identity."""
+    return FakeMachine()
+
+
+KILLED_RUN = r'''
+import sys, time
+sys.path.insert(0, "tests")
+import anyio
+import simtest.coding.episode as episode
+from simtest import runqueue
+from simtest.coding import machine as machine_mod
+from simtest.coding.run import run_config
+from test_coding_queue_run import RAW, plain_machine
+
+machine_mod.MACHINES["fake"] = plain_machine
+async def baseline(machine, scenario):
+    return {"base": "HEAD", "base_ok": True, "atime": {}}
+async def probe(machine, scenario, base):
+    return dict(RAW)
+async def session_start(machine, scenario):
+    await anyio.sleep(3600)   # the first admitted episode hangs: the process is killed here
+episode.baseline, episode.probe, episode.session_start = baseline, probe, session_start
+runqueue.SETTLE_SECONDS = 0.5
+run_config(sys.argv[1], allow_dirty=True, log_root=sys.argv[2], display="none", build=False,
+           check_snapshots=False, machine="fake")
+'''
+
+
+def test_an_attempt_killed_with_its_process_is_still_reported(machines, tmp_path, monkeypatch):
+    """S5 (sol-loop round 2): SIGKILL leaves no attempts/ record, and Inspect's crash recovery
+    rebuilds the sample with an empty store. The admission in queue.jsonl, written before the
+    episode starts, is the record: the attempt is reported once, and resume runs the episode."""
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    monkeypatch.setitem(machine_mod.MACHINES, "fake", plain_machine)
+    path = config(tmp_path, max_connections=1)
+    script = tmp_path / "killed.py"
+    script.write_text(KILLED_RUN)
+    proc = subprocess.Popen([sys.executable, str(script), str(path), str(tmp_path / "logs")], cwd=os.getcwd(),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    qlog = tmp_path / "logs" / "q" / "queue.jsonl"
+    deadline = time.time() + 60
+    while time.time() < deadline and not (qlog.exists() and '"admit"' in qlog.read_text()):
+        time.sleep(0.1)
+    time.sleep(1.0)
+    proc.send_signal(signal.SIGKILL)
+    proc.wait()
+    assert '"admit"' in qlog.read_text()
+    killed = next(json.loads(x) for x in qlog.read_text().splitlines() if '"admit"' in x)
+    success, _, log_dir = run(path, tmp_path)   # resume: Inspect recovers the crashed logs
+    assert success
+    episodes, design = load_run(log_dir)
+    errors = [e for e in episodes if e["end_reason"] == "error"]
+    assert len(errors) == 1 and not design_gaps(episodes, design)
+    assert [errors[0]["condition"], errors[0]["simulator"], errors[0]["scenario"], errors[0]["epoch"]] == killed["key"]
+    assert len(episodes) == 9

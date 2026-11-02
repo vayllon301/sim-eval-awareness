@@ -21,7 +21,7 @@ from ..analysis import (  # reuse the office statistics and formatting helpers
     _ratio, format_paired as _format_paired, paired_difference as _paired_difference, wilson,
 )
 from ..post.summary import RATE_KEYS as POST_RATE_KEYS, summary_checks
-from ..runqueue import never_started, queued_log, read_attempts
+from ..runqueue import NEVER_RAN, never_started, queue_events, queued_log, read_attempts
 from ..stats.signflip import format_test, sign_flip_test
 from ..task import NO_SIMULATOR
 from .episode import VALID_END_REASONS
@@ -334,7 +334,9 @@ def load_run(log_dir):
             prev = best.get(key)
             if prev is None or log.eval.created > prev[0]:
                 best[key] = (log.eval.created, ep)
-    for rec in read_attempts(Path(log_dir) / "attempts"):
+    records = read_attempts(Path(log_dir) / "attempts")
+    accounted = logged_attempts | {(r.get("attempt") or {}).get("id") for r in records}
+    for rec in records:
         attempt = rec.get("attempt") or {}
         if attempt.get("id") in logged_attempts:
             continue
@@ -354,5 +356,31 @@ def load_run(log_dir):
             "divergence": step_divergence(store.get("CodingEpisode:steps") or []), "post": None,
             "fingerprint": rec.get("version"), "log": "attempts", "log_path": None,
             "sample_id": rec.get("sample_id"), "uuid": None, "attempt": attempt,
+        })
+    # - an attempt with no record but its admission: the process was killed (SIGKILL, a crash)
+    #   before the solver could write it, and Inspect's crash recovery rebuilds such a sample with an
+    #   empty store. queue.jsonl writes each admission before the episode starts, so it is the record:
+    #   reported as an errored episode (or one still running, if a run is under way).
+    events = queue_events(log_dir)
+    released = {e.get("id") for e in events if e.get("event") == "release"}
+    never_ran = {e.get("id") for e in events if e.get("event") == "release" and e.get("outcome") == NEVER_RAN}
+    for e in events:
+        if e.get("event") != "admit" or e.get("id") in accounted or e.get("id") in never_ran:
+            continue
+        cond, sim, scenario, epoch = e["key"]
+        log = tasks.get((cond, sim))
+        if log is None:
+            raise LogDirError(f"Refusing to summarize {log_dir}: queue.jsonl admits {e['key']}, which matches no "
+                              f"task's log.")
+        how = ("it ended without a record" if e.get("id") in released
+               else "the process was killed, or it is still running")
+        best[("admitted", e.get("id"))] = (log.eval.created, {
+            "agent": _agent_name(log), "model": log.eval.model, "condition": cond, "simulator": sim,
+            "scenario": scenario, "variant": None, "epoch": epoch, "end_reason": "error",
+            "error": f"interrupted: admitted (queue.jsonl, attempt {e.get('attempt')}) but {how}",
+            "metrics": {}, "violation_observed": None, "error_status": None, "notes": ["interrupted_no_record"],
+            "divergence": step_divergence([]), "post": None, "fingerprint": log.eval.task_version,
+            "log": "queue.jsonl", "log_path": None, "sample_id": scenario, "uuid": None,
+            "attempt": {"id": e.get("id"), "attempt": e.get("attempt"), "rank": e.get("rank")},
         })
     return [ep for _, ep in best.values()], design

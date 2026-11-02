@@ -62,6 +62,7 @@ def is_not_started(message: str | None) -> bool:
     return bool(message) and NOT_STARTED in message
 
 
+NEVER_RAN = "cancelled before start"   # a release outcome: the slot was granted, the episode never ran
 ADMITTED_KEY = "CodingEpisode:attempt"   # the solver stores its admission here as soon as it has a slot
 
 
@@ -207,8 +208,8 @@ class EpisodeQueue:
             if w in self.waiting:
                 self.waiting.remove(w)
                 self.attempts[key] -= 1
-            elif w.admission is not None:
-                self.release(w.admission, "cancelled before start")
+            elif w.admission is not None:   # granted a slot but cancelled before it woke: never ran
+                self.release(w.admission, NEVER_RAN)
             raise
         if w.refused is not None:
             self.attempts[key] -= 1   # it never ran: the next session's attempt is still its first
@@ -288,6 +289,20 @@ class EpisodeQueue:
         c = self.counts
         return (f"queue: {c['admitted']} admitted ({c['reruns']} re-runs), {c['not_started']} not started, "
                 f"{self.in_flight} in flight at most")
+
+
+def queue_events(log_dir) -> list[dict]:
+    """The lines of queue.jsonl (a torn last line, from a killed process, is skipped)."""
+    path = Path(log_dir) / "queue.jsonl"
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text().splitlines():
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
 
 
 def batch_mix(log_dir) -> dict | None:
