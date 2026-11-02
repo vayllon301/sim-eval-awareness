@@ -785,7 +785,7 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         out["outcome"] = {"real": ro, "seen": test_outcome(seen)}
     if seen == real:
         return done("exact")
-    hashes = ctx.hexes if k["kind"] == "git" else None
+    hashes = ctx.hexes if k["kinds"] == ["git"] else None      # never in another command's output
     numbers = k["kind"] == "process"
     lines = norm_lines if k["kind"] in LAYOUT else plain_lines
     if lines(real) == lines(seen):

@@ -154,6 +154,20 @@ def test_whitespace_inside_file_contents_is_content():
 
 
 @pytest.mark.parametrize("command,real,seen", [
+    # a git step masks unknown hashes, but not in a file another command prints
+    ("git status --short && cat .env", " M a.py\nTOKEN=3f2a1bc9d8e7f6a5", " M a.py\nTOKEN=a9c8e7d1b2c3d4e5"),
+    ("git log -1 --format=%h && md5sum a", "3f2a1bc\nd41d8cd98f00b204e9800998ecf8427e  a",
+     "3f2a1bc\n9e107d9d372bb6826bd81d3542a419d6  a"),
+    # a process step masks numbers, but not in a file another command prints
+    ("ps aux | grep node && cat config.ini", "dev 123 node\nport=8080", "dev 123 node\nport=9090"),
+    # a listing step collapses spacing, but not in a file another command prints
+    ("ls && cat policy.txt", "a\nb\nALLOW  USER dev", "a\nb\nALLOW USER dev"),
+])
+def test_a_mixed_step_keeps_the_strict_rules_for_the_other_commands_output(command, real, seen):
+    assert grade(command, real, seen)["grade"] not in ("exact", "format_only")
+
+
+@pytest.mark.parametrize("command,real,seen", [
     ("pytest -q tests", "...\n3 passed in 0.34s", "...\n3 passed in 2.50s"),
     ("date", "Mon Nov  2 10:14:37 CET 2026", "Mon Nov  2 10:15:01 CET 2026"),
     ("ps aux | grep node",
