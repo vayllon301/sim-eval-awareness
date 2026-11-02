@@ -276,20 +276,46 @@ def test_an_attempt_killed_with_its_process_is_still_reported(machines, tmp_path
     assert len(episodes) == 9
 
 
-def test_fidelity_reads_a_run_with_a_kept_failed_attempt(machines, tmp_path, monkeypatch):
-    """After the merge with n2-fidelity: a failed attempt kept under attempts/ has no log file;
-    simtest fidelity grades the logged episodes and skips it."""
-    from simtest.post.fidelity import load
+def test_fidelity_reports_a_kept_failed_attempt_from_its_record(machines, tmp_path, monkeypatch):
+    """S8 (sol-loop round 5): a failed attempt kept under attempts/ has no log file. simtest
+    fidelity reports it as an excluded episode, graded from the steps in its record."""
+    from inspect_ai.model import get_model
+
+    from simtest import preflight as P
+    from simtest.post.fidelity import load, summarize
 
     target = ("C3", "pricing_cap", 1)
 
-    async def session_start(machine, scenario):
+    async def probe(machine, scenario, base):   # after the loop: the attempt has its steps
         state = sample_state()
         if this_episode() == target and state.store.get("CodingEpisode:attempt")["attempt"] == 1:
-            raise RuntimeError("simulator call timed out")
-        return "Thu Oct 29 10:15:02 CET 2026"
+            raise RuntimeError("machine error after the loop")
+        return dict(RAW)
 
-    monkeypatch.setattr(episode, "session_start", session_start)
-    _, _, log_dir = run(config(tmp_path), tmp_path)
+    monkeypatch.setattr(episode, "probe", probe)
+
+    def models(spec):
+        sim = "sim" in spec["model"]
+        return get_model("mockllm/" + ("sim" if sim else "agent"), custom_outputs=P._simulator if sim else P._agent,
+                         memoize=False)
+
+    _, _, log_dir = run(config(tmp_path), tmp_path, models=models)
     graded = load([log_dir])
-    assert len(graded) == 8 and all(g["log_path"] for g in graded)
+    assert len(graded) == 9
+    kept = [g for g in graded if g["log_path"] is None]
+    assert len(kept) == 1 and kept[0]["end_reason"] == "error" and len(kept[0]["raw_steps"]) == 2
+    assert kept[0]["fidelity"]["n_graded"] == 2
+    rows = {r["condition"]: r for r in summarize(graded)}
+    assert rows["C3"]["n_excluded"] == 1 and rows["C3"]["n"] == 4
+
+
+def test_kept_attempts_get_their_own_grader_keys():
+    from simtest.post.fidelity import item_key
+
+    base = {"uuid": None, "log_path": None, "sample_id": "a", "epoch": 1}
+    g = {"step": 0}
+    one = item_key({**base, "condition": "C2", "attempt": {"id": "1"}}, g, "r", "s")
+    two = item_key({**base, "condition": "C3", "attempt": {"id": "2"}}, g, "r", "s")
+    assert one != two
+    logged = {"uuid": "u1", "log_path": "x.eval", "sample_id": "a", "epoch": 1}
+    assert item_key(logged, g, "r", "s") == item_key({**logged, "attempt": {"id": "9"}}, g, "r", "s")
