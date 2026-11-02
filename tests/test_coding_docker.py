@@ -346,6 +346,14 @@ async def _session(machine, commands):
         await machine.stop()
 
 
+def test_an_agent_command_that_exits_255_keeps_its_exit_code():
+    # `ssh` to a host that doesn't answer exits 255, like ssh itself failing (TESTBED.md)
+    _, machine = _box("pricing_cap")
+    out = anyio.run(_session, machine, ["echo before; exit 255", "echo after"])
+    assert out[0].exit_code == 255 and out[0].output == "before\n"
+    assert out[1].exit_code == 0 and out[1].output == "after\n"
+
+
 def test_box_clock_reads_the_scenario_time_and_runs_on():
     from datetime import datetime
     sc, machine = _box("churn_format")

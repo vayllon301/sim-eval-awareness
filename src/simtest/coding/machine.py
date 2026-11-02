@@ -19,9 +19,10 @@ this one is the reference.
   links the box and every service to it with a veth pair each. A service image with the
   clock library gets the box's clock setting. The box is ready once the world's `ready`
   command succeeds in it (the app answers).
-- A command runs as `cd <workdir> && exec timeout -k 5 <deadline> bash -lc <command> 2>&1`
+- A command runs as `cd <workdir> && timeout -k 5 <deadline> bash -lc <command> 2>&1; echo $? >&2`
   on the dev box: the deadline is enforced inside the box, and stdout and stderr are
-  merged there, in order. The client's own `timeout` and a host-side timeout are
+  merged there, in order. The exit code comes back on ssh's stderr, so a command that
+  exits 255 isn't read as ssh failing. The client's own `timeout` and a host-side timeout are
   backstops; a host-side timeout is an infrastructure error.
 - Harness work (baseline, final checks) goes through `docker exec` as root or dev, never
   during the agent's turns.
@@ -353,9 +354,10 @@ class DockerMachine:
         self.info["started"] = time.time()
 
     def remote(self, command: str) -> str:
-        """The command line the dev box's login shell runs for one agent command."""
-        return (f"cd {shlex.quote(self.workdir)} && exec timeout -k 5 {self.deadline} "
-                f"bash -lc {shlex.quote(command)} 2>&1")
+        """The command line the dev box's login shell runs for one agent command. Its exit code
+        goes to ssh's stderr, so a command that exits 255 isn't read as ssh failing."""
+        return (f"cd {shlex.quote(self.workdir)} && timeout -k 5 {self.deadline} "
+                f"bash -lc {shlex.quote(command)} 2>&1; echo $? >&2")
 
     async def run(self, command: str) -> ExecResult:
         argv = ["docker", "exec", self.client, "timeout", "-k", "2", str(self.deadline + 10),
@@ -367,16 +369,23 @@ class DockerMachine:
             raise MachineError(f"no answer from the dev box within {self.deadline + 30} s") from exc
         seconds = round(time.monotonic() - t0, 3)
         err = p.stderr.decode(errors="replace").strip()
-        # The command's own stderr is merged into stdout inside the box, so anything on the
-        # client's stderr comes from docker or ssh.
-        if err or p.returncode == 255:
+        # The command's own stderr is merged into stdout inside the box, so the client's stderr
+        # holds only the command's exit code (remote) and anything docker or ssh says.
+        lines = err.splitlines()
+        if lines and lines[-1].isdigit():
+            code, err = int(lines[-1]), "\n".join(lines[:-1]).strip()
+        elif not err and p.returncode != 255:
+            code = p.returncode       # killed before it could report (the client's timeout)
+        else:
+            raise MachineError(f"ssh to the dev box failed (exit {p.returncode}): {err}")
+        if err:
             raise MachineError(f"ssh to the dev box failed (exit {p.returncode}): {err}")
         output = p.stdout.decode("utf-8", errors="replace")
-        timed_out = p.returncode in (124, 137) and seconds >= self.deadline - 1
+        timed_out = code in (124, 137) and seconds >= self.deadline - 1
         if timed_out:
             output = (output if output.endswith("\n") or not output else output + "\n") + \
                 TIMEOUT_MARKER.format(deadline=self.deadline)
-        return ExecResult(output, None if timed_out else p.returncode, timed_out, seconds)
+        return ExecResult(output, None if timed_out else code, timed_out, seconds)
 
     async def exec(self, command: str, user: str = "root", timeout: float = 180,
                    workdir: str | None = None) -> ExecResult:

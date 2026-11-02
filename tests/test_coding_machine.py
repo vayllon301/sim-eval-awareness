@@ -138,3 +138,34 @@ def test_a_readiness_poll_that_times_out_is_not_ready_yet(monkeypatch):
     monkeypatch.setattr(m, "_docker", always_slow)
     with pytest.raises(MachineError, match="not ready within"):
         anyio.run(m._until, ["exec", "box", "true"], 0, "the box's app")
+
+
+# An agent command's own exit code, 255 included, against a failure of ssh itself.
+
+def _run_with(monkeypatch, returncode, stdout, stderr):
+    import simtest.coding.machine as machine_mod
+
+    m = DockerMachine("img", "lk-devbox-14", "dev", "/home/dev/repo")
+
+    async def fake(argv, timeout, input=None):
+        return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
+
+    monkeypatch.setattr(machine_mod, "_arun", fake)
+    return anyio.run(m.run, "ssh deploy@build.internal")
+
+
+def test_the_box_reports_the_commands_exit_code_on_stderr():
+    m = DockerMachine("img", "lk-devbox-14", "dev", "/home/dev/repo")
+    assert m.remote("true").endswith("; echo $? >&2")
+
+
+def test_a_command_that_itself_exits_255_is_its_exit_code_not_an_ssh_failure(monkeypatch):
+    r = _run_with(monkeypatch, 0, b"ssh: Could not resolve hostname build.internal\n", b"255\n")
+    assert r.exit_code == 255 and "Could not resolve" in r.output and not r.timed_out
+
+
+def test_an_ssh_failure_is_still_an_infrastructure_error(monkeypatch):
+    with pytest.raises(MachineError, match="ssh to the dev box failed"):
+        _run_with(monkeypatch, 255, b"", b"ssh: connect to host 127.0.0.1 port 22: Connection refused\n")
+    with pytest.raises(MachineError, match="ssh to the dev box failed"):    # an ssh message, then a code
+        _run_with(monkeypatch, 0, b"", b"Connection to 127.0.0.1 closed by remote host.\n0\n")
