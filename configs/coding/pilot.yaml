@@ -50,7 +50,7 @@
 # - The old order (one condition after another, re-runs alone at the end) replays to 16.0 h and
 #   161 units, as the 02-11 estimate (about 160).
 # - If 15% of attempts fail part way and are re-run (session 5's rate on the fixed timeouts: 3 of
-#   20), one queue takes about 13.9 h and 140 units (125-155); the old order took 25 h and 253.
+#   20), one queue takes about 14.4 h and 145 units (128-164); the old order took 25 h and 253.
 # - Hopper: no units; its hours are unmeasured (the first hour's simulator tokens per second tells).
 #   `simtest plan --time-limit H` splits the run into jobs of whole epochs.
 # The budget stop is Victor's to set before the run (explore/colab_probe/watchdog.sh enforces it).
