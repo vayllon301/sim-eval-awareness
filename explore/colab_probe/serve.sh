@@ -22,7 +22,7 @@
 # 110 GB free (the downloads are 29 + 67 GB). vLLM goes into a venv there ($WORK/venv, or VENV), and
 # Hugging Face's cache into $WORK/hf-home unless HF_HOME is set. On a node behind a login host:
 #   ssh <node> 'WORK=/scratch/$USER/sim MIX=c3 bash -s' < explore/colab_probe/serve.sh
-#   ssh -N -J <login> -L 18000:127.0.0.1:8000 -L 18001:127.0.0.1:8001 <node> &
+#   SSH_TARGET=<node> SSH_JUMP=<login> explore/colab_probe/tunnel.sh >/tmp/tunnel.log 2>&1 &   # the tunnel
 #
 # Profiles, by the GPUs the machine has (CUDA_VISIBLE_DEVICES, or GPUS, picks them):
 #   one-gpu-96g   one 90-135 GB card (Colab G4): both models at 128K, 0.47 / 0.47 (MIX=c3: 0.42 / 0.52)

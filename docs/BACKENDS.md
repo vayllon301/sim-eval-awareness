@@ -44,11 +44,12 @@ DRY_RUN=1 WORK=/content GPU_MIB=97887 GPU_COUNT=1 MIX=c3 bash explore/colab_prob
 # Colab: see the script's header (colab new, ssh, the tunnel, colab stop)
 # Hopper, on a GPU node (behind a login host), then the tunnel from the laptop
 ssh <node> 'WORK=/scratch/$USER/sim MIX=c3 bash -s' < explore/colab_probe/serve.sh
-ssh -N -J <login> -L 18000:127.0.0.1:8000 -L 18001:127.0.0.1:8001 <node> &
+SSH_TARGET=<node> SSH_JUMP=<login> explore/colab_probe/tunnel.sh >/tmp/tunnel.log 2>&1 &
 ```
 
 The servers listen on the machine's loopback only. The tunnel brings them to the laptop's ports
-18000 (agent) and 18001 (simulator), where the configs expect them.
+18000 (agent) and 18001 (simulator), where the configs expect them. `tunnel.sh` reconnects at
+once when the connection drops, for Colab and for a plain SSH host alike.
 
 ## The equivalence check (`simtest equiv`)
 
