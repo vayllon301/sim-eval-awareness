@@ -138,6 +138,9 @@ def main(argv: list[str] | None = None) -> None:
     ls.add_argument("--labels", type=Path, default=None, help="default: labels.jsonl next to the manifest")
     ls.add_argument("--host", default="127.0.0.1")
     ls.add_argument("--port", type=int, default=8766)
+    from .coding.fidelity import add_parser as add_fidelity_parser
+
+    add_fidelity_parser(sub)
     from .judge.command import add_parser as add_judge_parser
     from .post.command import add_parser as add_post_parser
     from .stats.power import add_parser as add_power_parser
@@ -218,6 +221,10 @@ def main(argv: list[str] | None = None) -> None:
         from .judge.server import serve
 
         serve(args.manifest, args.labels, host=args.host, port=args.port)
+    elif args.cmd == "fidelity":
+        from .coding.fidelity import main as fidelity_main
+
+        fidelity_main(args)
     elif args.cmd == "judge":
         from .judge.command import main as judge_main
 
