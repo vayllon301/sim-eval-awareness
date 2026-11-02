@@ -403,6 +403,8 @@ def verdict(cross: dict[str, dict], noise: dict[str, dict], models=None) -> dict
                 problems.append(f"{len(c['missing']) + len(n['missing'])} context(s) missing or errored")
             if {x["id"] for x in c["per_context"]} != {x["id"] for x in n["per_context"]}:
                 problems.append("the two comparisons cover different contexts")
+            if c["mean_abs_dlogprob"] is None or n["mean_abs_dlogprob"] is None:
+                problems.append("no finite log-probs to compare")
         if problems and any("different token" in p for p in problems):
             status = "FAIL"
         elif problems:
@@ -478,6 +480,13 @@ def main_compare(reference: Path, candidate: Path, noise: Path | None, as_json: 
         hn, rn = read_scores(noise)
         files.append((noise, hn))
     warnings = _check_headers(*files)
+    if noise is not None:
+        if hb.get("concurrency") != ha.get("concurrency"):
+            raise SystemExit(f"the pass rule compares the backends at the same concurrency: {reference} has "
+                             f"{ha.get('concurrency')}, {candidate} {hb.get('concurrency')}")
+        if hn.get("concurrency") == ha.get("concurrency"):
+            raise SystemExit(f"the noise floor needs the reference server at another concurrency: {reference} and "
+                             f"{noise} both have {ha.get('concurrency')}")
     cross = gap(ra, rb)
     result = {"reference": str(reference), "candidate": str(candidate), "gap": cross, "warnings": warnings}
     if noise is not None:
@@ -559,14 +568,25 @@ def main(args) -> None:
             raise SystemExit("give --agent-url, --simulator-url or both")
         contexts = read_contexts(args.contexts)
         digest = hashlib.sha256(Path(args.contexts).read_bytes()).hexdigest()
-        info = {m: asyncio.run(server_info(s, transport=_transport())) for m, s in servers.items()}
+        info = {}
+        for m, s in servers.items():
+            try:
+                info[m] = asyncio.run(server_info(s, transport=_transport()))
+            except Exception as exc:
+                raise SystemExit(f"{m} server at {s.url}: {type(exc).__name__}: {exc}") from exc
         for conc in args.concurrency:
             out = Path(f"{args.out}-c{conc}.jsonl")
             if out.exists() and not args.force:
                 raise SystemExit(f"{out} exists (use --force to replace it)")
             started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            done = []
+
+            def progress(row, conc=conc, done=done):
+                done.append(row)
+                print(f"  c{conc} {len(done)}: {row['model']} {row['n_tokens']} tokens, {row['seconds']} s", flush=True)
+
             rows = asyncio.run(score(contexts, servers, concurrency=conc, top_k=args.top_k,
-                                     max_tokens=args.max_tokens, transport=_transport()))
+                                     max_tokens=args.max_tokens, transport=_transport(), progress=progress))
             header = {"label": args.label, "contexts": str(args.contexts), "contexts_sha256": digest,
                       "concurrency": conc, "top_k": args.top_k, "max_tokens": args.max_tokens, "servers": info,
                       "started": started, "finished": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}

@@ -439,3 +439,49 @@ def test_cli_contexts_score_and_compare(tmp_path, monkeypatch, capsys):
           "--noise", str(tmp_path / "g4-c3.jsonl")])
     out = capsys.readouterr().out
     assert "PASS" in out and "agent" in out and "simulator" in out
+
+
+def _files(tmp_path, conc_ref=1, conc_cand=1, conc_noise=12):
+    rows, _ = score([ctx(0)])
+    h = {"contexts_sha256": "1", "top_k": 1, "max_tokens": None}
+    for name, c in (("ref", conc_ref), ("cand", conc_cand), ("noise", conc_noise)):
+        Q.write_scores(tmp_path / f"{name}.jsonl", {**h, "concurrency": c}, rows)
+    return tmp_path / "ref.jsonl", tmp_path / "cand.jsonl", tmp_path / "noise.jsonl"
+
+
+def test_the_rule_needs_both_backends_at_the_same_concurrency(tmp_path):
+    ref, cand, noise = _files(tmp_path, conc_cand=12)
+    with pytest.raises(SystemExit, match="same concurrency"):
+        Q.main_compare(ref, cand, noise)
+
+
+def test_the_noise_floor_needs_another_concurrency(tmp_path):
+    ref, cand, noise = _files(tmp_path, conc_noise=1)
+    with pytest.raises(SystemExit, match="another concurrency"):
+        Q.main_compare(ref, cand, noise)
+
+
+def test_no_finite_logprobs_is_incomplete_not_a_crash():
+    rows, _ = score([ctx(0)])
+    bad = [{**r, "logprob": [None] + [float("-inf")] * (r["n_tokens"] - 1)} for r in rows]
+    v = Q.verdict(Q.gap(bad, bad), Q.gap(bad, bad))
+    assert v["status"] == "INCOMPLETE"
+
+
+def test_an_unreachable_server_is_a_clear_error(tmp_path):
+    from simtest.cli import main
+
+    cfile = tmp_path / "c.jsonl"
+    Q.write_contexts(cfile, [ctx(0)])
+
+    def refuse(request):
+        raise httpx.ConnectError("connection refused")
+
+    import simtest.equiv as mod
+    old = mod._transport
+    mod._transport = lambda: httpx.MockTransport(refuse)
+    try:
+        with pytest.raises(SystemExit, match="18000"):
+            main(["equiv", "score", str(cfile), "--agent-url", "http://localhost:18000/v1", "--out", str(tmp_path / "x")])
+    finally:
+        mod._transport = old
