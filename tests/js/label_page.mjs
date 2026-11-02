@@ -103,6 +103,9 @@ if (scenario === "edit-while-loading") {
     const r = d.createRange(); r.selectNodeContents(box);
     const s = w.getSelection(); s.removeAllRanges(); s.addRange(r);
   };
+  key("ArrowRight", true);   // Shift alone, nothing selected yet: a selection starting from the caret
+  await sleep(300);
+  out.after_shift_arrow_no_selection = $("lid").textContent;
   select();
   key("ArrowRight", true);
   await sleep(300);

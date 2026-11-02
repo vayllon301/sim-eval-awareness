@@ -211,5 +211,6 @@ def test_switching_real_to_eval_drops_the_none_onset(http):
 def test_arrow_keys_never_leave_the_episode_while_text_is_selected(http):
     call, a = http
     out = drive(call, "arrows-while-selecting")
+    assert out["after_shift_arrow_no_selection"] == out["first"]
     assert out["after_shift_arrow"] == out["first"] and out["after_arrow_with_selection"] == out["first"]
     assert out["after_plain_arrow"] != out["first"]   # with nothing selected, → still moves on
