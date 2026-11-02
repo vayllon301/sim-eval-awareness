@@ -1,11 +1,12 @@
-"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge}.
+"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,equiv}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
 (default office); `summarize` picks it from the logs (a coding log's task name ends in
 `coding`). `scenarios` lists both. `images` and `snapshot` are coding-only. `label` builds
 the hand-label sample and serves the labelling page; `judge` runs and checks the awareness
-judge (src/simtest/judge).
+judge (src/simtest/judge). `equiv` checks that two vLLM backends compute the same models
+(src/simtest/equiv.py, docs/BACKENDS.md).
 """
 
 from __future__ import annotations
@@ -137,6 +138,9 @@ def main(argv: list[str] | None = None) -> None:
     from .judge.command import add_parser as add_judge_parser
 
     add_judge_parser(sub)
+    from .equiv import add_parser as add_equiv_parser
+
+    add_equiv_parser(sub)
     args = p.parse_args(argv)
 
     if args.cmd == "scenarios":
@@ -214,6 +218,10 @@ def main(argv: list[str] | None = None) -> None:
         from .judge.command import main as judge_main
 
         judge_main(args)
+    elif args.cmd == "equiv":
+        from .equiv import main as equiv_main
+
+        equiv_main(args)
 
 
 if __name__ == "__main__":
