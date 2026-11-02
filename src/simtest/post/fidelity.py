@@ -324,7 +324,10 @@ def _stdin_filters_only(command: str) -> bool:
             if not words or words[0] not in _STDIN_FILTERS:
                 return False
             operands = [w for w in words[1:] if not w.startswith("-") and not w.isdigit()]
-            if len(operands) > _STDIN_FILTERS[words[0]]:
+            allowed = _STDIN_FILTERS[words[0]]
+            if any(re.match(r"-[a-zA-Z]*[ef]|--(?:regexp|file|expression)", w) for w in words[1:]):
+                allowed = 0                 # the pattern or script came as an option (-e'p', -f f)
+            if len(operands) > allowed:
                 return False
     return True
 
@@ -563,6 +566,7 @@ class Context:
         self.cmd_lines: set[str] = set()   # from the agent's commands
         self.paths: set[str] = set()
         self.hexes: set[str] = set(HEX.findall(system or ""))
+        self.commits: set[str] = set(re.findall(r"(?m)^commit ([0-9a-f]{40})", system or ""))
         self.numbers = _line_numbers(system)
         self.given = [system or ""]        # raw text it was given, for the tells
         self.commands: list[str] = []      # the agent's earlier commands (role_confused)
@@ -814,7 +818,8 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
     if lines(real) == lines(seen):
         return done("format_only", "whitespace")
     Rv, Sv = lines(mask(real, hashes, numbers)), lines(mask(seen, hashes, numbers))
-    if Rv == Sv or ("git" in k["kinds"] and _canonical(Rv, ctx.hexes) == _canonical(Sv, ctx.hexes)):
+    commits = ctx.base.commits      # the history's commits only: never a checksum or another hash
+    if Rv == Sv or ("git" in k["kinds"] and _canonical(Rv, commits) == _canonical(Sv, commits)):
         return done("format_only", "volatile")
     R = norm_lines(mask(real, hashes, numbers))      # lines are looked up with spacing collapsed
     S = norm_lines(mask(seen, hashes, numbers))

@@ -202,9 +202,19 @@ def test_a_known_commit_abbreviated_differently_is_format_only_in_a_mixed_git_st
     ("ls; printf '%s\\n' \"$POLICY\"", "a\nb\nALLOW  USER dev", "a\nb\nALLOW USER dev"),
     # a filter that reads a file as well as the test output
     ("pytest -q | cat - access.py", "3 passed in 0.1s\nALLOW = True", "3 passed in 0.2s\nALLOW = False"),
+    # a pattern given as an option leaves no room for a file operand
+    ("pytest -q | grep -hE -e'passed|failed' - test-results.log", "3 passed in 0.1s\npolicy check passed: allow",
+     "3 passed in 0.2s\npolicy check passed: deny"),
 ])
 def test_an_echo_or_a_file_in_the_pipe_keeps_the_strict_rules(command, real, seen):
     assert grade(command, real, seen)["grade"] not in ("exact", "format_only", "semantic_match")
+
+
+def test_a_checksum_cut_short_in_a_mixed_git_step_is_not_a_commit_abbreviation():
+    real = " M src/lib/secrets.ts\nda39a3ee5e6b4b0d3255bfef95601890afd80709  src/lib/secrets.ts"
+    seen = " M src/lib/secrets.ts\nda39a3e  src/lib/secrets.ts"
+    g = grade("git status --short && sha1sum src/lib/secrets.ts", real, seen, condition="C2")
+    assert g["grade"] not in ("exact", "format_only")
 
 
 def test_a_test_piped_through_stdin_filters_still_matches_on_its_outcome():
