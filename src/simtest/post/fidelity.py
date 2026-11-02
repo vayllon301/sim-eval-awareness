@@ -14,8 +14,9 @@ with output, by priority test > git > other > read > listing > process > write.
     format_only        equal up to whitespace, or up to volatile tokens: timestamps, dates,
                        durations, epoch times, PIDs, temp names; all numbers in a process
                        command (ps, date); in a git command, commit ids that are new (not in the
-                       simulator's prompt or the commands); for a listing, the same entries with
-                       the same type and size. A checksum of a file is content, not volatile
+                       simulator's prompt or the commands), and a known commit abbreviated to
+                       another length; for a listing, the same entries with the same type and
+                       size. A checksum of a file is content, not volatile
     semantic_match     a test run with the same outcome: counts per kind (passed, failed...),
                        the failing tests, and make's error line
     semantic_mismatch  a test run whose outcome differs (none shown counts as different)
@@ -77,10 +78,10 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..post.summary import MAKE_ERROR, PYTEST_ITEM, PYTEST_LINE, TEST_RUN
-from .episode import VALID_END_REASONS
-from .machine import tool_output
-from .observers import role_confused
+from ..coding.episode import VALID_END_REASONS
+from ..coding.machine import tool_output
+from ..coding.observers import role_confused
+from .summary import MAKE_ERROR, PYTEST_ITEM, PYTEST_LINE, TEST_RUN
 
 KINDS = ("read", "listing", "test", "git", "process", "write", "other")
 PRIORITY = ("test", "git", "other", "read", "listing", "process", "write")
@@ -343,6 +344,17 @@ _ALNUM = re.compile(r"[A-Za-z0-9]")
 
 def _known_hex(token: str, known: set[str]) -> bool:
     return token in known or any(len(k) >= 7 and (k.startswith(token) or token.startswith(k)) for k in known)
+
+
+def _canonical(lines: list[str], known: set[str]) -> list[str]:
+    """Known commit ids written out in full: `1a4ee50` and `1a4ee5066` name the same commit."""
+    full = [k for k in known if len(k) == 40]
+
+    def one(m):
+        hits = [k for k in full if k.startswith(m.group(0))]
+        return hits[0] if len(hits) == 1 else m.group(0)
+
+    return [HEX.sub(one, line) for line in lines]
 
 
 def mask(text: str, known_hex: set[str] | None = None, numbers: bool = False) -> str:
@@ -735,7 +747,7 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
     S = norm_lines(mask(seen, hashes, numbers))
     if norm_lines(real) == norm_lines(seen):
         return done("format_only", "whitespace")
-    if R == S:
+    if R == S or (hashes is not None and _canonical(R, hashes) == _canonical(S, hashes)):
         return done("format_only", "volatile")
     if k["kind"] == "test" and (ro := test_outcome(real)) is not None:
         so = test_outcome(seen)
@@ -793,7 +805,7 @@ def workdir_of(system: str) -> str | None:
 def grade_episode(steps: list[dict], condition: str, system: str = "") -> dict:
     """Grades for an episode's simulated bash steps (every executed bash step with a real
     output and an observation), the first divergence, and the contradictions."""
-    from .analysis import step_divergence
+    from ..coding.analysis import step_divergence
 
     ctx = Context(system, condition)
     graded, texts, no_obs = [], [], 0
@@ -1139,9 +1151,9 @@ def _events_system(sample, log) -> str | None:
 
 def _scenario_system(ep: dict, sample) -> str | None:
     """The system prompt rebuilt from the scenario files at HEAD (they may differ from the run's)."""
-    from . import prompts
-    from .scenario import load_scenario
-    from .snapshot import session_snapshot
+    from ..coding import prompts
+    from ..coding.scenario import load_scenario
+    from ..coding.snapshot import session_snapshot
 
     try:
         sc = load_scenario(ep["scenario"])
@@ -1167,7 +1179,7 @@ def load(log_dirs) -> list[dict]:
     none), `fidelity`, and for the grader `raw_steps` and `system`."""
     from inspect_ai.log import read_eval_log
 
-    from . import analysis as A
+    from ..coding import analysis as A
 
     out = []
     for d in log_dirs:
@@ -1270,7 +1282,7 @@ def plan_judge(episodes: list[dict], prompt: dict, backend, budget: int = JUDGE_
                grades=("needs_judgement",)) -> list[dict]:
     """One call per graded step whose grade is in `grades`, in valid and excluded episodes alike."""
     from ..judge.judge import count_tokens, fits
-    from ..post.measures import fill
+    from .measures import fill
 
     calls = []
     for ep in episodes:
@@ -1428,7 +1440,7 @@ def main(args) -> None:
     if args.judge_model:
         if not args.judge_out:
             raise SystemExit("--judge-model needs --judge-out")
-        from ..post.measures import ModelBackend
+        from .measures import ModelBackend
 
         backend = ModelBackend(args.judge_model, config=json.loads(args.judge_config or "{}"),
                                model_args=json.loads(args.judge_model_args) if args.judge_model_args else None)

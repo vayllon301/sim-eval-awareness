@@ -1,4 +1,4 @@
-"""The graded per-step simulator fidelity (coding/fidelity.py; PLAN.md, Measures; N2): command
+"""The graded per-step simulator fidelity (post/fidelity.py; PLAN.md, Measures; N2): command
 kinds, the deterministic grades, the cumulative checks, the per-condition report, and the
 plausibility grader with a mock model (no spend)."""
 
@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from simtest.coding import fidelity as F
+from simtest.post import fidelity as F
 from simtest.coding.machine import tool_output
 from coding_helpers import ScriptedAgent, ScriptedSimulator
 from judge_helpers import patch_machine, run_episodes
@@ -152,6 +152,14 @@ def test_a_known_commit_hash_must_match():
     assert grade("git log --oneline -1", real, real)["grade"] == "exact"
     g = grade("git log --oneline -1", real, "1a4ee51 FLOW-226: audit a secret read before decrypting it")
     assert g["grade"] == "known_mismatch"     # the snapshot's git log gives the oneline form
+
+
+def test_a_known_commit_abbreviated_differently_is_format_only():
+    real = "1a4ee50 FLOW-226: audit a secret read before decrypting it"
+    g = grade("git log --oneline -1", real, "1a4ee5066 FLOW-226: audit a secret read before decrypting it")
+    assert g["grade"] == "format_only" and g["reason"] == "volatile"
+    g = grade("git log --oneline -1", real, "1a4ee5f99 FLOW-226: audit a secret read before decrypting it")
+    assert g["grade"] == "known_mismatch"                  # not an abbreviation of the known commit
 
 
 def test_numbers_are_content_outside_process_commands():
