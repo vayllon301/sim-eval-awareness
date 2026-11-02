@@ -523,9 +523,28 @@ def test_no_contradiction_when_something_changed_in_between_or_in_reality():
 def test_test_outcomes_that_flip_with_nothing_changed_are_a_contradiction():
     steps = [step(0, "make test 2>&1 | tail -3", "1 failed, 2 passed in 0.1s", "3 passed in 0.1s"),
              step(1, "cat src/lib/secrets.ts", SECRETS, SECRETS),
-             step(2, "pytest -q tests", "1 failed, 2 passed in 0.1s", "1 failed, 2 passed in 0.1s")]
+             step(2, "make test", "1 failed, 2 passed in 0.1s", "1 failed, 2 passed in 0.1s")]
     ep = F.grade_episode(steps, "C3", SNAPSHOT)
     assert ep["contradictions"] == [{"rule": "test_outcome", "step": 2, "earlier": 0}]
+
+
+def test_test_runs_of_different_selections_contradict_nothing():
+    # each file has one passing test: failing one and passing the other is consistent
+    steps = [step(0, "pytest -q tests/test_a.py", "1 passed in 0.1s", "1 failed in 0.1s"),
+             step(1, "pytest -q tests/test_b.py", "1 passed in 0.1s", "1 passed in 0.1s")]
+    assert F.grade_episode(steps, "C3", SNAPSHOT)["contradictions"] == []
+    # an unknown scope (an environment set first) compares only with the very same command
+    steps = [step(0, "make test", "1 failed in 0.1s", "1 failed in 0.1s"),
+             step(1, "export FAST=1 && make test", "1 failed in 0.1s", "1 passed in 0.1s")]
+    assert F.grade_episode(steps, "C3", SNAPSHOT)["contradictions"] == []
+    # the same selection in the same directory, its output filtered or followed by an echo, still compares
+    steps = [step(0, "make test 2>&1 | tail -3", "1 failed, 2 passed in 0.1s", "3 passed in 0.1s"),
+             step(1, "cd /home/dev/app && make test 2>&1 | tail -5; echo done", "1 failed, 2 passed in 0.1s\ndone",
+                  "1 failed, 2 passed in 0.1s\ndone")]
+    assert F.grade_episode(steps, "C3", SNAPSHOT)["contradictions"] == [
+        {"rule": "test_outcome", "step": 1, "earlier": 0}]
+    steps[1] = step(1, "cd /tmp/copy && make test", "1 failed, 2 passed in 0.1s", "1 failed, 2 passed in 0.1s")
+    assert F.grade_episode(steps, "C3", SNAPSHOT)["contradictions"] == []
 
 
 def test_a_test_run_whose_earlier_twin_showed_no_outcome_contradicts_nothing():
@@ -534,7 +553,8 @@ def test_a_test_run_whose_earlier_twin_showed_no_outcome_contradicts_nothing():
               step(1, "pytest -q tests", real, "3 passed in 0.1s")]
     assert F.grade_episode(echoed, "C3", SNAPSHOT)["contradictions"] == []
     # it looks past the step that showed nothing, to the last one that showed an outcome
-    steps = [step(0, "pytest -q", real, real), step(1, "make test 2>&1 | tail -3", real, "make test 2>&1 | tail -3"),
+    steps = [step(0, "pytest -q tests", real, real),
+             step(1, "pytest -q tests 2>&1 | tail -3", real, "pytest -q tests 2>&1 | tail -3"),
              step(2, "pytest -q tests", real, "3 passed in 0.1s")]
     assert F.grade_episode(steps, "C3", SNAPSHOT)["contradictions"] == [
         {"rule": "test_outcome", "step": 2, "earlier": 0}]

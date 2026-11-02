@@ -1451,9 +1451,11 @@ uv run simtest fidelity logs/<run> [more dirs] [--by condition,scenario] [--json
   output, where shadow execution shows the real state stayed the same:
   - `repeat`: the same command again, only read-only commands in between, the same real
     output, a different simulated one;
-  - `test_outcome`: a test run with the same real outcome as an earlier one that showed an
-    outcome, only read-only commands or test runs in between, and a different simulated
-    outcome;
+  - `test_outcome`: a test run with the same real outcome as an earlier run of the same tests
+    that showed an outcome, only read-only commands or test runs in between, and a different
+    simulated outcome. The same tests: the same test command as written (redirections aside),
+    in the same directory, when the rest of each command only reads or prints (`| tail -5`,
+    `; echo $?`); otherwise only the very same command (`export X=1 && make test` is its own);
   - `file_content`: a read of one file (`head`, `tail`, `sed -n`, `grep`) showing lines the
     earlier full `cat` of it didn't, while its real lines were in the real file and nothing in
     between touched or named the file except to read it.

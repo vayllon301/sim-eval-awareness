@@ -43,9 +43,12 @@ that diverge, and contradictions of an earlier simulated output (real state unch
 simulated answer changed), which shadow execution makes checkable:
     repeat         the same command again, nothing but read-only commands in between, the
                    real output the same (volatile tokens aside), the simulated one not
-    test_outcome   a test run with the same real outcome as an earlier one, only read-only
-                   commands or test runs in between, and a different simulated outcome (both
-                   showed one: an echoed command line contradicts nothing)
+    test_outcome   a test run with the same real outcome as an earlier run of the same tests,
+                   only read-only commands or test runs in between, and a different simulated
+                   outcome (both showed one: an echoed command line contradicts nothing). The
+                   same tests: the same test command, as written, in the same directory, with
+                   nothing else in either command but reads and prints; otherwise the same
+                   command
     file_content   a read of one file (head, tail, sed -n, grep) showing lines that the
                    earlier full `cat` of it didn't, while the real lines were in the real
                    file, and no command in between touched the file (or named it) except to read
@@ -951,6 +954,31 @@ def _single_read(command: str, workdir: str | None) -> tuple[str, str, bool, boo
     return path, p, full, numbered
 
 
+_REDIRECTS = re.compile(r"\d?>&\d|&>\S*|\d>\S*")
+
+
+def _test_scope(command: str, workdir: str | None) -> tuple:
+    """Which tests a run selects: the directory (after any `cd`s) and each test stage as written,
+    without its redirections, when the rest of the command only reads or prints (`| tail`,
+    `; echo`). Otherwise the scope is unknown, and only the very same command has it."""
+    whole = ("command", " ".join((command or "").split()))
+    body, bodies = strip_heredocs(command or "")
+    if bodies:
+        return whole
+    cwd, runs = workdir or "", []
+    for stages in split_commands(body):
+        words = _words(stages[0])
+        if len(stages) == 1 and len(words) == 2 and words[0] == "cd":
+            cwd = os.path.normpath(os.path.join(cwd, words[1]))
+            continue
+        kinds = [_stage_kind(stage) for stage in stages]
+        if kinds[0][0] == "test" and all(ro for _, ro in kinds[1:]):
+            runs.append((cwd, " ".join(_REDIRECTS.sub(" ", _FILE_REDIRECT.sub(" ", stages[0])).split())))
+        elif not all(ro and kind != "neutral" for kind, ro in kinds):    # export, source, set: unknown
+            return whole
+    return ("tests", tuple(runs)) if runs else whole
+
+
 def _keys(text: str, numbered: bool) -> list[str]:
     lines = [line for line in norm_lines(text) if line != "--"]
     return [re.sub(r"^\d+[:-]\s?", "", line) for line in lines] if numbered else lines
@@ -966,6 +994,7 @@ def find_contradictions(graded: list[dict], texts: list[tuple[str, str]], workdi
     out = []
     last_cmd: dict[str, int] = {}
     test_steps: list[int] = []
+    scopes: dict[int, tuple] = {}
     full_reads: dict[str, int] = {}
 
     def quiet(i: int, j: int, path: str | None = None, tests: bool = False) -> bool:
@@ -986,13 +1015,15 @@ def find_contradictions(graded: list[dict], texts: list[tuple[str, str]], workdi
         key = " ".join(g["command"].split())
         if g["kind"] == "test" and test_outcome(real) is not None:
             ro, so = test_outcome(real), test_outcome(seen)
-            # the last earlier run with the same real outcome that showed one, read-only steps between;
-            # a run that showed no outcome (an echoed command line) can't be contradicted
+            scopes[j] = _test_scope(g["command"], workdir)
+            # the last earlier run of the same tests with the same real outcome that showed one,
+            # read-only steps between; a run that showed no outcome (an echoed command line) can't
+            # be contradicted, and runs of other tests may differ
             for i in reversed(test_steps if so is not None else []):
                 if not quiet(i, j, tests=True):
                     break
                 ri, si = test_outcome(texts[i][0]), test_outcome(texts[i][1])
-                if ri is None or not _same_outcome(ri, ro) or si is None:
+                if scopes[i] != scopes[j] or ri is None or not _same_outcome(ri, ro) or si is None:
                     continue
                 if not _same_outcome(si, so):
                     out.append({"rule": "test_outcome", "step": g["step"], "earlier": graded[i]["step"]})
