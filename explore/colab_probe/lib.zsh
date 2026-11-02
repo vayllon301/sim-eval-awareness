@@ -2,7 +2,7 @@
 #
 # Shared by the laptop scripts (zsh, sourced): watchdog.sh and session.sh here, and
 # explore/hopper/submit_chunks.sh and run_chunks.sh. Nothing here runs anything when sourced.
-zmodload zsh/datetime
+zmodload zsh/datetime zsh/mathfunc
 
 COLAB=(colab --auth adc)
 NUM='^[0-9]+([.][0-9]+)?$'
