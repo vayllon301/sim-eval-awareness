@@ -1,4 +1,4 @@
-"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,power,post}.
+"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,power,post,equiv}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
@@ -6,7 +6,8 @@ coding family (src/simtest/coding). `run` picks the family from the config's `fa
 `coding`). `scenarios` lists both. `images` and `snapshot` are coding-only. `label` builds
 the hand-label sample and serves the labelling page; `judge` runs and checks the awareness
 judge (src/simtest/judge). `power` simulates the power of the primary test (src/simtest/stats);
-`post` runs and reports the post-episode measures (src/simtest/post).
+`post` runs and reports the post-episode measures (src/simtest/post). `equiv` checks that two
+vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md).
 """
 
 from __future__ import annotations
@@ -148,6 +149,9 @@ def main(argv: list[str] | None = None) -> None:
     add_judge_parser(sub)
     add_power_parser(sub)
     add_post_parser(sub)
+    from .equiv import add_parser as add_equiv_parser
+
+    add_equiv_parser(sub)
     args = p.parse_args(argv)
 
     if args.cmd == "scenarios":
@@ -237,6 +241,10 @@ def main(argv: list[str] | None = None) -> None:
         from .post.command import main as post_main
 
         post_main(args)
+    elif args.cmd == "equiv":
+        from .equiv import main as equiv_main
+
+        equiv_main(args)
 
 
 if __name__ == "__main__":
