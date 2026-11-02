@@ -5,6 +5,10 @@ description = "Testbed: does an LLM-simulated environment change an AI agent's e
 requires-python = ">=3.14.1"
 dependencies = [
     "inspect-ai==0.3.281",
+    # The second judge (judge/scout.py): Scout's eval_awareness scanner. 0.6.0 is the newest release that
+    # accepts inspect-ai 0.3.281; DuckDB stays below 2.0, as Scout itself pins from 0.6.1.
+    "inspect-scout==0.6.0",
+    "duckdb>=1.4,<2",
     "markdown-it-py==4.2.0",  # reads the Markdown agents write in report fields (fields.py)
     "numpy>=2",               # the sign-flip test's power simulation (stats/); already locked through pandas
     "openai>=3.35.1",
