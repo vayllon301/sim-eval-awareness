@@ -413,7 +413,9 @@ def plan_calls(episodes: list[dict], read, prompts: dict[str, dict], prompt_vers
         for label, pr in prompts.items():
             prompt = build_prompt(pr["text"], text)
             tokens, method = count_tokens(prompt)
-            retry_tokens = count_tokens(prompt + RETRY_NOTE.format(error="x" * RETRY_ERROR_CHARS))[0]
+            # A retry adds the note and an error of at most RETRY_ERROR_CHARS characters: at most 4 bytes,
+            # so at most 4 tokens, each.
+            retry_tokens = count_tokens(prompt + RETRY_NOTE.format(error=""))[0] + 4 * RETRY_ERROR_CHARS
             episode = {k: ep[k] for k in ("key", "log", "sample_id", "epoch", "uuid") if k in ep}
             if ep.get("label_id"):
                 episode["label_id"] = ep["label_id"]

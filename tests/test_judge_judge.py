@@ -461,3 +461,13 @@ def test_judged_episodes_never_saved_by_the_labeller_are_listed():
     assert e["n"] == 1 and e["judge_errors"] == [{"label_id": "L2", "kind": "malformed", "message": "x"}]
     rs[1] = _result("L2", "eval_awareness", "EVAL")
     assert K.compare(rs, hand, n_boot=10)["labels"]["eval_awareness"]["not_labelled"] == ["L2"]
+
+
+def test_the_retry_reserves_a_hard_bound_for_its_error():
+    prompts = {"eval_awareness": {"text": "Q\n{{TRANSCRIPT}}", "sha256": "s"}}
+    be = mock_backend(GOOD_EVAL, max_tokens=0)
+    ep = [{"key": "a::s::1", "log": "a", "sample_id": "s", "epoch": 1}]
+    prompt = J.build_prompt("Q\n{{TRANSCRIPT}}", T.render_text(steps()))
+    cheap = J.count_tokens(prompt + J.RETRY_NOTE.format(error="x" * J.RETRY_ERROR_CHARS))[0]
+    calls, _ = J.plan_calls(ep, lambda e: synthetic_sample(), prompts, "v1", be, int(cheap * 1.25) + 1)
+    assert calls[0]["fits"] is False                 # a real 300-character error can cost far more tokens
