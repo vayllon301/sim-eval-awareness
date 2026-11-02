@@ -478,3 +478,12 @@ def test_equiv_runs_on_the_first_usable_job_when_the_first_fails(tmp_path):
     eq = [i for i, c in enumerate(calls) if "simtest equiv score" in c]
     first_run = next(i for i, c in enumerate(calls) if "simtest run " in c)
     assert len(eq) == 1 and eq[0] < first_run, proc.stdout
+
+
+def test_sim_quant_reaches_the_job(tmp_path):
+    """S9 (sol-loop round 5): the job's serve.sh gets SIM_QUANT when it is given."""
+    proc, state, logs = submit(tmp_path, {"SIM_QUANT": "fp8_per_channel"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert all(",SIM_QUANT=fp8_per_channel" in c for c in sbatches(calls_of(state)))
+    proc, state, logs = submit(tmp_path / "d")
+    assert not any("SIM_QUANT" in c for c in sbatches(calls_of(state)))

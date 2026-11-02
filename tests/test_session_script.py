@@ -328,3 +328,13 @@ def test_missing_contexts_are_built_from_the_runs_own_episodes(tmp_path):
     # Without a run in this session there is nothing to build them from: refused, as before.
     proc, *_ = run(tmp_path / "b", {"EQUIV_CONTEXTS": str(ctx), "STEPS": "equiv"})
     assert proc.returncode == 1 and "contexts" in proc.stderr
+
+
+def test_sim_quant_reaches_serve_sh(tmp_path):
+    """S9 (sol-loop round 5): after n2-fp8, SIM_QUANT picks the simulator's FP8 scheme; the session
+    passes it on (the default sends nothing, so the G4 lines stay as they are)."""
+    proc, *_ = run(tmp_path, {"DRY_RUN": "1", "SIM_QUANT": "fp8_per_channel"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "SIM_QUANT=fp8_per_channel bash -s" in proc.stdout
+    proc, *_ = run(tmp_path / "d", {"DRY_RUN": "1"})
+    assert "SIM_QUANT" not in proc.stdout

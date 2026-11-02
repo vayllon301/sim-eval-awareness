@@ -86,6 +86,7 @@ minutes=$(( int(TIME_LIMIT * 60) ))
 exports="ALL,WORK=${(q)WORK},SERVE_SH=\$PWD/serve.sh,STATUS_DIR=\$PWD/status,TIME_LIMIT_MIN=$minutes"
 [[ -z ${MIX:-} ]] || exports+=",MIX=$MIX"
 [[ -z ${EAGER:-} ]] || exports+=",EAGER=$EAGER"
+[[ -z ${SIM_QUANT:-} ]] || exports+=",SIM_QUANT=$SIM_QUANT"   # the simulator's FP8 scheme; serve.sh checks it
 ids=()
 rows=()
 i=0
