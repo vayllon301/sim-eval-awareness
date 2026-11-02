@@ -8,6 +8,9 @@ what the script really starts.
 
 The expected G4 lines were captured from the script before Hopper support (experiment
 `eedcb55`), with stub binaries recording vllm's argv.
+
+SIM_QUANT=fp8_per_channel and SIM_ONLY=1 (restart the simulator alone, next to a running agent) are
+the N2 measurement's options (docs/BACKENDS.md); the default lines stay the frozen ones.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -48,7 +52,12 @@ G4_LINES = {
 # The same script on an 80 GB card, before the change (64K, 0.44 / 0.50; MIX had no effect there).
 H100_LINES = [AGENT.format(mem="0.44", len=65536), SIM.format(mem="0.50", len=65536)]
 
-FORBIDDEN = ("nvidia-smi", "pip", "uv", "hf", "vllm", "curl", "setsid", "python", "python3")
+# fp8_per_channel: the same line with the per-channel scheme, and the MoE kernel pinned to Triton.
+SIM_PC = SIM.replace("--quantization fp8 --trust-remote-code",
+                     "--quantization fp8_per_channel --moe-backend triton --trust-remote-code")
+assert SIM_PC != SIM
+
+FORBIDDEN = ("nvidia-smi", "pip", "uv", "hf", "vllm", "curl", "setsid", "python", "python3", "pgrep")
 
 
 def _stubs(tmp_path: Path, record: Path | None = None) -> Path:
@@ -71,6 +80,15 @@ def _stubs(tmp_path: Path, record: Path | None = None) -> Path:
         for name in ("pip", "uv", "hf", "python3"):
             (d / name).write_text("#!/bin/sh\nexit 0\n")
         (d / "setsid").write_text("#!/bin/sh\nexec \"$@\"\n")
+        # -f PATTERN: the live pids in RUNNING (a test's stand-in for a simulator already serving),
+        # each with the pattern recorded; -g PGID: whether that process group still has a member
+        running = record.parent / "running"
+        (d / "pgrep").write_text(
+            "#!/bin/sh\ncase \"$1\" in\n"
+            f"  -f) echo \"$3\" >> {record.parent / 'pgrep.txt'}; st=1; for p in $(cat {running} 2>/dev/null); do "
+            "kill -s 0 \"$p\" 2>/dev/null && { echo \"$p\"; st=0; }; done; exit $st ;;\n"
+            "  -g) kill -s 0 -- \"-$2\" 2>/dev/null && { echo \"$2\"; exit 0; }; exit 1 ;;\n"
+            "esac\nexit 1\n")
     for p in d.iterdir():
         p.chmod(0o755)
     return d
@@ -202,3 +220,111 @@ def test_serve_script_has_no_colab_only_paths_outside_the_default():
     # /content may appear only where the script picks its default work directory
     assert all("WORK" in x for x in hits), hits
     assert os.access(SCRIPT, os.R_OK)
+
+
+# --- SIM_QUANT and SIM_ONLY (N2: fp8 against fp8_per_channel, docs/BACKENDS.md) ---------------------
+
+
+@pytest.mark.parametrize("extra", list(G4_LINES), ids=lambda e: "+".join(f"{k}={v}" for k, v in e) or "default")
+def test_sim_quant_fp8_is_the_frozen_default(tmp_path, extra):
+    """Asking for fp8 by name changes nothing: the G4 lines stay the frozen ones."""
+    proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "SIM_QUANT": "fp8", **dict(extra)})
+    assert lines(proc) == G4_LINES[extra]
+
+
+@pytest.mark.parametrize("extra", list(G4_LINES), ids=lambda e: "+".join(f"{k}={v}" for k, v in e) or "default")
+def test_sim_quant_per_channel_changes_only_the_simulators_scheme(tmp_path, extra):
+    proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "SIM_QUANT": "fp8_per_channel",
+                          **dict(extra)})
+    agent, sim = lines(proc)
+    want_agent, want_sim = G4_LINES[extra]
+    assert agent == want_agent    # the agent is its own FP8 checkpoint: untouched
+    assert sim == want_sim.replace("--quantization fp8 --trust-remote-code",
+                                   "--quantization fp8_per_channel --moe-backend triton --trust-remote-code")
+
+
+def test_sim_quant_per_channel_on_every_profile(tmp_path):
+    two = run(tmp_path, {"WORK": "/content", "GPU_MIB": H100_MIB, "GPU_COUNT": "2", "SIM_QUANT": "fp8_per_channel"})
+    assert lines(two)[1] == "CUDA_VISIBLE_DEVICES=1 " + SIM_PC.format(mem="0.90", len=131072)
+    h100 = run(tmp_path, {"WORK": "/content", "GPU_MIB": H100_MIB, "GPU_COUNT": "1", "SIM_QUANT": "fp8_per_channel"})
+    assert lines(h100) == [H100_LINES[0], SIM_PC.format(mem="0.50", len=65536)]
+
+
+@pytest.mark.parametrize("value", ["fp8_per_tensor", "fp8_per_block", "FP8", "nvfp4_per_token", "none"])
+def test_sim_quant_refuses_any_other_scheme(tmp_path, value):
+    """fp8_per_tensor is fp8's arithmetic under another name: refused too, so one backend has one name."""
+    proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "SIM_QUANT": value})
+    assert proc.returncode != 0
+    assert "SIM_QUANT" in proc.stderr and "fp8_per_channel" in proc.stderr
+    assert "vllm serve" not in proc.stdout
+
+
+@pytest.mark.parametrize("env", [{"SIM_QUANT": "fp8_per_channel"}, {"SIM_ONLY": "1"},
+                                 {"SIM_ONLY": "1", "SIM_QUANT": "fp8_per_channel", "MIX": "c3"}],
+                         ids=["per-channel", "sim-only", "both"])
+def test_dry_run_with_the_new_options_touches_nothing(tmp_path, env):
+    proc = run(tmp_path, {"WORK": str(tmp_path / "work"), "GPU_MIB": G4_MIB, "GPU_COUNT": "1", **env})
+    assert proc.returncode == 0, proc.stderr
+    assert "stub" not in proc.stderr
+    assert not (tmp_path / "work").exists()
+
+
+def test_sim_only_dry_run_prints_only_the_simulator(tmp_path):
+    proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "MIX": "c3", "SIM_ONLY": "1",
+                          "SIM_QUANT": "fp8_per_channel"})
+    assert lines(proc) == [SIM_PC.format(mem="0.52", len=131072)]   # the G4's MIX=c3 fraction, as before
+    assert "profile: one-gpu-96g" in proc.stdout
+
+
+@pytest.mark.parametrize("env", [
+    {"GPU_MIB": G4_MIB, "GPU_COUNT": "1", "MIX": "c3", "VENV": "", "SIM_QUANT": "fp8_per_channel"},
+    {"GPU_MIB": G4_MIB, "GPU_COUNT": "1", "MIX": "c3", "VENV": "", "SIM_QUANT": "fp8_per_channel", "SIM_ONLY": "1"},
+    {"GPU_MIB": H100_MIB, "GPU_COUNT": "2", "EAGER": "1", "SIM_QUANT": "fp8_per_channel", "SIM_ONLY": "1"},
+], ids=["per-channel", "sim-only", "sim-only-two-gpu-eager"])
+def test_the_new_options_start_what_the_dry_run_prints(tmp_path, env):
+    work = tmp_path / "work"
+    dry = lines(run(tmp_path, {"WORK": str(work), **env}))
+    rec = tmp_path / "rec.txt"
+    real = run(tmp_path, {"WORK": str(work), **env}, dry=False, record=rec)
+    assert real.returncode == 0, real.stderr + real.stdout
+    assert rec.read_text().splitlines() == dry
+    assert all(x in (work / "probe" / "versions.txt").read_text() for x in dry)
+
+
+def test_sim_only_stops_the_running_simulator_first_and_keeps_its_log(tmp_path):
+    """A simulator already serving (here a stand-in in its own process group, as setsid starts
+    it) is stopped, and waited for, before the new one starts; the agent is never started, and
+    the old server's log is kept beside the new one."""
+    work = tmp_path / "work"
+    probe = work / "probe"
+    probe.mkdir(parents=True)
+    (probe / "simulator.log").write_text("the fp8 server's log\n")
+    old = subprocess.Popen(["sleep", "300"], start_new_session=True)
+    reaper = threading.Thread(target=old.wait, daemon=True)   # reap it at once, so it doesn't linger as a zombie
+    reaper.start()
+    (tmp_path / "running").write_text(f"{old.pid}\n")
+    rec = tmp_path / "rec.txt"
+    try:
+        proc = run(tmp_path, {"WORK": str(work), "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "MIX": "c3", "VENV": "",
+                              "SIM_ONLY": "1", "SIM_QUANT": "fp8_per_channel"}, dry=False, record=rec)
+        assert proc.returncode == 0, proc.stderr + proc.stdout
+        reaper.join(timeout=10)
+        assert old.poll() is not None, "the running simulator was not stopped"
+    finally:
+        if old.poll() is None:
+            old.kill()
+    assert rec.read_text().splitlines() == [SIM_PC.format(mem="0.52", len=131072).replace(
+        "/content", str(work))]                                     # the simulator only, no agent
+    assert (tmp_path / "pgrep.txt").read_text().splitlines()[0] == "--served-model-name simulator"
+    kept = [p for p in probe.glob("simulator.*.log")]
+    assert len(kept) == 1 and kept[0].read_text() == "the fp8 server's log\n"
+
+
+def test_without_sim_only_nothing_is_stopped(tmp_path):
+    """A normal run starts both servers and never looks for a running simulator."""
+    rec = tmp_path / "rec.txt"
+    proc = run(tmp_path, {"WORK": str(tmp_path / "work"), "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "VENV": ""},
+               dry=False, record=rec)
+    assert proc.returncode == 0, proc.stderr
+    assert not (tmp_path / "pgrep.txt").exists()
+    assert len(rec.read_text().splitlines()) == 2

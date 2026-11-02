@@ -34,6 +34,13 @@
 # downloaded, created or started. GPU_MIB and GPU_COUNT stand in for nvidia-smi there. The G4's
 # lines are pinned by tests/test_serve_script.py.
 #
+# SIM_QUANT: how vLLM quantizes the simulator at load. fp8 (the default; every episode so far): in
+# vLLM 0.32 the deprecated name of fp8_per_tensor, whose MoE scales its activations over the whole
+# batch. fp8_per_channel: per-channel weight scales, per-token activations in every layer, the MoE
+# included; it pins the MoE kernel to Triton, the one fp8 uses on the G4 and the H100. Nothing else
+# is accepted (docs/BACKENDS.md). SIM_ONLY=1 (re)starts the simulator alone next to a running agent:
+# it stops the simulator an earlier run started, and keeps that server's log as simulator.<time>.log.
+#
 # Settings can be overridden with environment variables (the defaults are the plan's).
 set -euo pipefail
 VLLM_VERSION=${VLLM_VERSION:-0.32.0}
@@ -42,6 +49,12 @@ SIM_REPO=${SIM_REPO:-Qwen/Qwen-AgentWorld-35B-A3B}
 die() { echo "serve.sh: $*" >&2; exit 1; }
 # One backend per experiment (AGENTS.md): every episode so far ran on vLLM 0.32.0.
 [ "$VLLM_VERSION" = 0.32.0 ] || die "vLLM is pinned at 0.32.0 (got $VLLM_VERSION): another version is another backend"
+SIM_QUANT=${SIM_QUANT:-fp8}
+case "$SIM_QUANT" in
+  fp8) SIM_QUANT_ARGS=(--quantization fp8) ;;
+  fp8_per_channel) SIM_QUANT_ARGS=(--quantization fp8_per_channel --moe-backend triton) ;;
+  *) die "SIM_QUANT is fp8 or fp8_per_channel (got $SIM_QUANT): another quantization is another backend" ;;
+esac
 
 # The work directory: Colab's /content by default there; anywhere else it must be given.
 if [ -z "${WORK:-}" ]; then
@@ -111,7 +124,7 @@ if [ "${EAGER:-}" = 1 ]; then ENGINE=(--enforce-eager); else ENGINE=(); fi
 
 # The command line of each server, built once: the dry run prints it, serve runs it.
 AGENT_ARGS=(--enable-auto-tool-choice --tool-call-parser qwen3_coder ${ENGINE[@]+"${ENGINE[@]}"})
-SIM_ARGS=(--quantization fp8 --trust-remote-code ${ENGINE[@]+"${ENGINE[@]}"})
+SIM_ARGS=("${SIM_QUANT_ARGS[@]}" --trust-remote-code ${ENGINE[@]+"${ENGINE[@]}"})
 vllm_args() {   # NAME PORT MODEL_DIR MEM_FRACTION MAX_LEN [extra vllm flags]
   local name=$1 port=$2 model=$3 mem=$4 maxlen=$5
   shift 5
@@ -130,8 +143,10 @@ show_cmd() {    # GPU: the command line as run, with the variables that change i
 
 if [ "${DRY_RUN:-}" = 1 ]; then
   echo "profile: $PROFILE ($GPU_COUNT GPU of $GPU_MIB MiB), vllm $VLLM_VERSION, work $WORK"
-  vllm_args agent 8000 "$MODELS/agent" "$AGENT_MEM" "$AGENT_LEN" "${AGENT_ARGS[@]}"
-  show_cmd "$AGENT_GPU"
+  if [ "${SIM_ONLY:-}" != 1 ]; then
+    vllm_args agent 8000 "$MODELS/agent" "$AGENT_MEM" "$AGENT_LEN" "${AGENT_ARGS[@]}"
+    show_cmd "$AGENT_GPU"
+  fi
   vllm_args simulator 8001 "$MODELS/simulator" "$SIM_MEM" "$SIM_LEN" "${SIM_ARGS[@]}"
   show_cmd "$SIM_GPU"
   exit 0
@@ -192,7 +207,30 @@ serve() {
 }
 if [ "${EAGER:-}" = 1 ]; then export VLLM_USE_V2_MODEL_RUNNER=0; fi
 echo "engine: ${ENGINE[*]:-compiled (vLLM default)}" | tee -a "$OUT/versions.txt"
-serve agent 8000 "$MODELS/agent" "$AGENT_MEM" "$AGENT_LEN" "$AGENT_GPU" "${AGENT_ARGS[@]}"
+# SIM_ONLY=1: stop the simulator an earlier run started (setsid made each server its own process
+# group, so its engine processes go with it) and wait until it is gone: SIGKILL after 3 minutes,
+# and give up after 4.
+stop_simulator() {
+  local pids pid i
+  pids=$(pgrep -f -- "--served-model-name simulator" || true)
+  for pid in $pids; do kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true; done
+  for pid in $pids; do
+    i=0
+    while pgrep -g "$pid" >/dev/null; do
+      i=$((i + 1))
+      [ "$i" -le 120 ] || die "the running simulator (process group $pid) did not stop"
+      if [ "$i" -gt 90 ]; then kill -KILL -- "-$pid" 2>/dev/null || true; fi
+      sleep 2
+    done
+  done
+  [ -z "$pids" ] || stamp simulator-stopped
+  if [ -f "$OUT/simulator.log" ]; then mv "$OUT/simulator.log" "$OUT/simulator.$(date +%s).log"; fi
+}
+if [ "${SIM_ONLY:-}" = 1 ]; then
+  stop_simulator
+else
+  serve agent 8000 "$MODELS/agent" "$AGENT_MEM" "$AGENT_LEN" "$AGENT_GPU" "${AGENT_ARGS[@]}"
+fi
 serve simulator 8001 "$MODELS/simulator" "$SIM_MEM" "$SIM_LEN" "$SIM_GPU" "${SIM_ARGS[@]}"
 nvidia-smi --query-gpu=memory.used,memory.total --format=csv | tee -a "$OUT/gpu.txt"
 grep -h -i -E "KV cache|maximum concurrency|prefix cach" "$OUT/agent.log" "$OUT/simulator.log" | tee "$OUT/kv.txt" || true
