@@ -1,0 +1,3 @@
+Frozen on 02-11-2026 after three tuning rounds on episodes outside the hand-label sample
+(prompts/TUNING.md). Never edit these files: a change is a new version, run on new tuning
+episodes (LOG.md, 02-11-2026: the decision rule).

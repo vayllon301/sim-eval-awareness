@@ -120,10 +120,14 @@ class LabelStore:
         rec = {"label_id": label_id,
                "saved_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                **context, **fields}
-        line = json.dumps(rec, ensure_ascii=False) + "\n"
+        line = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.path, "a", encoding="utf-8") as f:
+            with open(self.path, "a+b") as f:
+                if f.seek(0, os.SEEK_END):   # not empty: end a torn last line first, so this record stays readable
+                    f.seek(-1, os.SEEK_END)
+                    if f.read(1) != b"\n":
+                        line = b"\n" + line
                 f.write(line)
                 f.flush()
                 os.fsync(f.fileno())
