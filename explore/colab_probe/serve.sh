@@ -39,7 +39,7 @@
 # batch. fp8_per_channel: per-channel weight scales, per-token activations in every layer, the MoE
 # included; it pins the MoE kernel to Triton, the one fp8 uses on the G4 and the H100. Nothing else
 # is accepted (docs/BACKENDS.md). SIM_ONLY=1 (re)starts the simulator alone next to a running agent:
-# it stops the simulator an earlier run started, and keeps that server's log as simulator.<time>.log.
+# it stops the simulator an earlier run started in this WORK, and keeps its log as simulator.<time>.log.
 #
 # Settings can be overridden with environment variables (the defaults are the plan's).
 set -euo pipefail
@@ -212,7 +212,7 @@ echo "engine: ${ENGINE[*]:-compiled (vLLM default)}" | tee -a "$OUT/versions.txt
 # and give up after 4.
 stop_simulator() {
   local pids pid i
-  pids=$(pgrep -f -- "--served-model-name simulator" || true)
+  pids=$(pgrep -f -- "$MODELS/simulator --served-model-name simulator" || true)   # this WORK's only
   for pid in $pids; do kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true; done
   for pid in $pids; do
     i=0

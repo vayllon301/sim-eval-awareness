@@ -315,7 +315,8 @@ def test_sim_only_stops_the_running_simulator_first_and_keeps_its_log(tmp_path):
             old.kill()
     assert rec.read_text().splitlines() == [SIM_PC.format(mem="0.52", len=131072).replace(
         "/content", str(work))]                                     # the simulator only, no agent
-    assert (tmp_path / "pgrep.txt").read_text().splitlines()[0] == "--served-model-name simulator"
+    # only this work directory's simulator: another run's (another WORK) is left alone
+    assert (tmp_path / "pgrep.txt").read_text().splitlines()[0] == f"{work}/models/simulator --served-model-name simulator"
     kept = [p for p in probe.glob("simulator.*.log")]
     assert len(kept) == 1 and kept[0].read_text() == "the fp8 server's log\n"
 
