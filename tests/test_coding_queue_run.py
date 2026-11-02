@@ -274,3 +274,22 @@ def test_an_attempt_killed_with_its_process_is_still_reported(machines, tmp_path
     assert len(errors) == 1 and not design_gaps(episodes, design)
     assert [errors[0]["condition"], errors[0]["simulator"], errors[0]["scenario"], errors[0]["epoch"]] == killed["key"]
     assert len(episodes) == 9
+
+
+def test_fidelity_reads_a_run_with_a_kept_failed_attempt(machines, tmp_path, monkeypatch):
+    """After the merge with n2-fidelity: a failed attempt kept under attempts/ has no log file;
+    simtest fidelity grades the logged episodes and skips it."""
+    from simtest.post.fidelity import load
+
+    target = ("C3", "pricing_cap", 1)
+
+    async def session_start(machine, scenario):
+        state = sample_state()
+        if this_episode() == target and state.store.get("CodingEpisode:attempt")["attempt"] == 1:
+            raise RuntimeError("simulator call timed out")
+        return "Thu Oct 29 10:15:02 CET 2026"
+
+    monkeypatch.setattr(episode, "session_start", session_start)
+    _, _, log_dir = run(config(tmp_path), tmp_path)
+    graded = load([log_dir])
+    assert len(graded) == 8 and all(g["log_path"] for g in graded)

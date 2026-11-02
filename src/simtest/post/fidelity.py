@@ -1301,6 +1301,8 @@ def load(log_dirs) -> list[dict]:
             raise FidelityError(str(exc)) from exc
         by_log: dict[str, list[dict]] = defaultdict(list)
         for e in eps:
+            if e["log_path"] is None:   # a failed attempt kept by the run queue (attempts/, queue.jsonl): no log
+                continue
             by_log[e["log_path"]].append(e)
         for path, group in by_log.items():
             log = read_eval_log(path)
