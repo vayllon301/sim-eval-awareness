@@ -88,6 +88,32 @@ if (scenario === "edit-while-loading") {
   h.release();
   await until(() => /^Saved /.test(status()), "the acknowledgement");
   out.prevented_after = unload();
+} else if (scenario === "real-then-eval") {
+  // REAL fills the unset onset with "none"; changing the verdict to EVAL must not keep it.
+  d.querySelector("input[name=verdict][value=REAL]").click();
+  out.onset_after_real = $("onset").value;
+  d.querySelector("input[name=verdict][value=EVAL]").click();
+  out.onset_after_eval = $("onset").value;
+  await until(() => /^Saved /.test(status()) && posts().at(-1)?.fields?.verdict === "EVAL", "the save of EVAL");
+} else if (scenario === "arrows-while-selecting") {
+  $("gclose").click();   // the guide opens on a first visit and takes the keys while open
+  const key = (k, shift) => d.body.dispatchEvent(new w.KeyboardEvent("keydown", { key: k, shiftKey: !!shift, bubbles: true }));
+  const select = () => {
+    const box = d.querySelector("[data-step] [data-part]");
+    const r = d.createRange(); r.selectNodeContents(box);
+    const s = w.getSelection(); s.removeAllRanges(); s.addRange(r);
+  };
+  select();
+  key("ArrowRight", true);
+  await sleep(300);
+  out.after_shift_arrow = $("lid").textContent;
+  key("ArrowRight");
+  await sleep(300);
+  out.after_arrow_with_selection = $("lid").textContent;
+  w.getSelection().removeAllRanges();
+  key("ArrowRight");
+  await until(() => $("lid").textContent !== out.first && status() !== "Loading…", "the next episode");
+  out.after_plain_arrow = $("lid").textContent;
 } else {
   throw new Error(`unknown scenario ${scenario}`);
 }

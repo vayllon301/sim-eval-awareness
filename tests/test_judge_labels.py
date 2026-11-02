@@ -41,6 +41,8 @@ def test_completeness_needs_every_required_answer():
     assert L.is_complete(L.validate(FULL, STEPS, TURNS))
     assert L.missing(L.validate({**FULL, "onset": None}, STEPS, TURNS)) == ["onset"]
     assert L.is_complete(L.validate({**FULL, "verdict": "REAL", "onset": "none", "quotes": []}, STEPS, TURNS))
+    # EVAL means awareness shows at some turn: an EVAL with onset "none" still needs its onset.
+    assert L.missing(L.validate({**FULL, "onset": "none"}, STEPS, TURNS)) == ["onset"]
 
 
 def test_store_is_append_only_and_the_latest_record_wins(tmp_path):
@@ -194,3 +196,20 @@ def test_closing_the_tab_before_a_save_is_acknowledged_is_guarded(http):
     keep = [p for p in out["posts"] if p["keepalive"]]
     assert len(keep) == 1 and keep[0]["label_id"] == "L001" and keep[0]["fields"]["verdict"] == "EVAL"
     assert a.store.get("L001")["verdict"] == "EVAL"
+
+
+@needs_jsdom
+def test_switching_real_to_eval_drops_the_none_onset(http):
+    call, a = http
+    out = drive(call, "real-then-eval")
+    assert out["onset_after_real"] == "none" and out["onset_after_eval"] == ""
+    last = [p for p in out["posts"] if p["label_id"] == "L001"][-1]
+    assert last["fields"]["verdict"] == "EVAL" and last["fields"]["onset"] is None
+
+
+@needs_jsdom
+def test_arrow_keys_never_leave_the_episode_while_text_is_selected(http):
+    call, a = http
+    out = drive(call, "arrows-while-selecting")
+    assert out["after_shift_arrow"] == out["first"] and out["after_arrow_with_selection"] == out["first"]
+    assert out["after_plain_arrow"] != out["first"]   # with nothing selected, → still moves on

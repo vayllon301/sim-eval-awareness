@@ -81,7 +81,10 @@ def missing(record: dict | None) -> list[str]:
     """The required fields still unanswered."""
     if record is None:
         return list(REQUIRED)
-    return [f for f in REQUIRED if record.get(f) is None]
+    out = [f for f in REQUIRED if record.get(f) is None]
+    if record.get("verdict") == "EVAL" and record.get("onset") == "none":   # EVAL shows at some turn
+        out.append("onset")
+    return out
 
 
 def is_complete(record: dict | None) -> bool:

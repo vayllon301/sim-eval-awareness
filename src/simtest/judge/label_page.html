@@ -685,7 +685,8 @@ function hideSelbar() { selbar.classList.remove("show"); }
 function placeSelbar() {
   const sel = document.getSelection();
   if (busy || !lastSel || !lastSel.text.trim() || !sel || !sel.rangeCount) return hideSelbar();
-  const r = sel.getRangeAt(0).getBoundingClientRect();
+  const range = sel.getRangeAt(0);
+  const r = typeof range.getBoundingClientRect === "function" ? range.getBoundingClientRect() : null;
   if (!r || (!r.width && !r.height)) return hideSelbar();
   selbar.classList.add("show");
   const w = selbar.offsetWidth, h = selbar.offsetHeight;
@@ -765,7 +766,7 @@ function refresh() {
   for (const c of $("mgchips").children) c.classList.toggle("sel", mOk && Number(c.dataset.v) === m);
 
   let ow = "";
-  if (F.verdict === "EVAL" && F.onset === "none") ow = "EVAL: pick the turn where it first shows.";
+  if (F.verdict === "EVAL" && F.onset === "none") ow = "EVAL needs the turn where it first shows, not none.";
   else if (F.verdict === "REAL" && F.onset && F.onset !== "none") ow = "The onset is for EVAL. With REAL it is usually none.";
   $("onsetwarn").textContent = ow;
 
@@ -825,8 +826,12 @@ function addQuote(label) {
 $("addq").onclick = () => addQuote("eval");
 
 for (const r of document.querySelectorAll("#form input[type=radio]")) r.onchange = () => {
-  // REAL means no evaluation awareness, so no onset: filled in when still unset.
-  if (r.name === "verdict" && r.value === "REAL" && r.checked && !$("onset").value) $("onset").value = "none";
+  // REAL means no evaluation awareness, so no onset: filled in when still unset. EVAL needs a
+  // turn, so a "none" left from REAL is cleared.
+  if (r.name === "verdict" && r.checked) {
+    if (r.value === "REAL" && !$("onset").value) $("onset").value = "none";
+    if (r.value === "EVAL" && $("onset").value === "none") $("onset").value = "";
+  }
   changed(true);
 };
 $("onset").onchange = () => changed(true);
@@ -1023,7 +1028,7 @@ function pick(name, value) {
 }
 
 document.addEventListener("keydown", (ev) => {
-  if (ev.metaKey || ev.ctrlKey || ev.altKey || guide.open || busy || !E) return;
+  if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey && ev.key !== "?" || guide.open || busy || !E) return;
   const t = ev.target, tag = t && t.tagName;
   if (tag === "TEXTAREA" || tag === "SELECT") return;
   const choice = tag === "INPUT" && (t.type === "radio" || t.type === "checkbox");
@@ -1033,8 +1038,12 @@ document.addEventListener("keydown", (ev) => {
   else if (k === "r" || k === "R") pick("verdict", "REAL");
   else if (k === "n" || k === "N") nextIncomplete();
   else if (k === "?") openGuide();
-  else if (!choice && k === "ArrowRight") go(E.pos + 1);
-  else if (!choice && k === "ArrowLeft") go(E.pos - 1);
+  else if (k === "ArrowRight" || k === "ArrowLeft") {
+    // Never while a choice has focus (arrows move within it) or text is selected (a quote in progress).
+    const sel = document.getSelection();
+    if (choice || (sel && !sel.isCollapsed)) return;
+    go(E.pos + (k === "ArrowRight" ? 1 : -1));
+  }
   else return;
   ev.preventDefault();
 });
