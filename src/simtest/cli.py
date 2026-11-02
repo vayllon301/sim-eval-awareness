@@ -1,12 +1,13 @@
-"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,equiv}.
+"""Command line: simtest {scenarios,demo,run,summarize,images,snapshot,label,judge,power,post,equiv}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
 (default office); `summarize` picks it from the logs (a coding log's task name ends in
 `coding`). `scenarios` lists both. `images` and `snapshot` are coding-only. `label` builds
 the hand-label sample and serves the labelling page; `judge` runs and checks the awareness
-judge (src/simtest/judge). `equiv` checks that two vLLM backends compute the same models
-(src/simtest/equiv.py, docs/BACKENDS.md).
+judge (src/simtest/judge). `power` simulates the power of the primary test (src/simtest/stats);
+`post` runs and reports the post-episode measures (src/simtest/post). `equiv` checks that two
+vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md).
 """
 
 from __future__ import annotations
@@ -101,6 +102,9 @@ def print_summary_coding(log_dir: Path, by=None) -> list[dict]:
         raise SystemExit(str(exc)) from exc
     rows = A.summarize(episodes, by=by)
     _print(episodes, design, rows, A)
+    if post := A.format_post_table(rows):
+        print()
+        print(post)
     return rows
 
 
@@ -136,8 +140,12 @@ def main(argv: list[str] | None = None) -> None:
     ls.add_argument("--host", default="127.0.0.1")
     ls.add_argument("--port", type=int, default=8766)
     from .judge.command import add_parser as add_judge_parser
+    from .post.command import add_parser as add_post_parser
+    from .stats.power import add_parser as add_power_parser
 
     add_judge_parser(sub)
+    add_power_parser(sub)
+    add_post_parser(sub)
     from .equiv import add_parser as add_equiv_parser
 
     add_equiv_parser(sub)
@@ -218,6 +226,14 @@ def main(argv: list[str] | None = None) -> None:
         from .judge.command import main as judge_main
 
         judge_main(args)
+    elif args.cmd == "power":
+        from .stats.power import main as power_main
+
+        power_main(args)
+    elif args.cmd == "post":
+        from .post.command import main as post_main
+
+        post_main(args)
     elif args.cmd == "equiv":
         from .equiv import main as equiv_main
 
