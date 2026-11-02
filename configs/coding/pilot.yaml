@@ -67,7 +67,7 @@
 # - a condition has fewer than 15 of its 18 episodes scored after infrastructure reruns (the 5-of-6
 #   rule of the earlier sessions);
 # - the floor: at the pilot's C0 rate and the pessimistic C3, power stays below 0.8 even at 16
-#   scenarios and 30 repeats (PLAN's fallback agent comes in);
+#   scenarios and 30 repeats (then a fallback agent is considered);
 # - the fix doesn't hold: 1% or more of C3's bash steps are still a command line after 2 resamples.
 # C2 alone fails if its divergent-step rate is half of C3's or more: it isn't grounded, and it is
 # redesigned before N3 (C0 and C3 still count).
