@@ -316,7 +316,13 @@ def test_sim_only_stops_the_running_simulator_first_and_keeps_its_log(tmp_path):
     assert rec.read_text().splitlines() == [SIM_PC.format(mem="0.52", len=131072).replace(
         "/content", str(work))]                                     # the simulator only, no agent
     # only this work directory's simulator: another run's (another WORK) is left alone
-    assert (tmp_path / "pgrep.txt").read_text().splitlines()[0] == f"{work}/models/simulator --served-model-name simulator"
+    pattern = (tmp_path / "pgrep.txt").read_text().splitlines()[0]
+    ours = f"/usr/bin/python3 /usr/local/bin/vllm serve {work}/models/simulator --served-model-name simulator --host"
+    others = [f"vllm serve /mnt{work}/models/simulator --served-model-name simulator --host",       # a longer WORK
+              f"vllm serve {work}/models/simulator2 --served-model-name simulator --host",
+              f"vllm serve {work}/models/agent --served-model-name agent --host"]
+    match = lambda line: subprocess.run(["grep", "-qE", "--", pattern], input=line, text=True).returncode == 0
+    assert match(ours) and not any(match(x) for x in others), pattern
     kept = [p for p in probe.glob("simulator.*.log")]
     assert len(kept) == 1 and kept[0].read_text() == "the fp8 server's log\n"
 

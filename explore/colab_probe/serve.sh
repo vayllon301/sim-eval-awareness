@@ -211,8 +211,9 @@ echo "engine: ${ENGINE[*]:-compiled (vLLM default)}" | tee -a "$OUT/versions.txt
 # group, so its engine processes go with it) and wait until it is gone: SIGKILL after 3 minutes,
 # and give up after 4.
 stop_simulator() {
-  local pids pid i
-  pids=$(pgrep -f -- "$MODELS/simulator --served-model-name simulator" || true)   # this WORK's only
+  local pids pid i pat
+  pat=$(printf '%s' "$MODELS/simulator" | sed 's/[][\.*^$+?(){}|]/\\&/g')   # this WORK's simulator only
+  pids=$(pgrep -f -- "(^| )$pat --served-model-name simulator( |$)" || true)
   for pid in $pids; do kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true; done
   for pid in $pids; do
     i=0
