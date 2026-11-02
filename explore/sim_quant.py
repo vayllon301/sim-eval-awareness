@@ -34,16 +34,18 @@ fp8_per_channel is adopted for the pilot and N3 if all of these hold, and fp8 is
    mean |difference in log-prob| than fp8's, with the 95% paired bootstrap interval of the
    difference (per channel minus per tensor, over contexts) below zero, and its top-1 agreement
    is no lower.
-3. Complete evidence: both passes have every step without an error, the four score files cover the
-   same simulator contexts with the same token IDs, and each server's lines show its scheme on
-   every quantized layer and the Triton MoE kernel. If not, the verdict is INCOMPLETE and the pilot
-   keeps fp8.
+3. Complete evidence: both passes predicted the pinned bake-off recording and scored exactly its
+   steps, none with an error; the four score files come from the simulator server on vLLM 0.32.0,
+   are labelled with their setting, and cover the same simulator contexts with the same token IDs;
+   each server's lines show its scheme on every quantized layer and the Triton MoE kernel. If not,
+   the verdict is INCOMPLETE and the pilot keeps fp8.
 Speed never decides. If fp8_per_channel is adopted and makes fewer than 0.9 of fp8's tokens per
 second at 12 at once (or its speed is missing), Victor confirms the rescaled budget first.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import math
@@ -63,6 +65,11 @@ HERE = Path(__file__).resolve().parent
 CONFIG = "agentworld-think-vllm12"     # explore/bakeoff_simulate.py: the G4 bake-off config at 12 at once
 SETTINGS = ("fp8", "fp8_per_channel")  # serve.sh's SIM_QUANT
 AT_ONCE = 12                           # the pilot's max_connections
+VLLM_VERSION = "0.32.0"                # serve.sh's pin
+# The bake-off's recording (logs/bakeoff/, 26-10-2026: 84 steps, 81 deterministic), which every
+# forced pass so far predicted: both settings must predict exactly it.
+RECORDING = {"real.jsonl": "c5fe28a1c815d83ca5515dd2bb15c1747bbb316bc0ceaaedbe24f83f422a6f46",
+             "snapshot.txt": "2bfe511a49d10e4a1b4d52e897a94263662d1bb8a84c30fb2dfd95f53457e6b0"}
 SIM_TOLERANCE = 0.02
 MAX_TRUNCATED = 3
 SPEED_CONFIRM = 0.90
@@ -168,16 +175,34 @@ def _ours(rows: list[dict]) -> dict:
     return {(r["seq"], r["step"]): r for r in rows if r.get("config") == CONFIG and r.get("mode") == "forced"}
 
 
-def fidelity_summary(rows: list[dict], n_real: int) -> dict:
+def recording_check(d: Path, setting: str) -> list[str]:
+    """Problems if a setting's copy of the recording isn't the pinned bake-off recording."""
+    problems = []
+    for name, sha in RECORDING.items():
+        path = d / name
+        if not path.exists():
+            problems.append(f"{setting}: {name} is missing")
+        elif hashlib.sha256(path.read_bytes()).hexdigest() != sha:
+            problems.append(f"{setting}: {name} is not the bake-off's recording (sha256 {sha[:12]}...)")
+    return problems
+
+
+def step_keys(real: list[dict]) -> list[tuple]:
+    return [(r["seq"], r["step"]) for r in real]
+
+
+def fidelity_summary(rows: list[dict], real_keys: list[tuple]) -> dict:
     """From bakeoff_score.py's scores.jsonl: mean similarity and exact share on the deterministic
-    steps, and the steps that errored or hit the cap (they score 0, as the bake-off scores them)."""
-    mine = list(_ours(rows).values())
+    steps, and the steps that errored or hit the cap (they score 0, as the bake-off scores them).
+    Complete only if it scored exactly the recording's steps, none with an error."""
+    by_key = _ours(rows)
+    mine = list(by_key.values())
     det = [r for r in mine if not r.get("nondet")]
     errors = sum(bool(r.get("error")) for r in mine)
     tested = [r for r in mine if r.get("pytest") is not None]
-    return {"steps": len(mine), "real_steps": n_real, "deterministic": len(det), "errors": errors,
+    return {"steps": len(mine), "real_steps": len(real_keys), "deterministic": len(det), "errors": errors,
             "truncated": sum(r.get("finish") == "length" for r in mine),
-            "complete": n_real > 0 and len(mine) == n_real and errors == 0,
+            "complete": bool(real_keys) and set(by_key) == set(real_keys) and errors == 0,
             "mean_sim": statistics.fmean(r["sim"] for r in det) if det else None,
             "exact": statistics.fmean(bool(r["exact"]) for r in det) if det else None,
             "pytest_right": f"{sum(bool(r['pytest']) for r in tested)}/{len(tested)}",
@@ -257,8 +282,16 @@ def noise(out: Path) -> dict:
             problems.append("the files were scored on different contexts files" if key == "contexts_sha256"
                             else f"the files were scored with different {key}")
     for (s, c), (h, _) in files.items():
+        name, srv = paths[(s, c)].name, (h.get("servers") or {}).get("simulator") or {}
         if h.get("concurrency") != c:
-            problems.append(f"{paths[(s, c)].name}: scored at concurrency {h.get('concurrency')}, not {c}")
+            problems.append(f"{name}: scored at concurrency {h.get('concurrency')}, not {c}")
+        if srv.get("served_model") != "simulator" or "simulator" not in (srv.get("models") or []):
+            problems.append(f"{name}: the server scored as the simulator served {srv.get('models')}")
+        if srv.get("version") != VLLM_VERSION:
+            problems.append(f"{name}: scored on vLLM {srv.get('version')}, not {VLLM_VERSION}")
+        label = h.get("label") or ""
+        if label != s and not label.endswith(f", {s}"):
+            problems.append(f"{name}: its label {label!r} doesn't end with the setting ({s})")
     sim = {k: [r for r in rows if r.get("model") == "simulator"] for k, (_, rows) in files.items()}
     if len({frozenset(r["id"] for r in rows) for rows in sim.values()}) > 1:
         problems.append("the files score different simulator contexts")
@@ -328,8 +361,10 @@ def _lines(path: Path) -> list[dict]:
 def main_fidelity(args) -> int:
     d = Path(args.out) / args.setting
     d.mkdir(parents=True, exist_ok=True)
-    for name in ("real.jsonl", "snapshot.txt"):
+    for name, sha in RECORDING.items():
         src, dst = Path(args.bakeoff) / name, d / name
+        if hashlib.sha256(src.read_bytes()).hexdigest() != sha:
+            raise SystemExit(f"{src} is not the bake-off's recording (sha256 {sha[:12]}...)")
         if dst.exists() and dst.read_bytes() != src.read_bytes():
             raise SystemExit(f"{dst} differs from {src}: the passes must predict the same recording")
         if not dst.exists():
@@ -349,7 +384,7 @@ def main_fidelity(args) -> int:
     if score.returncode:
         print(score.stderr, file=sys.stderr)
         return score.returncode
-    f = fidelity_summary(_lines(d / "scores.jsonl"), len(_lines(d / "real.jsonl")))
+    f = fidelity_summary(_lines(d / "scores.jsonl"), step_keys(_lines(d / "real.jsonl")))
     s = speed(_lines(d / "speed.jsonl"), interval=args.interval)
     print(f"{args.setting}: {f['steps']} of {f['real_steps']} steps, {f['errors']} errors, {f['truncated']} at the cap; "
           f"mean similarity {_f(f['mean_sim'])} on {f['deterministic']} deterministic steps; "
@@ -366,10 +401,10 @@ def _f(x, nd=4) -> str:
 def main_decide(args) -> int:
     out = Path(args.out)
     rows = {s: _lines(out / s / "scores.jsonl") for s in SETTINGS}
-    fid = {s: fidelity_summary(rows[s], len(_lines(out / s / "real.jsonl"))) for s in SETTINGS}
+    fid = {s: fidelity_summary(rows[s], step_keys(_lines(out / s / "real.jsonl"))) for s in SETTINGS}
     spd = {s: speed(_lines(out / s / "speed.jsonl"), interval=args.interval) for s in SETTINGS}
     texts = {s: (out / s / "server.txt").read_text() if (out / s / "server.txt").exists() else "" for s in SETTINGS}
-    server_problems = [p for s in SETTINGS for p in server_check(texts[s], s)]
+    server_problems = [p for s in SETTINGS for p in recording_check(out / s, s) + server_check(texts[s], s)]
     counts = {s: layer_count(texts[s]) for s in SETTINGS}
     if None not in counts.values() and len(set(counts.values())) > 1:
         server_problems.append(f"the settings quantized different numbers of layers: {counts}")

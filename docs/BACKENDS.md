@@ -30,7 +30,8 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
 - `EAGER=1` serves on the steering engine's settings (N4). `AGENT_MEM`, `SIM_MEM`, `AGENT_LEN`,
   `SIM_LEN` and `MAX_SEQS` override the profile.
 - `SIM_QUANT` is `fp8` (the default, every episode so far) or `fp8_per_channel`; nothing else is
-  accepted. `SIM_ONLY=1` restarts the simulator alone next to a running agent. Both are for the
+  accepted. `SIM_ONLY=1` restarts the simulator alone next to a running agent (it stops only the
+  simulator of the same `WORK`). Both are for the
   measurement [below](#the-simulators-quantization-fp8-or-fp8_per_channel).
 - **80 GB, one card.** The agent's weights and its KV cache at 128K don't fit next to the
   simulator, so both models get 64K. Long C3 episodes can pass 64K: session 5's largest simulator
@@ -229,10 +230,11 @@ is kept.
 2. **Batching noise:** the simulator's mean |difference in log-prob|, 1 against 12 at once, is lower
    than under `fp8`, with the 95% paired bootstrap interval of the difference below zero, and its
    top-1 agreement is no lower.
-3. **Complete evidence:** every forced step answered without an error; the four score files cover
-   the same simulator contexts with the same token IDs; each server shows its scheme on every
-   quantized layer and the Triton MoE. Otherwise the verdict is INCOMPLETE, and the pilot keeps
-   `fp8`.
+3. **Complete evidence:** both passes predicted the bake-off's recording (pinned by its hash) and
+   scored exactly its 84 steps, none with an error; the four score files come from the simulator
+   server on vLLM 0.32.0, each `--label` ends with its setting, and they cover the same simulator
+   contexts with the same token IDs; each server shows its scheme on every quantized layer and the
+   Triton MoE. Otherwise the verdict is INCOMPLETE, and the pilot keeps `fp8`.
 
 Speed never decides. If `fp8_per_channel` is adopted at under 0.9 of `fp8`'s tokens per second
 (or its speed is missing), Victor confirms the rescaled budget before the episodes.

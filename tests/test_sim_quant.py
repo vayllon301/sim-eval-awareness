@@ -93,18 +93,24 @@ def _scores(n=10, sim=0.9, nondet=(), truncated=(), errors=(), exact=None):
     return rows
 
 
+def _keys(n):
+    return [("s", i) for i in range(n)]
+
+
 def test_fidelity_summary_scores_deterministic_steps_and_counts_failures():
-    f = S.fidelity_summary(_scores(10, sim=lambda i: i / 10, nondet={9}, truncated={0}), n_real=10)
+    f = S.fidelity_summary(_scores(10, sim=lambda i: i / 10, nondet={9}, truncated={0}), _keys(10))
     assert f["complete"] and f["steps"] == 10 and f["deterministic"] == 9
     assert f["mean_sim"] == pytest.approx(sum(i / 10 for i in range(1, 9)) / 9)
     assert f["truncated"] == 1 and f["errors"] == 0
 
 
 def test_fidelity_summary_is_incomplete_with_missing_or_errored_steps():
-    assert not S.fidelity_summary(_scores(9), n_real=10)["complete"]
-    assert not S.fidelity_summary(_scores(10, errors={3}), n_real=10)["complete"]
+    assert not S.fidelity_summary(_scores(9), _keys(10))["complete"]
+    assert not S.fidelity_summary(_scores(10, errors={3}), _keys(10))["complete"]
+    assert not S.fidelity_summary(_scores(10), [("other", i) for i in range(10)])["complete"]   # not the same steps
+    assert not S.fidelity_summary(_scores(12), _keys(10))["complete"]                          # steps it never had
     other = [dict(r, config="agentworld-think-vllm") for r in _scores(10)]   # another config's rows
-    assert S.fidelity_summary(other, n_real=10)["steps"] == 0
+    assert S.fidelity_summary(other, _keys(10))["steps"] == 0
 
 
 def test_paired_difference_over_common_deterministic_steps():
@@ -166,14 +172,18 @@ def _row(cid, model, n=50, drift=0.0, seed=0, sha="t", start=40):
             "seconds": 0.1, "logprob": lp, "top1": top1}
 
 
-def _write_equiv(out: Path, setting: str, drift: float, contexts=6, agent=True, contexts_sha="sha", conc12=12, **kw):
+def _write_equiv(out: Path, setting: str, drift: float, contexts=6, agent=True, contexts_sha="sha", conc12=12,
+                 served="simulator", version="0.32.0", label=None, **kw):
     for conc, d in ((1, 0.0), (conc12, drift)):
         rows = [_row(f"s{i}", "simulator", drift=d, seed=i, **kw) for i in range(contexts)]
         if agent:
             rows += [_row(f"a{i}", "agent", drift=d / 10, seed=i) for i in range(2)]
         name = f"{setting}-c{12 if conc == conc12 else 1}.jsonl"
-        Q.write_scores(out / "equiv" / name, {"label": setting, "contexts_sha256": contexts_sha, "concurrency": conc,
-                                              "top_k": 1, "max_tokens": None, "servers": {}}, rows, force=True)
+        servers = {"simulator": {"url": "http://localhost:18001/v1", "served_model": served, "models": [served],
+                                 "max_model_len": 131072, "version": version}}
+        Q.write_scores(out / "equiv" / name, {"label": label or f"G4, session 6, {setting}", "contexts_sha256": contexts_sha,
+                                              "concurrency": conc, "top_k": 1, "max_tokens": None, "servers": servers},
+                       rows, force=True)
 
 
 def test_noise_floors_compare_the_simulator_of_both_settings(tmp_path):
@@ -197,6 +207,18 @@ def test_noise_floors_refuse_incomplete_or_mismatched_files(tmp_path, break_it, 
     _write_equiv(tmp_path, "fp8", drift=0.05)
     _write_equiv(tmp_path, "fp8_per_channel", drift=0.01)
     break_it(tmp_path)
+    problems = S.noise(tmp_path)["problems"]
+    assert problems and any(why in p for p in problems), problems
+
+
+@pytest.mark.parametrize("kw,why", [
+    (dict(served="agent"), "served"),               # scored the agent's server as the simulator
+    (dict(version="0.31.0"), "0.32.0"),            # another vLLM
+    (dict(label="G4, session 6, fp8"), "label"),   # labelled as the other setting
+])
+def test_noise_floors_refuse_files_from_the_wrong_server_or_setting(tmp_path, kw, why):
+    _write_equiv(tmp_path, "fp8", drift=0.05)
+    _write_equiv(tmp_path, "fp8_per_channel", drift=0.01, **kw)
     problems = S.noise(tmp_path)["problems"]
     assert problems and any(why in p for p in problems), problems
 
@@ -332,8 +354,20 @@ class _Fake(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def test_fidelity_pass_end_to_end_against_a_fake_server(tmp_path):
+def _pin(monkeypatch, d: Path):
+    import hashlib
+    monkeypatch.setattr(S, "RECORDING", {n: hashlib.sha256((d / n).read_bytes()).hexdigest()
+                                         for n in ("real.jsonl", "snapshot.txt")})
+
+
+def test_the_pinned_recording_is_the_bakeoffs():
+    assert set(S.RECORDING) == {"real.jsonl", "snapshot.txt"}
+    assert S.RECORDING["real.jsonl"].startswith("c5fe28a1")    # logs/bakeoff/real.jsonl, 84 steps (26-10-2026)
+
+
+def test_fidelity_pass_end_to_end_against_a_fake_server(tmp_path, monkeypatch):
     real = _bakeoff_dir(tmp_path / "bakeoff")
+    _pin(monkeypatch, tmp_path / "bakeoff")
     _Fake.real = {r["command"]: r["output"] for r in real}
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Fake)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -363,18 +397,45 @@ def test_fidelity_pass_end_to_end_against_a_fake_server(tmp_path):
         server.shutdown()
 
 
-def test_decide_end_to_end_writes_the_decision(tmp_path):
-    out = tmp_path / "simquant"
+def _decide_dirs(out: Path, monkeypatch, steps=10):
+    recording = out.parent / "recording"
+    _bakeoff_dir(recording, steps=steps)
+    _pin(monkeypatch, recording)
     for setting, sim, text in (("fp8", 0.91, PT), ("fp8_per_channel", 0.905, PC)):
         d = out / setting
         d.mkdir(parents=True)
-        _bakeoff_dir(d / "_b", steps=10)
-        (d / "real.jsonl").write_bytes((d / "_b" / "real.jsonl").read_bytes())
-        (d / "scores.jsonl").write_text("".join(json.dumps(r) + "\n" for r in _scores(10, sim=sim)))
+        for n in ("real.jsonl", "snapshot.txt"):
+            (d / n).write_bytes((recording / n).read_bytes())
+        rows = [dict(r, seq="s1") for r in _scores(steps, sim=sim)]
+        (d / "scores.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
         (d / "speed.jsonl").write_text("".join(json.dumps(_sample(5 * i, 2000 * i)) + "\n" for i in range(5)))
         (d / "server.txt").write_text(text)
     _write_equiv(out, "fp8", drift=0.05)
     _write_equiv(out, "fp8_per_channel", drift=0.01, agent=False)
+
+
+def test_decide_is_incomplete_unless_both_passes_predicted_the_pinned_recording(tmp_path, monkeypatch):
+    out = tmp_path / "simquant"
+    _decide_dirs(out, monkeypatch)
+    (out / "fp8_per_channel" / "snapshot.txt").write_text("another machine\n")
+    assert S.main(["decide", "--out", str(out)]) == 0
+    r = json.loads((out / "decision.json").read_text())["rule"]
+    assert r["verdict"] == "INCOMPLETE"
+    assert any("snapshot.txt" in p for p in r["problems"])
+
+
+def test_decide_is_incomplete_when_a_pass_scored_other_steps(tmp_path, monkeypatch):
+    out = tmp_path / "simquant"
+    _decide_dirs(out, monkeypatch)
+    rows = [dict(r, seq="unrelated") for r in _scores(10, sim=0.95)]
+    (out / "fp8_per_channel" / "scores.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert S.main(["decide", "--out", str(out)]) == 0
+    assert json.loads((out / "decision.json").read_text())["rule"]["verdict"] == "INCOMPLETE"
+
+
+def test_decide_end_to_end_writes_the_decision(tmp_path, monkeypatch):
+    out = tmp_path / "simquant"
+    _decide_dirs(out, monkeypatch)
     assert S.main(["decide", "--out", str(out)]) == 0
     d = json.loads((out / "decision.json").read_text())
     assert d["rule"]["verdict"] == "ADOPT"
