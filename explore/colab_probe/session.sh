@@ -35,7 +35,7 @@
 # the cap still leaves room for the longest one (a G4 bills 10.05 units an hour).
 #
 # Settings (environment): SESSION (probe), GPU (G4), MIX (c3 or default: required, the memory split
-# is part of the run's record), EAGER, STEPS, EPOCHS, ADMIT_FOR, CARRY_UNDER, IDLE_MIN (20), MAX_MIN,
+# is part of the run's record), EAGER, AGENT_MEM and SIM_MEM (to serve.sh; for STEPS=equiv), STEPS, EPOCHS, ADMIT_FOR, CARRY_UNDER, IDLE_MIN (20), MAX_MIN,
 # ENV_FILE (../.env), EQUIV_CONTEXTS (logs/equiv/contexts.jsonl), EQUIV_CONCURRENCY ("1 12"),
 # EQUIV_LABEL, READINGS_STEPS, READINGS_BUDGET_MIN, OUTDIR (logs/sessions/<name>-<UTC time>), KEEP,
 # DRY_RUN. Deadlines in minutes: NEW_MIN (20), SERVE_MIN (45), READY_MIN (5), READINGS_MIN (100).
@@ -213,6 +213,10 @@ if (( need_servers )); then
   serve_env=""
   [[ $MIX != c3 ]] || serve_env+="MIX=c3 "
   [[ ${EAGER:-} != 1 ]] || serve_env+="EAGER=1 "
+  # Only for an equiv-only session that ran out of memory (docs/BACKENDS.md, "Practicalities"):
+  # other fractions are another KV cache, so a run on them is a different record.
+  [[ -z ${AGENT_MEM:-} ]] || serve_env+="AGENT_MEM=${(q)AGENT_MEM} "
+  [[ -z ${SIM_MEM:-} ]] || serve_env+="SIM_MEM=${(q)SIM_MEM} "
   served=1
   vm -i explore/colab_probe/serve.sh -o $OUTDIR/serve.log -t $(( ${SERVE_MIN:-45} * 60 )) \
     ": sim-session-step serve; ${serve_env}bash -s" || fail "serve.sh failed (see $OUTDIR/serve.log)"

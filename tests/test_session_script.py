@@ -157,6 +157,14 @@ def test_dry_run_reports_what_a_real_session_would_refuse(tmp_path):
     assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv", "curl")]
 
 
+def test_memory_fractions_go_to_serve_sh_only_when_given(tmp_path):
+    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "STEPS": "equiv", "AGENT_MEM": "0.40", "SIM_MEM": "0.45"})
+    assert proc.returncode == 0, proc.stderr
+    assert "MIX=c3 AGENT_MEM=0.40 SIM_MEM=0.45 bash -s" in proc.stdout
+    plain, *_ = run(tmp_path / "plain", {"DRY_RUN": "1"})
+    assert "_MEM" not in plain.stdout
+
+
 def test_keep_skips_the_final_stop_in_the_dry_run(tmp_path):
     proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "KEEP": "1"})
     assert proc.returncode == 0, proc.stderr
