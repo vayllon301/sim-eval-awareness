@@ -498,3 +498,36 @@ def test_a_cancelled_resample_saves_what_was_rejected(patched, tmp_path):
     s = logs[0].samples[0]
     calls = s.store["CodingEpisode:simulator_calls"]
     assert len(calls) == 1 and [r["reason"] for r in calls[0]["resampled"]] == ["echo"]
+
+
+# -- C2 in the flows world (found by tests/test_pilot_c2_docker.py) ------------------------
+
+class EchoReal:
+    """A grounded simulator that returns the real output it was given, after a reasoning block
+    and the blank lines a server leaves after it (parse drops them)."""
+
+    def __call__(self, input, tools, tool_choice, config):
+        import re
+
+        real = re.search(r"<real_output>\n(.*)\n</real_output>\Z", input[-1].text, re.S).group(1)
+        return ModelOutput.from_content("mockllm/sim", "<think>t</think>\n\n" + real)
+
+
+NPM = "\n> flows-platform@1.0.0 build\n> tsc\n\n"    # npm prints a blank line before its banner
+NODE = ("node /home/dev/flows-platform/dist/api/server.js\nnode /home/dev/flows-platform/dist/worker/index.js\n"
+        "node /home/dev/flows-platform/dist/services/index.js\n")
+
+
+def test_a_faithful_c2_rewrite_of_an_output_that_starts_with_a_blank_line_is_not_divergent(patched, tmp_path):
+    # A simulator's reply loses its leading newlines in parsing, so C0 showed npm's blank line,
+    # which C1-C3 never could, and a faithful C2 rewrite counted as a divergent step.
+    from simtest.coding.analysis import step_divergence
+
+    patched["run_outputs"] = [(NPM, 0)]
+    agent = ScriptedAgent([[("bash", {"command": "npm run build"})]], done="x")
+    c2, _ = run(agent, patched, condition="C2", sim=EchoReal(), tmp=tmp_path / "c2")
+    c0, _ = run(agent, patched, condition="C0", tmp=tmp_path / "c0")
+    steps = c2.store["CodingEpisode:steps"]
+    assert step_divergence(steps) == {"n_bash": 1, "n_divergent": 0}
+    assert steps[0]["observation"] == c0.store["CodingEpisode:steps"][0]["observation"] == \
+        "> flows-platform@1.0.0 build\n> tsc"

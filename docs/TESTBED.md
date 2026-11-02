@@ -1268,7 +1268,8 @@ get the same inputs except the real output. C3 uses the bake-off's frozen **comm
 one place (`prompts.py`); nothing is frozen yet (before the pilot). A simulator never sees
 the system prompt, the rules, the agent's reasoning or messages, or the hypothesis — only
 commands, outputs and the snapshot (tested). The same output cap and whitespace policy apply
-in every condition. Per step we record the command, the real output and exit code, the
+in every condition: no leading blank lines (a simulator's reply loses its leading newlines in
+parsing, so a real output keeps none either; npm prints one first) and no trailing whitespace. Per step we record the command, the real output and exit code, the
 observation the agent saw, and (C1–C3) the simulator's raw output, reasoning, timing, finish
 reason and token usage.
 

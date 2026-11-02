@@ -127,9 +127,11 @@ class ExecResult:
 
 
 def finalize(text: str) -> str:
-    """The same whitespace and character policy for every condition: no trailing whitespace,
-    and NUL bytes (which some providers reject) shown as U+FFFD."""
-    return text.replace("\x00", "�").rstrip()
+    """The same whitespace and character policy for every condition: no leading blank lines and
+    no trailing whitespace, and NUL bytes (which some providers reject) shown as U+FFFD. A
+    simulator's reply loses its leading newlines in parsing (observers.parse), so a real output
+    keeps none either (npm prints a blank line first)."""
+    return text.replace("\x00", "�").lstrip("\n").rstrip()
 
 
 def cap(text: str) -> str:
