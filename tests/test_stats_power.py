@@ -7,7 +7,8 @@ import math
 
 import pytest
 
-from simtest.stats.power import format_grid, planned_repeats, power_grid, simulate_power
+from simtest.stats.power import (cheapest_designs, format_grid, format_ranking, planned_repeats, power_grid,
+                                 simulate_power)
 
 
 def se(p, n):
@@ -106,3 +107,100 @@ def test_planned_repeats_cover_the_exclusion_rate():
         planned_repeats(10, 1.0)
     with pytest.raises(ValueError):
         planned_repeats(10, -0.1)
+
+
+COST = {"C0": 0.4, "C1": 4, "C2": 4, "C3": 4}          # 12.4 units per scenario and repeat
+
+
+def _row(S, n, power, lo, hi, c0=0.1, c3=0.35):
+    return {"scenarios": S, "repeats": n, "c0": c0, "c3": c3, "spread": 0.5, "effect_spread": 0.5, "alpha": 0.05,
+            "alternative": "two-sided", "reps": 4000, "seed": 1, "power": power, "ci": [lo, hi]}
+
+
+def _cells(res):
+    return [(d["scenarios"], d["repeats"]) for d in res["designs"]]
+
+
+def test_cheapest_reaches_the_target_on_the_lower_end_of_the_interval():
+    rows = [_row(8, 10, 0.82, 0.79, 0.85),           # the estimate passes, the interval doesn't
+            _row(8, 20, 0.86, 0.80, 0.91),           # lower end exactly at the target: reaches it
+            _row(12, 20, 0.95, 0.94, 0.96)]
+    res = cheapest_designs(rows, COST, target=0.8)
+    assert _cells(res) == [(8, 20), (12, 20)]
+    c = res["cheapest"]
+    assert (c["scenarios"], c["repeats"], c["planned_repeats"]) == (8, 20, 20)
+    assert c["episodes"] == 8 * 20 * 4 and c["units"] == pytest.approx(8 * 20 * 12.4)
+    assert c["power"] == 0.86 and c["ci"] == [0.80, 0.91]
+    assert res["units_per_set"] == pytest.approx(12.4) and res["conditions"] == ["C0", "C1", "C2", "C3"]
+
+
+def test_cheapest_ties_in_cost_go_to_more_scenarios():
+    ok = (0.9, 0.85, 0.95)
+    rows = [_row(8, 30, *ok), _row(16, 15, *ok), _row(20, 30, *ok), _row(12, 20, *ok)]   # 240, 240, 600, 240
+    assert _cells(cheapest_designs(rows, COST)) == [(16, 15), (12, 20), (8, 30), (20, 30)]
+
+
+def test_cheapest_costs_the_planned_episodes():
+    ok = (0.9, 0.85, 0.95)
+    rows = [_row(10, 8, *ok), _row(8, 10, *ok)]
+    assert _cells(cheapest_designs(rows, COST)) == [(10, 8), (8, 10)]       # 80 = 80: more scenarios first
+    res = cheapest_designs(rows, COST, exclusion=0.1)
+    assert _cells(res) == [(8, 10), (10, 8)]           # planned 8 x 11 = 88 < 10 x 9 = 90
+    c = res["cheapest"]
+    assert c["planned_repeats"] == 11 and c["episodes"] == 8 * 11 * 4
+    assert c["units"] == pytest.approx(8 * 11 * 12.4) and c["power"] == 0.9     # power at the scored n
+    # only the run's conditions are paid for
+    res = cheapest_designs(rows, COST, conditions=["C3", "C0"])
+    assert res["conditions"] == ["C0", "C3"] and res["cheapest"]["units"] == pytest.approx(80 * 4.4)
+    assert res["cheapest"]["episodes"] == 80 * 2
+
+
+def test_cheapest_never_reports_fewer_scenarios_than_the_floor():
+    rows = [_row(6, 10, 0.99, 0.98, 1.0), _row(8, 10, 0.5, 0.48, 0.52), _row(8, 30, 0.9, 0.85, 0.95)]
+    res = cheapest_designs(rows, COST, min_scenarios=8)
+    assert _cells(res) == [(8, 30)]
+    res = cheapest_designs(rows[:2], COST, min_scenarios=8)
+    assert res["designs"] == [] and res["cheapest"] is None
+    assert (res["best"]["scenarios"], res["best"]["power"]) == (8, 0.5)       # not the 6-scenario cell
+    assert _cells(cheapest_designs(rows, COST, min_scenarios=6))[0] == (6, 10)
+
+
+def test_cheapest_when_none_reaches_the_target():
+    rows = [_row(8, 10, 0.5, 0.48, 0.52), _row(16, 30, 0.71, 0.70, 0.72), _row(12, 30, 0.71, 0.70, 0.72)]
+    res = cheapest_designs(rows, COST, target=0.8)
+    assert res["designs"] == [] and res["cheapest"] is None
+    assert (res["best"]["scenarios"], res["best"]["repeats"]) == (12, 30)   # equal power: the cheaper one
+    text = format_ranking(res)
+    assert "No design in the grid reaches power 0.8 with at least 8 scenarios" in text
+    assert "Best power found: S=12, n=30 (30 planned): 0.710 [0.700, 0.720]" in text
+    # no cell with enough scenarios at all
+    text = format_ranking(cheapest_designs([_row(6, 10, 0.99, 0.98, 1.0)], COST))
+    assert "No design in the grid has at least 8 scenarios" in text
+
+
+def test_cheapest_within_a_budget():
+    rows = [_row(8, 10, 0.6, 0.58, 0.62), _row(8, 20, 0.9, 0.85, 0.95), _row(12, 20, 0.95, 0.94, 0.96)]
+    assert _cells(cheapest_designs(rows, COST, budget=2000)) == [(8, 20)]          # 1,984 and 2,976 units
+    res = cheapest_designs(rows, COST, budget=1000)
+    assert res["designs"] == [] and res["best"]["repeats"] == 10        # the best power within the budget
+    assert (res["cheapest_over_budget"]["scenarios"], res["cheapest_over_budget"]["repeats"]) == (8, 20)
+    text = format_ranking(res)
+    assert "No design within 1,000 units reaches power 0.8 with at least 8 scenarios" in text
+    assert "The cheapest that does costs 1,984 units: S=8, n=20" in text
+
+
+def test_cheapest_bad_inputs():
+    rows = [_row(8, 10, 0.9, 0.85, 0.95)]
+    for kw in ({"conditions": ["C1", "C3"]},                     # the test needs C0 and C3
+               {"conditions": ["C0", "C3", "C4"]},
+               {"target": 1.0}, {"target": 0.0}, {"min_scenarios": 0}, {"exclusion": 1.0}, {"budget": 0}):
+        with pytest.raises(ValueError):
+            cheapest_designs(rows, COST, **kw)
+    with pytest.raises(ValueError):
+        cheapest_designs(rows, {"C0": 0.4, "C3": -1})
+    with pytest.raises(ValueError):
+        cheapest_designs(rows, {"C0": 0.4, "C2": 4})                      # no cost for C3
+    with pytest.raises(ValueError):
+        cheapest_designs(rows, {"C0": 0.0, "C3": 0.0})                    # nothing costs anything
+    with pytest.raises(ValueError):
+        cheapest_designs(rows + [_row(8, 10, 0.9, 0.85, 0.95, c3=0.5)], COST)    # one (c0, c3) pair at a time

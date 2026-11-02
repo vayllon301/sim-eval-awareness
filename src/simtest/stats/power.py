@@ -24,12 +24,16 @@ below the design's; the simulation assumes none.
 from __future__ import annotations
 
 import json
+import math
 
 from ..analysis import wilson
+from ..observers import CONDITIONS
 from .signflip import ALTERNATIVES, integer_p, min_p
 
 DEFAULT_SCENARIOS = (8, 10, 12, 14, 16)
 DEFAULT_REPEATS = (5, 10, 15, 20, 25, 30)
+DEFAULT_TARGET = 0.8
+DEFAULT_MIN_SCENARIOS = 8
 
 
 def _expit(x):
@@ -160,6 +164,152 @@ def format_grid(rows: list[dict], label: str | None = None) -> str:
         out.append(f"mean true rates across scenarios: C0 {rr['mean_rate_c0']:.3f}, C3 {rr['mean_rate_c3']:.3f}")
         out.append("")
     return "\n".join(out).rstrip()
+
+
+def cheapest_designs(rows: list[dict], cost: dict, conditions=None, target: float = DEFAULT_TARGET,
+                     min_scenarios: int = DEFAULT_MIN_SCENARIOS, exclusion: float = 0.0,
+                     budget: float | None = None) -> dict:
+    """The grid's designs that reach the target power, cheapest first.
+
+    `rows` are one (c0, c3) pair's cells from `power_grid`. `cost` gives the units one episode
+    costs in each condition, and `conditions` the run's conditions (default: the keys of `cost`).
+    They must include C0 and C3, the two the test compares. Every design runs every condition
+    with the same n, so a design of S scenarios and n scored repeats costs
+        S x planned_repeats(n, exclusion) x (the sum of the run's conditions' costs)
+    units, excluded episodes included.
+
+    - A design reaches the target when the lower end of its 95% Monte Carlo interval is at
+      least `target` (ci[0] >= target), not its point estimate: the cheapest cell by estimate
+      would often be the one Monte Carlo noise pushed up.
+    - Designs with fewer than `min_scenarios` scenarios are never reported, nor are designs
+      above `budget` units when a budget is given.
+    - Cheapest first; ties in cost go to more scenarios (the scenario is the unit of the test).
+
+    Returns the inputs, `cells` (the grid cells with enough scenarios), `designs` (the ranking),
+    `cheapest` (its first design or None), `best` (the highest power among the designs
+    considered, reached or not) and, when a budget leaves nothing, `cheapest_over_budget`. The
+    power is the simulated one at the scored n; nothing here changes the test.
+    """
+    from fractions import Fraction
+
+    if not rows:
+        raise ValueError("no design cells to rank")
+    pairs = {(r["c0"], r["c3"], r["spread"], r["effect_spread"], r["alpha"], r["alternative"]) for r in rows}
+    if len(pairs) > 1:
+        raise ValueError("rank one (c0, c3) pair at a time")
+    if not 0.0 < target < 1.0:
+        raise ValueError(f"target must be a power between 0 and 1, got {target}")
+    if min_scenarios < 1:
+        raise ValueError("min_scenarios must be at least 1")
+    if budget is not None and not budget > 0:
+        raise ValueError(f"budget must be positive, got {budget}")
+    conds = list(cost) if conditions is None else list(conditions)
+    bad = [c for c in conds if c not in CONDITIONS]
+    if bad:
+        raise ValueError(f"unknown conditions {bad} (known: {list(CONDITIONS)})")
+    if "C0" not in conds or "C3" not in conds:
+        raise ValueError("the run must include C0 and C3: the test compares them")
+    missing = [c for c in conds if c not in cost]
+    if missing:
+        raise ValueError(f"no cost given for {missing}")
+    for c in conds:
+        if not math.isfinite(float(cost[c])) or cost[c] < 0:
+            raise ValueError(f"the cost of {c} must be a finite number of units, at least 0; got {cost[c]}")
+    conds = [c for c in CONDITIONS if c in conds]
+    per_set = sum(Fraction(str(cost[c])) for c in conds)
+    if per_set == 0:
+        raise ValueError("every condition costs 0 units: there is nothing to minimise")
+    planned = {n: planned_repeats(n, exclusion) for n in {r["repeats"] for r in rows}}
+    seen, considered, over = set(), [], []
+    for r in rows:
+        S, n = r["scenarios"], r["repeats"]
+        if S < min_scenarios or (S, n) in seen:
+            continue
+        seen.add((S, n))
+        units = S * planned[n] * per_set
+        d = {"scenarios": S, "repeats": n, "planned_repeats": planned[n],
+             "episodes": S * planned[n] * len(conds), "units": units, "power": r["power"], "ci": list(r["ci"])}
+        (considered if budget is None or units <= Fraction(str(budget)) else over).append(d)
+
+    def by_cost(d):
+        return (d["units"], -d["scenarios"], d["repeats"])
+
+    def reached(ds):
+        return sorted((d for d in ds if d["ci"][0] >= target), key=by_cost)
+
+    designs = reached(considered)
+    best = min(considered, key=lambda d: (-d["power"], *by_cost(d)), default=None)
+    over_budget = (reached(over) or [None])[0] if budget is not None and not designs else None
+
+    def out(d):
+        return None if d is None else {**d, "units": float(d["units"])}
+
+    r0 = rows[0]
+    return {"c0": r0["c0"], "c3": r0["c3"], "spread": r0["spread"], "effect_spread": r0["effect_spread"],
+            "alpha": r0["alpha"], "alternative": r0["alternative"], "reps": r0["reps"], "seed": r0["seed"],
+            "target": target, "rule": "ci[0] >= target", "conditions": conds,
+            "cost": {c: cost[c] for c in conds}, "units_per_set": float(per_set),
+            "min_scenarios": min_scenarios, "exclusion": exclusion, "budget": budget, "cells": len(seen),
+            "designs": [out(d) for d in designs], "cheapest": out(designs[0]) if designs else None,
+            "best": out(best), "cheapest_over_budget": out(over_budget)}
+
+
+def _units(x: float) -> str:
+    return f"{x:,.2f}".rstrip("0").rstrip(".")
+
+
+def _design(d: dict) -> str:
+    return f"S={d['scenarios']}, n={d['repeats']} ({d['planned_repeats']} planned)"
+
+
+def _power(d: dict) -> str:
+    return f"{d['power']:.3f} [{d['ci'][0]:.3f}, {d['ci'][1]:.3f}]"
+
+
+def format_ranking(res: dict) -> str:
+    """The ranking of `cheapest_designs` as text: its rules, the designs that reach the target
+    cheapest first, then one line naming the cheapest (or saying that none reaches it)."""
+    t, ex, conds = res["target"], res["exclusion"], res["conditions"]
+    costs = " + ".join(_units(float(res["cost"][c])) for c in conds)
+    budget = f"; within {_units(res['budget'])} units" if res["budget"] is not None else ""
+    out = [f"Cheapest designs that reach power {t:g}: C0 {res['c0']:g}, C3 {res['c3']:g}, logit spread "
+           f"{res['spread']:g} shared + {res['effect_spread']:g} in the effect",
+           f"- a design reaches it when the lower end of its 95% Monte Carlo interval is at least {t:g}, not the "
+           f"point estimate (the cheapest cell by estimate would often be Monte Carlo noise)",
+           f"- conditions {', '.join(conds)} at {costs} = {_units(res['units_per_set'])} units per scenario and "
+           f"repeat; at least {res['min_scenarios']} scenarios{budget}; ties in cost go to more scenarios"]
+    if ex:
+        out.append(f"- n is scored; planned n covers {ex * 100:g}% exclusions: the smallest planned n with "
+                   f"round(planned n x {1 - ex:g}) >= n, a half rounding down")
+    else:
+        out.append("- no exclusion rate given: planned n = n")
+    if res["designs"]:
+        out.append("S | n | planned n | episodes | units | power [95% MC interval]")
+        for d in res["designs"]:
+            out.append(f"{d['scenarios']} | {d['repeats']} | {d['planned_repeats']} | {d['episodes']:,} | "
+                       f"{_units(d['units'])} | {_power(d)}")
+        c = res["cheapest"]
+        out.append(f"Cheapest: {_design(c)} per scenario and condition, {c['episodes']:,} episodes, "
+                   f"{_units(c['units'])} units, power {_power(c)}. Its power comes from the runs that picked "
+                   f"it; to confirm it, rerun that cell alone with another --seed.")
+        return "\n".join(out)
+    if not res["cells"]:
+        out.append(f"No design in the grid has at least {res['min_scenarios']} scenarios (--min-scenarios).")
+        return "\n".join(out)
+    where = f"within {_units(res['budget'])} units" if res["budget"] is not None else "in the grid"
+    out.append(f"No design {where} reaches power {t:g} with at least {res['min_scenarios']} scenarios, on the "
+               f"lower end of its 95% Monte Carlo interval.")
+    if res["best"] is not None:
+        b = res["best"]
+        out.append(f"Best power found: {_design(b)}: {_power(b)}, {b['episodes']:,} episodes, "
+                   f"{_units(b['units'])} units.")
+    o = res["cheapest_over_budget"]
+    if o is not None:
+        out.append(f"The cheapest that does costs {_units(o['units'])} units: {_design(o)}, "
+                   f"{o['episodes']:,} episodes, power {_power(o)}.")
+    else:
+        out.append("Widen --scenarios or --repeats.")
+    return "\n".join(out)
 
 
 def add_parser(sub) -> None:
