@@ -18,7 +18,8 @@ with output, by priority test > git > other > read > listing > process > write.
                        command (ps, date); in a git command, commit ids that are new (not in the
                        simulator's prompt or the commands), and a known commit abbreviated to
                        another length; for a listing, the same entries with the same type and
-                       size. A checksum of a file is content, not volatile
+                       size, each in the same directory section and as many times (in any order
+                       or columns within a section). A checksum of a file is content, not volatile
     semantic_match     a test run with the same outcome: counts per kind (passed, failed...),
                        the failing tests, and make's error line; only when nothing else in the
                        command prints (no file read, no echo): otherwise the output is graded
@@ -730,15 +731,30 @@ def _entries(text: str) -> list[tuple]:
     return out
 
 
+def _placed(entries: list[tuple]) -> tuple[Counter, dict]:
+    """Each entry under the directory section it is listed in (the last `dir:` header), counted;
+    and the types and sizes of the long-format ones, by section and name."""
+    section, keys, details = None, Counter(), defaultdict(list)
+    for kind, size, name in entries:
+        if kind == "header":
+            section = name
+        keys[(kind == "header", section, name)] += 1
+        if kind not in (None, "header"):
+            details[(section, name)].append((kind, size))
+    return keys, details
+
+
 def _grade_listing(real: str, seen: str, ctx: StepContext) -> tuple[str, str, list[str]]:
     er, es = _entries(real), _entries(seen)
     nr, ns = {e[2] for e in er}, {e[2] for e in es}
-    if nr == ns:
-        dr = {e[2]: e[:2] for e in er if e[0] not in (None, "header")}
-        ds = {e[2]: e[:2] for e in es if e[0] not in (None, "header")}
-        if any(dr[n] != ds[n] for n in dr.keys() & ds.keys()):
+    (kr, dr), (ks, ds) = _placed(er), _placed(es)
+    if kr == ks:
+        if any(sorted(dr[n]) != sorted(ds[n]) for n in dr.keys() & ds.keys()):
             return ("known_mismatch", "entry_details", []) if ctx.grounded else ("needs_judgement", "entry_details", [])
         return "format_only", "listing_columns", []
+    if nr == ns:
+        # the same names, but in other directory sections or shown another number of times
+        return ("known_mismatch" if ctx.grounded else "needs_judgement"), "entry_placement", []
     named = [n for n in nr if _ALNUM.search(n)]
     if missing := sorted(n for n in nr - ns if _ALNUM.search(n) and ctx.knows_word(n)):
         return "known_mismatch", "known_entry_missing", missing

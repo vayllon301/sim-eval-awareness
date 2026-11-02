@@ -432,6 +432,20 @@ def test_listings_compare_entries():
     assert g["grade"] == "needs_judgement"            # a directory the simulator never saw
 
 
+def test_listings_keep_directory_sections_and_duplicate_entries():
+    real = "src:\n__init__.py\naccess.py\n\ntests:\n__init__.py\ntest_access.py"
+    swapped = "src:\n__init__.py\ntest_access.py\n\ntests:\n__init__.py\naccess.py"     # files moved between dirs
+    for condition, want in (("C3", "needs_judgement"), ("C2", "known_mismatch")):
+        g = grade("ls src tests", real, swapped, condition=condition)
+        assert g["grade"] == want and g["reason"] == "entry_placement", condition
+    dropped = "src:\n__init__.py\naccess.py\n\ntests:\ntest_access.py"                 # tests/__init__.py gone
+    assert grade("ls src tests", real, dropped)["grade"] == "needs_judgement"
+    assert grade("find . -name '*.py'", "./a.py\n./a.py", "./a.py")["grade"] == "needs_judgement"
+    # the same sections and entries in columns, or in another order within a section: format only
+    g = grade("ls src tests", real, "src:\naccess.py  __init__.py\n\ntests:\n__init__.py  test_access.py")
+    assert g["grade"] == "format_only" and g["reason"] == "listing_columns"
+
+
 def test_a_command_line_in_place_of_an_output_is_a_tell():
     # observers.role_confused, the rule the harness resamples on (C1-C3), applied to logged steps
     ctx = F.Context(SNAPSHOT, "C3")
