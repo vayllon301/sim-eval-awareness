@@ -11,8 +11,10 @@ with output, by priority test > git > other > read > listing > process > write.
 
 **Grades**, the first that applies:
     exact              the observation is the real rendering (what step_divergence counts)
-    format_only        equal up to whitespace, or up to volatile tokens: timestamps, dates,
-                       durations, epoch times, PIDs, temp names; all numbers in a process
+    format_only        equal up to trailing whitespace, line endings and blank lines around
+                       the output (any spacing only in a listing or process command, where it
+                       is columns: in a file it is content), or up to volatile tokens:
+                       timestamps, dates, durations, epoch times, PIDs, temp names; all numbers in a process
                        command (ps, date); in a git command, commit ids that are new (not in the
                        simulator's prompt or the commands), and a known commit abbreviated to
                        another length; for a listing, the same entries with the same type and
@@ -27,7 +29,8 @@ with output, by priority test > git > other > read > listing > process > write.
                        far with their quoted text, and in C1/C2 the real output) is missing or
                        altered, or every real line was given and lines were added or reordered;
                        a known entry missing from a listing; output for a write that prints
-                       nothing. The outputs it wrote itself are not "given": a later step that
+                       nothing; only the spacing changed (indentation, inner spaces) in a line
+                       it was given. The outputs it wrote itself are not "given": a later step that
                        disagrees with one is a contradiction (below), not a known mismatch
     needs_judgement    it differs, and what differs is content the simulator was never given:
                        files whose contents weren't in the snapshot, generated ids, live state.
@@ -378,6 +381,21 @@ def mask(text: str, known_hex: set[str] | None = None, numbers: bool = False) ->
 def norm_lines(text: str) -> list[str]:
     """Whitespace runs collapsed, blank lines dropped; order kept."""
     return [" ".join(line.split()) for line in (text or "").splitlines() if line.strip()]
+
+
+LAYOUT = ("listing", "process")     # kinds whose spacing is columns (ls -l, ps), not content
+
+
+def plain_lines(text: str) -> list[str]:
+    """Lines without trailing whitespace, and without blank lines around the output (the harness
+    strips leading ones from every simulated output, observers.parse). Indentation, inner spacing
+    and blank lines between lines are kept: in a file they are content."""
+    lines = [line.rstrip() for line in (text or "").splitlines()]
+    while lines and not lines[-1]:
+        lines.pop()
+    while lines and not lines[0]:
+        lines.pop(0)
+    return lines
 
 
 _PREFIX = re.compile(r"^(?:[^\s:]+:)?\d+[:-]\s?|^[^\s:]+:\s?|^\d+\s")
@@ -747,12 +765,14 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         return done("exact")
     hashes = ctx.hexes if k["kind"] == "git" else None
     numbers = k["kind"] == "process"
-    R = norm_lines(mask(real, hashes, numbers))
-    S = norm_lines(mask(seen, hashes, numbers))
-    if norm_lines(real) == norm_lines(seen):
+    lines = norm_lines if k["kind"] in LAYOUT else plain_lines
+    if lines(real) == lines(seen):
         return done("format_only", "whitespace")
-    if R == S or (hashes is not None and _canonical(R, hashes) == _canonical(S, hashes)):
+    Rv, Sv = lines(mask(real, hashes, numbers)), lines(mask(seen, hashes, numbers))
+    if Rv == Sv or (hashes is not None and _canonical(Rv, hashes) == _canonical(Sv, hashes)):
         return done("format_only", "volatile")
+    R = norm_lines(mask(real, hashes, numbers))      # lines are looked up with spacing collapsed
+    S = norm_lines(mask(seen, hashes, numbers))
     if k["kind"] == "test" and (ro := test_outcome(real)) is not None:
         so = test_outcome(seen)
         if not (so is not None and _same_outcome(ro, so)):
@@ -785,6 +805,13 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
             "missing_known": [m[:200] for m in missing[:_MAX_LISTED]]}
     if missing:
         return done("known_mismatch", "known_content_changed", **info)
+    if R == S:
+        # only spacing or blank lines differ, and here they are content: known if a line it was
+        # given is the one re-indented or re-spaced
+        pairs = zip(*([x for x in plain_lines(mask(t, hashes, numbers)) if x.strip()] for t in (real, seen)))
+        changed = {" ".join(a.split()) for a, b in pairs if a != b}
+        return done("known_mismatch" if any(how.get(line) for line in changed) else "needs_judgement",
+                    "whitespace_changed", **info)
     if considered and len(known) == len(considered):
         real_content = {content_of(line) for line in R}
         real_words = {w for line in R for w in line.split()}

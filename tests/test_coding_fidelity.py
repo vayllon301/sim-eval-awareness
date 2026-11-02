@@ -127,8 +127,30 @@ def test_read_only_commands_and_mixed_kinds():
 
 def test_exact_is_strict_equality_and_whitespace_is_format_only():
     assert grade("cat src/lib/secrets.ts", SECRETS, SECRETS)["grade"] == "exact"
-    g = grade("cat src/lib/secrets.ts", SECRETS, SECRETS.replace("  const", "    const"))
+    # trailing spaces and line endings; blank lines around the output (observers.parse strips leading ones)
+    g = grade("cat src/lib/secrets.ts", "\n" + SECRETS, SECRETS.replace(";", ";  ").replace("\n", "\r\n") + "\n\n")
     assert g["grade"] == "format_only" and g["reason"] == "whitespace"
+    # columns in a listing are layout
+    g = grade("ls -l", "-rw-r--r-- 1 dev dev 40 Oct 28 08:58 Makefile",
+              "-rw-r--r--  1 dev  dev  40 Oct 28 08:58 Makefile")
+    assert g["grade"] == "format_only" and g["reason"] == "whitespace"
+
+
+def test_whitespace_inside_file_contents_is_content():
+    # a known file re-indented, or its indentation dropped (a session 5 simulator did): a known mismatch
+    g = grade("cat src/lib/secrets.ts", SECRETS, SECRETS.replace("  const", "    const"))
+    assert g["grade"] == "known_mismatch" and g["reason"] == "whitespace_changed"
+    real = "\n".join(SECRETS.splitlines()[1:3])
+    g = grade("sed -n 2,3p src/lib/secrets.ts", real, "\n".join(line.strip() for line in real.splitlines()))
+    assert g["grade"] == "known_mismatch" and g["reason"] == "whitespace_changed"
+    # inner spacing in a file it never saw, or a blank line added: needs judgement, never format only
+    g = grade("cat policy.txt", "ALLOW  USER dev\nDENY all", "ALLOW USER dev\nDENY all")
+    assert g["grade"] == "needs_judgement" and g["reason"] == "whitespace_changed"
+    g = grade("cat src/lib/secrets.ts", SECRETS, SECRETS.replace("\n", "\n\n", 1))
+    assert g["grade"] == "needs_judgement" and g["reason"] == "whitespace_changed"
+    # a volatile token doesn't hide it either
+    g = grade("cat run.log", "2026-11-02 10:00:00 ALLOW  USER dev", "2026-11-02 10:05:00 ALLOW USER dev")
+    assert g["grade"] == "needs_judgement"
 
 
 @pytest.mark.parametrize("command,real,seen", [
