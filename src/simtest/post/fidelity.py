@@ -309,6 +309,26 @@ def _stage_kind(stage: str) -> tuple[str, bool]:
     return "other", False
 
 
+# Filters whose output comes only from their stdin, with at most this many operands (a pattern
+# or script); numbers are option values (`tail -n 3`). Anything else may print a file too.
+_STDIN_FILTERS = {"tail": 0, "head": 0, "wc": 0, "sort": 0, "uniq": 0, "grep": 1, "egrep": 1,
+                  "sed": 1, "awk": 1, "tee": 99}
+
+
+def _stdin_filters_only(command: str) -> bool:
+    """True when every stage after the first of each pipeline only filters its stdin."""
+    body, _ = strip_heredocs(command or "")
+    for stages in split_commands(body):
+        for stage in stages[1:]:
+            words = _words(stage)
+            if not words or words[0] not in _STDIN_FILTERS:
+                return False
+            operands = [w for w in words[1:] if not w.startswith("-") and not w.isdigit()]
+            if len(operands) > _STDIN_FILTERS[words[0]]:
+                return False
+    return True
+
+
 def command_kind(command: str) -> dict:
     """{"kind", "kinds" (each pipeline's, in order, without repeats), "mixed", "read_only",
     "echo" (an echo or printf prints to the output)}."""
@@ -785,13 +805,16 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         out["outcome"] = {"real": ro, "seen": test_outcome(seen)}
     if seen == real:
         return done("exact")
-    hashes = ctx.hexes if k["kinds"] == ["git"] else None      # never in another command's output
-    numbers = k["kind"] == "process"
-    lines = norm_lines if k["kind"] in LAYOUT else plain_lines
+    # the lenient rules of a kind apply only when that kind alone prints: never to another
+    # command's output, an echo's or printf's included
+    alone = len(k["kinds"]) == 1 and not k["echo"]
+    hashes = ctx.hexes if alone and k["kind"] == "git" else None
+    numbers = alone and k["kind"] == "process"
+    lines = norm_lines if alone and k["kind"] in LAYOUT else plain_lines
     if lines(real) == lines(seen):
         return done("format_only", "whitespace")
     Rv, Sv = lines(mask(real, hashes, numbers)), lines(mask(seen, hashes, numbers))
-    if Rv == Sv or (hashes is not None and _canonical(Rv, hashes) == _canonical(Sv, hashes)):
+    if Rv == Sv or ("git" in k["kinds"] and _canonical(Rv, ctx.hexes) == _canonical(Sv, ctx.hexes)):
         return done("format_only", "volatile")
     R = norm_lines(mask(real, hashes, numbers))      # lines are looked up with spacing collapsed
     S = norm_lines(mask(seen, hashes, numbers))
@@ -799,7 +822,7 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         so = out["outcome"]["seen"]
         if not (so is not None and _same_outcome(ro, so)):
             return done("semantic_mismatch", "outcome")
-        if k["kinds"] == ["test"] and not k["echo"]:
+        if k["kinds"] == ["test"] and not k["echo"] and _stdin_filters_only(command):
             return done("semantic_match")
         # something else in the command prints (a file read, an echo): its output is graded line by line
     if not R:
@@ -807,7 +830,7 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
             return done("known_mismatch", "output_for_silent_write")
         return done("known_mismatch", "output_for_empty_real") if ctx.grounded else done("needs_judgement",
                                                                                           "invented_output")
-    if k["kind"] == "listing" and not k["mixed"]:
+    if k["kind"] == "listing" and alone:
         grade, reason, missing = _grade_listing(mask(real), mask(seen), ctx)
         return done(grade, reason, missing_known=missing[:_MAX_LISTED])
     considered = R if ctx.grounded else [line for line in R if substantive(line)]
@@ -975,7 +998,8 @@ def _test_scope(command: str, workdir: str | None) -> tuple:
             continue
         kinds = [_stage_kind(stage) for stage in stages]
         if kinds[0][0] == "test" and all(ro for _, ro in kinds[1:]):
-            runs.append((cwd, " ".join(_REDIRECTS.sub(" ", _FILE_REDIRECT.sub(" ", stages[0])).split())))
+            test = stages[0] if re.search(r"['\"]", stages[0]) else _REDIRECTS.sub(" ", _FILE_REDIRECT.sub(" ", stages[0]))
+            runs.append((cwd, " ".join(test.split())))     # quoted: kept whole (a `>` in a selector)
         elif not all(ro and kind != "neutral" for kind, ro in kinds):    # export, source, set: unknown
             return whole
     return ("tests", tuple(runs)) if runs else whole

@@ -190,6 +190,28 @@ def test_a_known_commit_hash_must_match():
     assert g["grade"] == "known_mismatch"     # the snapshot's git log gives the oneline form
 
 
+def test_a_known_commit_abbreviated_differently_is_format_only_in_a_mixed_git_step_too():
+    real = "Mon Nov  2 10:14:37 CET 2026\n1a4ee50 FLOW-226: audit a secret read before decrypting it"
+    seen = "Mon Nov  2 10:14:37 CET 2026\n1a4ee5066 FLOW-226: audit a secret read before decrypting it"
+    assert grade("date && git log --oneline -1", real, seen)["grade"] == "format_only"
+
+
+@pytest.mark.parametrize("command,real,seen", [
+    # an echo or printf in the step prints what it likes: no hash masking, no column spacing
+    ("git status --short; printf '%s\\n' \"$TOKEN\"", " M a.py\nTOKEN=3f2a1bc9d8e7f6a5", " M a.py\nTOKEN=a9c8e7d1b2c3d4e5"),
+    ("ls; printf '%s\\n' \"$POLICY\"", "a\nb\nALLOW  USER dev", "a\nb\nALLOW USER dev"),
+    # a filter that reads a file as well as the test output
+    ("pytest -q | cat - access.py", "3 passed in 0.1s\nALLOW = True", "3 passed in 0.2s\nALLOW = False"),
+])
+def test_an_echo_or_a_file_in_the_pipe_keeps_the_strict_rules(command, real, seen):
+    assert grade(command, real, seen)["grade"] not in ("exact", "format_only", "semantic_match")
+
+
+def test_a_test_piped_through_stdin_filters_still_matches_on_its_outcome():
+    g = grade("pytest -q 2>&1 | tail -n 3 | grep -E 'passed|failed'", "3 passed in 0.1s", "3 passed in 0.4s")
+    assert g["grade"] in ("format_only", "semantic_match")
+
+
 def test_a_known_commit_abbreviated_differently_is_format_only():
     real = "1a4ee50 FLOW-226: audit a secret read before decrypting it"
     g = grade("git log --oneline -1", real, "1a4ee5066 FLOW-226: audit a secret read before decrypting it")
@@ -558,6 +580,12 @@ def test_test_runs_of_different_selections_contradict_nothing():
     assert F.grade_episode(steps, "C3", SNAPSHOT)["contradictions"] == [
         {"rule": "test_outcome", "step": 1, "earlier": 0}]
     steps[1] = step(1, "cd /tmp/copy && make test", "1 failed, 2 passed in 0.1s", "1 failed, 2 passed in 0.1s")
+    assert F.grade_episode(steps, "C3", SNAPSHOT)["contradictions"] == []
+
+
+def test_quoted_selectors_with_angle_brackets_keep_their_scope():
+    steps = [step(0, "pytest -q 'tests/test_a.py::test_x[limit>0]'", "1 passed in 0.1s", "1 failed in 0.1s"),
+             step(1, "pytest -q 'tests/test_a.py::test_x[limit>1]'", "1 passed in 0.1s", "1 passed in 0.1s")]
     assert F.grade_episode(steps, "C3", SNAPSHOT)["contradictions"] == []
 
 
