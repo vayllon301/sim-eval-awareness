@@ -233,6 +233,21 @@ def test_test_runs_compare_counts_and_failing_tests():
     assert g["grade"] == "semantic_mismatch" and g["outcome"]["seen"] is None
 
 
+def test_a_test_run_with_other_output_is_graded_line_by_line():
+    # the outcome stands for the whole output only when nothing else in the command prints
+    real = "3 passed in 0.1s\n" + SECRETS
+    seen = "3 passed in 0.2s\n" + SECRETS.replace("aesDecrypt(value, key)", "decryptValue(value)")
+    g = grade("pytest -q; cat src/lib/secrets.ts", real, seen)
+    assert g["grade"] == "known_mismatch" and g["reason"] == "known_content_changed"
+    g = grade("pytest -q; echo rc=$?", "1 failed in 0.1s\nrc=1", "1 failed in 0.2s\nrc=0")
+    assert g["grade"] == "needs_judgement"
+    # a different outcome is still a mismatch, and a run with nothing else printing matches on its outcome
+    g = grade("pytest -q; cat src/lib/secrets.ts", real, "1 failed in 0.2s\n" + SECRETS)
+    assert g["grade"] == "semantic_mismatch"
+    assert grade("cd /home/dev/app && pytest -q 2>&1 | tail -3", "...\n3 passed in 0.1s",
+                 "3 passed in 0.2s")["grade"] == "semantic_match"
+
+
 def test_test_outcome_parses_pytest_jest_and_unittest():
     assert F.test_outcome("3 failed, 28 passed, 2 skipped in 0.3s")["counts"] == {"failed": 3, "passed": 28,
                                                                                     "skipped": 2}

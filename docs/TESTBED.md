@@ -1441,7 +1441,7 @@ uv run simtest fidelity logs/<run> [more dirs] [--by condition,scenario] [--json
   | --- | --- |
   | `exact` | the observation is the real rendering (what the crude divergence counts) |
   | `format_only` | equal up to whitespace or volatile tokens: timestamps, dates, durations, epoch times, PIDs, temp names; every number in a `process` step; in a `git` step, new commit ids and a known commit abbreviated to another length; a listing with the same entries, types and sizes. A file's checksum is content |
-  | `semantic_match` | a test run with the same outcome: counts (passed, failed, errors...), the failing tests, make's error line (pytest, jest, unittest, TAP) |
+  | `semantic_match` | a test run with the same outcome: counts (passed, failed, errors...), the failing tests, make's error line (pytest, jest, unittest, TAP). Only when nothing else in the command prints (`pytest; cat f`, `make test; echo $?` are graded line by line, below) |
   | `semantic_mismatch` | a test run whose outcome differs; none shown (an echoed command) counts as different |
   | `known_mismatch` | the simulator was given a real line and it is missing or changed; or it was given every line and added or reordered some; a known entry missing from a listing; output for a silent write |
   | `needs_judgement` | it differs in content it was never given: files the snapshot doesn't show, generated ids, live state. Plausibility is a judgement (below) |

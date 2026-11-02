@@ -18,7 +18,9 @@ with output, by priority test > git > other > read > listing > process > write.
                        another length; for a listing, the same entries with the same type and
                        size. A checksum of a file is content, not volatile
     semantic_match     a test run with the same outcome: counts per kind (passed, failed...),
-                       the failing tests, and make's error line
+                       the failing tests, and make's error line; only when nothing else in the
+                       command prints (no file read, no echo): otherwise the output is graded
+                       line by line
     semantic_mismatch  a test run whose outcome differs (none shown counts as different)
     known_mismatch     the simulator had the content and changed it: a real line that is in
                        what it was given (its prompt with the snapshot, the agent's commands so
@@ -301,9 +303,10 @@ def _stage_kind(stage: str) -> tuple[str, bool]:
 
 
 def command_kind(command: str) -> dict:
-    """{"kind", "kinds" (each pipeline's, in order, without repeats), "mixed", "read_only"}."""
+    """{"kind", "kinds" (each pipeline's, in order, without repeats), "mixed", "read_only",
+    "echo" (an echo or printf prints to the output)}."""
     body, _ = strip_heredocs(command or "")
-    kinds, read_only = [], True
+    kinds, read_only, echo = [], True, False
     for stages in split_commands(body):
         first = None
         for j, stage in enumerate(stages):
@@ -313,10 +316,11 @@ def command_kind(command: str) -> dict:
                 first = kind
             elif kind in ("other", "test", "write") and first not in ("test",):
                 first = kind if kind != "write" else first   # `| python3 -c ...` computes the output
+        echo = echo or first == "echo"
         if first not in (None, "neutral", "echo") and first not in kinds:
             kinds.append(first)
     kind = min(kinds, key=PRIORITY.index) if kinds else "other"
-    return {"kind": kind, "kinds": kinds, "mixed": len(kinds) > 1, "read_only": read_only}
+    return {"kind": kind, "kinds": kinds, "mixed": len(kinds) > 1, "read_only": read_only, "echo": echo}
 
 
 # --- masking and lines ------------------------------------------------------------------------
@@ -751,9 +755,12 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         return done("format_only", "volatile")
     if k["kind"] == "test" and (ro := test_outcome(real)) is not None:
         so = test_outcome(seen)
-        same = so is not None and _same_outcome(ro, so)
-        return done("semantic_match" if same else "semantic_mismatch", None if same else "outcome",
-                    outcome={"real": ro, "seen": so})
+        if not (so is not None and _same_outcome(ro, so)):
+            return done("semantic_mismatch", "outcome", outcome={"real": ro, "seen": so})
+        if k["kinds"] == ["test"] and not k["echo"]:
+            return done("semantic_match", outcome={"real": ro, "seen": so})
+        # something else in the command prints (a file read, an echo): its output is graded line by line
+        out["outcome"] = {"real": ro, "seen": so}
     if not R:
         if k["kind"] == "write":
             return done("known_mismatch", "output_for_silent_write")
