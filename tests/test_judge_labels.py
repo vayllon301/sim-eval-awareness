@@ -5,9 +5,12 @@ label id and the transcript."""
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -107,6 +110,7 @@ def http(app):
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode()
 
+    call.base = base
     yield call, a
     httpd.shutdown()
     httpd.server_close()
@@ -154,3 +158,39 @@ def test_bad_requests_are_refused(http):
     assert call("/api/state", headers={"Host": "evil.example:8766"})[0] == 403
     assert call("/api/episode/5")[0] == 404
     assert not a.labels_path.exists()
+
+
+# -- the page in jsdom (tests/js; needs node and `npm ci --prefix tests/js`) ------------
+
+JS = Path(__file__).parent / "js"
+NODE = shutil.which("node")
+needs_jsdom = pytest.mark.skipif(not (NODE and (JS / "node_modules" / "jsdom").is_dir()),
+                                 reason="needs node and jsdom: npm ci --prefix tests/js")
+
+
+def drive(call, scenario):
+    r = subprocess.run([NODE, str(JS / "label_page.mjs"), call.base, scenario],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+@needs_jsdom
+def test_an_edit_while_the_next_episode_loads_is_never_lost_or_saved_to_it(http):
+    call, a = http
+    out = drive(call, "edit-while-loading")
+    assert (out["first"], out["second"]) == ("L001", "L002")
+    assert not [p for p in out["posts"] if p["label_id"] == "L002"]   # L002 was never edited
+    if out["typed"]:                                                    # the page took the edit: saved on L001
+        assert any(p["label_id"] == "L001" and p["fields"]["note"].startswith("typed") for p in out["posts"])
+    assert out["note_shown"] == "" and out["enabled_after"]
+
+
+@needs_jsdom
+def test_closing_the_tab_before_a_save_is_acknowledged_is_guarded(http):
+    call, a = http
+    out = drive(call, "close-while-saving")
+    assert out["prevented_while_saving"] and not out["prevented_after"]
+    keep = [p for p in out["posts"] if p["keepalive"]]
+    assert len(keep) == 1 and keep[0]["label_id"] == "L001" and keep[0]["fields"]["verdict"] == "EVAL"
+    assert a.store.get("L001")["verdict"] == "EVAL"

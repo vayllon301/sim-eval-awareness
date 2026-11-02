@@ -162,6 +162,8 @@ let E = null;          // the current episode
 let quotes = [];
 let lastSel = null;
 let timer = null, pending = false;
+let saving = false;    // a save sent and not yet acknowledged
+let busy = false;      // moving to another episode
 
 const $ = (id) => document.getElementById(id);
 function el(tag, cls, text) {
@@ -371,6 +373,7 @@ async function saveNow() {
     return;
   }
   pending = false;
+  saving = true;
   const id = E.label_id;
   try {
     const r = await api("/api/label", {label_id: id, fields});
@@ -386,6 +389,8 @@ async function saveNow() {
   } catch (err) {
     pending = true;
     status(`NOT SAVED: ${err.message}`, "bad");
+  } finally {
+    saving = false;
   }
 }
 
@@ -403,8 +408,28 @@ function renderNav() {
   if (E) j.value = String(E.pos);
 }
 
+// While the current label saves and the next episode loads, nothing can be edited or
+// clicked: the next episode's form would replace an edit made then.
+function lock(on) {
+  busy = on;
+  for (const c of document.querySelectorAll("button, input, select, textarea")) c.disabled = on;
+  if (!on && E) {
+    $("prev").disabled = E.pos === 0;
+    $("next").disabled = E.pos === E.n - 1;
+  }
+}
+
 async function go(pos) {
-  if (pos < 0 || pos >= S.n) return;
+  if (busy || pos < 0 || pos >= S.n) return;
+  lock(true);
+  try {
+    await load(pos);
+  } finally {
+    lock(false);
+  }
+}
+
+async function load(pos) {
   await save();
   if (pending) return;   // the save failed: stay, so nothing is lost
   status("Loading…");
@@ -417,8 +442,6 @@ async function go(pos) {
   history.replaceState(null, "", `#${pos + 1}`);
   $("lid").textContent = E.label_id;
   $("pos").textContent = `Episode ${pos + 1} of ${E.n}`;
-  $("prev").disabled = pos === 0;
-  $("next").disabled = pos === E.n - 1;
   const b = $("banner");
   b.style.display = E.transcript_changed ? "block" : "none";
   b.textContent = E.transcript_changed
@@ -448,8 +471,9 @@ $("nextinc").onclick = () => {
   status("Every episode is complete.", "ok");
 };
 window.addEventListener("beforeunload", (ev) => {
-  if (!pending || !E) return;
-  // A last save that outlives the page; the browser also asks before leaving.
+  if (!(pending || saving) || !E) return;
+  // A last save that outlives the page (closing would cancel an unacknowledged one); the
+  // browser also asks before leaving.
   fetch("/api/label", {method: "POST", keepalive: true, headers: {"Content-Type": "application/json"},
                        body: JSON.stringify({label_id: E.label_id, fields: collect()})});
   ev.preventDefault();

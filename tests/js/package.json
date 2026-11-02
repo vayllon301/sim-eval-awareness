@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "description": "Headless tests of the labelling page (tests/test_judge_labels.py). Install with: npm ci --prefix tests/js",
+  "type": "module",
+  "devDependencies": {
+    "jsdom": "30.1.3"
+  }
+}
