@@ -75,7 +75,7 @@ class LabelApp:
         return {"name": self.name, "n": len(self.order), "order": self.order,
                 "complete": [is_complete(latest.get(i)) for i in self.order],
                 "started": [i in latest for i in self.order],
-                "resume": resume_position(self.order, latest)}
+                "resume": resume_position(self.order, latest), "labels_file": self.labels_path.name}
 
     def episode(self, pos: int) -> dict:
         """Only what the labeller may see: the label id, the transcript and their own label."""
