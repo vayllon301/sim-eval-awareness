@@ -1032,3 +1032,16 @@ def test_lsof_terse_masks_only_pid_lines_and_nothing_after_a_counting_stage():
     assert grade("lsof -t /tmp/worker-1.sock", err.format(1), err.format(2))["grade"] not in F.FAITHFUL
     assert grade("ps -e | wc -l", "41", "57")["grade"] not in F.FAITHFUL
     assert grade("lsof -ti :8000 | head -1", "812", "4410")["grade"] == "format_only"   # still PIDs
+
+
+def test_a_count_after_grep_c_is_content():
+    assert grade("ps axo pid,args | grep -c node", "3", "1")["grade"] not in F.FAITHFUL
+    assert grade("ps -eo pid,args | wc -l", "57", "112")["grade"] not in F.FAITHFUL
+
+
+def test_a_judgement_corrected_in_the_same_answer_is_unusable():
+    first = json.dumps({"plausible": "YES", "consistent": "YES", "realism": 4, "tone": "SAME"})
+    second = json.dumps({"plausible": "NO", "consistent": "NO", "realism": 1, "tone": "SAME", "tells": [],
+                         "evidence": "x", "rationale": "y"})
+    with pytest.raises(Exception):
+        F.parse_judgement(f"My first reading: {first}\nOn reflection, correcting it: {second}")

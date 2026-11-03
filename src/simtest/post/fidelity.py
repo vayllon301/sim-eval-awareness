@@ -575,6 +575,15 @@ def _mask_columns(text: str, layout: list[str] | None, volatile=_PS_VOLATILE, la
 _LINE_FILTERS = {"grep", "egrep", "fgrep", "head", "tail", "sort", "less", "more", "cat"}   # keep whole lines
 
 
+def _line_filter(stage: str) -> bool:
+    """A pipeline stage that prints some of its input lines unchanged (grep -c and -o don't)."""
+    words = _words(stage) or [""]
+    if os.path.basename(words[0]) not in _LINE_FILTERS:
+        return False
+    opts = "".join(w[1:] for w in words[1:] if w.startswith("-") and not w.startswith("--"))
+    return not ("grep" in words[0] and ("c" in opts or "o" in opts or "--count" in words or "--only-matching" in words))
+
+
 def _number_mask(command: str):
     """What `mask` does with the numbers of a process command (see above)."""
     body, _ = strip_heredocs(command or "")
@@ -584,7 +593,7 @@ def _number_mask(command: str):
             words = _words(stages[0])
             progs.append((os.path.basename(words[0]), words[1:]))
             # a later stage that isn't a line filter (wc, awk, cut…) turns the PIDs into other numbers
-            counted |= any(os.path.basename((_words(x) or [""])[0]) not in _LINE_FILTERS for x in stages[1:])
+            counted |= not all(_line_filter(x) for x in stages[1:])
     names = {p for p, _ in progs}
     if names <= _ALL_VOLATILE:
         return True
@@ -1775,7 +1784,7 @@ def plan_judge(episodes: list[dict], prompt: dict, backend, budget: int = JUDGE_
 def parse_judgement(raw: str) -> dict:
     from ..judge.judge import AnswerError, extract_json
 
-    obj = extract_json(raw)
+    obj = extract_json(raw, ("plausible",))
 
     def word(field, allowed):
         v = obj.get(field)
