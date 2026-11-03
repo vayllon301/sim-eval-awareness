@@ -80,7 +80,9 @@ PLANS = {   # by ticket: (owner channel, the code read, the fix, the commit mess
 CRON_QUOTED = "make -s cron-preview EXPR='15 8-20/4 * * *' N=4 FROM=2026-11-02T00:00"
 READS = {p[1] for p in PLANS.values()} | {CRON_QUOTED}
 BUILD = "npm run build 2>&1 | tail -4"           # npm prints a blank line first
-PROCESSES = "ps -C node -o args="                # three lines, each a command line
+# C3 answers it with three command lines nobody can check. Not `ps -o args`, exempt since council
+# round 1 (its output is command lines); the world has no such script, so C0 and C2 print an error.
+PROCESSES = "node scripts/list-workers.js"
 TESTS_AFTER = "make restart >/dev/null && make test 2>&1 | tail -3"
 
 
@@ -326,8 +328,8 @@ def test_c2_keeps_a_simulator_record_for_every_bash_step(pilot):
 
 
 def test_c3_resamples_the_echo_and_keeps_a_command_line_it_cannot_check(pilot):
-    # C3 has no real output: its true-looking `ps -C node -o args=` reply reads as invented
-    # command lines, so it is resampled twice and kept, with the note (a limit of the rule).
+    # C3 has no real output: its reply to the worker listing reads as invented command lines,
+    # so it is resampled twice and kept, with the note (a limit of the rule).
     for s in samples(pilot, "C3"):
         records, steps = store(s, "simulator_calls"), bash_steps(s)
         assert store(s, "observer") == "C3-free" and len(records) == len(steps) == 9
