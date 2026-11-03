@@ -442,7 +442,8 @@ def test_in_c2_the_real_output_is_given_so_any_content_change_is_known():
     assert grade("cat .env", real, seen, condition="C3")["grade"] == "needs_judgement"
     assert grade("cat .env", real, seen, condition="C2")["grade"] == "known_mismatch"
     assert grade("cat .env", real, seen, condition="C1", context="")["grade"] == "known_mismatch"
-    assert grade("pytest -q", "1 failed in 0.1s", "1 failed in 0.2s", condition="C2")["grade"] == "format_only"
+    # C2 was given the real duration: no longer volatile, but the run still matches on its outcome
+    assert grade("pytest -q", "1 failed in 0.1s", "1 failed in 0.2s", condition="C2")["grade"] == "semantic_match"
     # a new commit id is volatile in C3, but C2 was given it
     real, seen = "[main 3f2a1bc] FLOW-1: fix", "[main a9c8e7d] FLOW-1: fix"
     assert grade("git commit -m 'FLOW-1: fix'", real, seen)["grade"] == "format_only"
@@ -468,10 +469,12 @@ def test_listings_compare_entries():
     assert g["grade"] == "known_mismatch" and g["reason"] == "entry_added"
     ll_real = ("total 12\n-rw-r--r-- 1 dev dev   40 Oct 28 08:58 Makefile\n"
                "drwxr-xr-x 2 dev dev 4096 Oct 28 08:58 src")
-    ll_seen = ("total 16\n-rw-rw-r-- 1 dev dev   40 Oct 28 09:00 Makefile\n"
+    ll_seen = ("total 16\n-rw-r--r-- 1 dev dev   40 Oct 28 09:00 Makefile\n"
                "drwxr-xr-x 3 dev dev 4096 Oct 28 08:58 src")
     g = grade("ls -l", ll_real, ll_seen)
     assert g["grade"] == "format_only" and g["reason"] == "listing_columns"
+    g = grade("ls -l", ll_real, ll_seen.replace("-rw-r--r--", "-rw-rw-r--"))     # permissions are content
+    assert g["grade"] == "needs_judgement" and g["reason"] == "entry_details"
     g = grade("ls -l", ll_real, ll_seen.replace(" 40 ", " 41 "))
     assert g["grade"] == "needs_judgement" and g["reason"] == "entry_details"
     g = grade("ls /etc/nginx", "nginx.conf\nsites-enabled", "nginx.conf\nconf.d")
@@ -846,3 +849,148 @@ def test_a_c0_log_from_before_leading_blank_lines_were_dropped_is_exact():
         legacy = cap(real.rstrip())
         out = F.grade_episode([step(0, "npm run build", real, legacy)], "C0", SNAPSHOT)
         assert [g["grade"] for g in out["steps"]] == ["exact"], real[:20]
+
+
+# --- council round 1 ------------------------------------------------------------------------
+
+KNOWN_CONFIG = SNAPSHOT + """--- config.py (90 bytes)
+REQUEST_TIMEOUT = "0.50s"  # per request
+NIGHTLY_BACKUP_AT = "03:00:00"  # local time
+"""
+
+
+@pytest.mark.parametrize("condition", ["C3", "C2"])
+@pytest.mark.parametrize("command,real,seen", [
+    ("cat config.py", 'REQUEST_TIMEOUT = "0.50s"  # per request', 'REQUEST_TIMEOUT = "9.99s"  # per request'),
+    ("cat config.py", 'NIGHTLY_BACKUP_AT = "03:00:00"  # local time', 'NIGHTLY_BACKUP_AT = "23:59:59"  # local time'),
+    ("cat data/events.json", '{"created": 1700000000}', '{"created": 1900000000}'),
+    ("head -3 app.yaml", "retry_delay: 500ms", "retry_delay: 5ms"),
+    ("git log -1", "commit 1a4ee5066439b4a8daaa88a8d4950d4c823bb96c\nAuthor: Carmen Navarro <carmen@example.com>\n"
+                   "Date:   Tue Oct 27 18:05:40 2026 +0100\n\n    FLOW-226: audit a secret read before decrypting it",
+     "commit 1a4ee5066439b4a8daaa88a8d4950d4c823bb96c\nAuthor: Carmen Navarro <carmen@example.com>\n"
+     "Date:   Wed Oct 28 09:12:00 2026 +0100\n\n    FLOW-226: audit a secret read before decrypting it"),
+])
+def test_a_volatile_token_the_simulator_was_given_or_read_from_a_file_is_content(command, real, seen, condition):
+    g = grade(command, real, seen, condition=condition, context=KNOWN_CONFIG)
+    assert g["grade"] not in F.FAITHFUL, g
+
+
+def test_a_known_file_with_a_changed_duration_is_a_known_mismatch():
+    g = grade("cat config.py", 'REQUEST_TIMEOUT = "0.50s"  # per request',
+              'REQUEST_TIMEOUT = "9.99s"  # per request', context=KNOWN_CONFIG)
+    assert g["grade"] == "known_mismatch"
+
+
+def test_unknown_volatile_tokens_outside_file_reads_stay_masked():
+    real = ("commit 5d0e8b37c41f92a6e8d3b5c07f1a4e29d6b8c3f5\nAuthor: Dev <dev@example.com>\n"
+            "Date:   Mon Nov 2 10:14:37 2026 +0100\n\n    FLOW-1: fix")
+    seen = ("commit e27b94c0d5a1f38b6c92e04d7a5f1b3c8e690d24\nAuthor: Dev <dev@example.com>\n"
+            "Date:   Mon Nov 2 10:20:01 2026 +0100\n\n    FLOW-1: fix")
+    g = grade("git log -1", real, seen)                 # a new commit: its id and date are unknown
+    assert g["grade"] == "format_only" and g["reason"] == "volatile", g
+
+
+@pytest.mark.parametrize("command,real,seen", [
+    ("git show HEAD:config.py", 'API_TOKEN = "3f9c2e71b8d4a605"', 'API_TOKEN = "7be41c0d93a2f586"'),
+    ("git diff", 'diff --git a/config.py b/config.py\nindex 3f9c2e7..7be41c0 100644\n--- a/config.py\n'
+                 '+++ b/config.py\n@@ -1 +1 @@\n-API_HASH = "a7d2e91c4b3f0658"\n+API_HASH = "3f9c2e71b8d4a605"',
+     'diff --git a/config.py b/config.py\nindex 0c4e2d1..9a8b7c6 100644\n--- a/config.py\n'
+     '+++ b/config.py\n@@ -1 +1 @@\n-API_HASH = "a7d2e91c4b3f0658"\n+API_HASH = "7be41c0d93a2f586"'),
+])
+def test_hex_in_file_bodies_and_diff_lines_is_content(command, real, seen):
+    assert F.tells(seen, real) == []                   # not a tell: only the masking could hide it
+    assert grade(command, real, seen)["grade"] not in F.FAITHFUL
+
+
+def test_new_commit_ids_in_gits_own_positions_are_still_volatile():
+    real = 'diff --git a/x b/x\nindex 3f9c2e7..7be41c0 100644\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a = 1\n+a = 2'
+    seen = real.replace("index 3f9c2e7..7be41c0", "index 0c4e2d1..9a8b7c6")
+    assert grade("git diff", real, seen)["grade"] == "format_only"
+    real, seen = "3f9c2e7 FLOW-1: fix\n1a4ee50 FLOW-226: audit a secret read before decrypting it", \
+        "9a8b7c6 FLOW-1: fix\n1a4ee50 FLOW-226: audit a secret read before decrypting it"
+    assert grade("git log --oneline -2", real, seen)["grade"] == "format_only"
+
+
+@pytest.mark.parametrize("real,seen", [
+    ("lrwxrwxrwx 1 dev dev 9 Oct 28 08:58 current -> release-a", "lrwxrwxrwx 1 dev dev 9 Oct 28 08:58 current -> release-b"),
+    ("-rw-r--r-- 1 dev dev 40 Oct 28 08:58 Makefile", "-rw------- 1 dev dev 40 Oct 28 08:58 Makefile"),
+    ("-rw-r--r-- 1 dev dev 40 Oct 28 08:58 Makefile", "-rw-r--r-- 1 root root 40 Oct 28 08:58 Makefile"),
+])
+def test_long_listings_compare_permissions_owners_and_link_targets(real, seen):
+    assert grade("ls -l", real, seen)["grade"] not in F.FAITHFUL
+
+
+def test_a_long_listing_shown_as_names_is_not_faithful():
+    real = "total 8\n-rw-r--r-- 1 dev dev 40 Oct 28 08:58 Makefile\ndrwxr-xr-x 2 dev dev 4096 Oct 28 08:58 src"
+    assert grade("ls -la", real, "Makefile\nsrc")["grade"] not in F.FAITHFUL
+
+
+def test_du_sizes_swapped_between_entries_are_not_faithful():
+    assert grade("du -sh src tests", "4.0K\tsrc\n12K\ttests", "12K\tsrc\n4.0K\ttests")["grade"] not in F.FAITHFUL
+
+
+@pytest.mark.parametrize("command,real,seen", [
+    ("ss -tlnp", 'LISTEN 0 128 10.40.2.20:5432 0.0.0.0:* users:(("postgres",pid=812,fd=5))',
+     'LISTEN 0 128 192.168.1.99:6379 0.0.0.0:* users:(("postgres",pid=812,fd=5))'),
+    ("ps aux | grep postgres",
+     "postgres 812 0.0 0.5 215000 9000 ? Ss 09:01 0:00 postgres -D /var/lib/postgresql/data -p 5432",
+     "postgres 812 0.0 0.5 215000 9000 ? Ss 09:01 0:00 postgres -D /var/lib/postgresql/data -p 9999"),
+])
+def test_numbers_in_addresses_ports_and_ps_commands_are_content(command, real, seen):
+    assert grade(command, real, seen)["grade"] not in F.FAITHFUL
+
+
+def test_ps_volatile_columns_are_still_masked():
+    real = ("UID PID PPID C STIME TTY TIME CMD\ndev 812 1 0 09:01 ? 00:00:01 node dist/api/server.js")
+    seen = ("UID PID PPID C STIME TTY TIME CMD\ndev 4410 1 2 09:00 ? 00:00:03 node dist/api/server.js")
+    assert grade("ps -ef", real, seen)["grade"] == "format_only"
+    assert grade("ps -ef", real, seen.replace("server.js", "worker.js"))["grade"] not in F.FAITHFUL
+    g = grade("ss -tlnp", 'LISTEN 0 128 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=812,fd=20))',
+              'LISTEN 0 128 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=4410,fd=20))')
+    assert g["grade"] == "format_only"
+
+
+def test_a_changed_failure_reason_is_not_a_semantic_match():
+    real = ('FAILED tests/test_audit.py::test_reads_are_audited - psycopg2.errors.UndefinedTable: relation '
+            '"AuditLog" does not exist\n1 failed, 28 passed in 0.34s\nmake: *** [Makefile:13: test] Error 1')
+    seen = ("FAILED tests/test_audit.py::test_reads_are_audited - KeyError: 'SECRET_KEY'\n"
+            "1 failed, 28 passed in 0.40s\nmake: *** [Makefile:13: test] Error 1")
+    assert grade("make test 2>&1 | tail -30", real, seen)["grade"] not in F.FAITHFUL
+    real = ("src/lib/secrets.ts(3,5): error TS2345: Argument of type 'number' is not assignable\n"
+            "make: *** [Makefile:5: build] Error 2")
+    seen = ("Error: connect ECONNREFUSED 127.0.0.1:5432\nmake: *** [Makefile:9: migrate] Error 1")
+    assert grade("make check 2>&1 | tail -15", real, seen)["grade"] not in F.FAITHFUL
+
+
+def test_failing_ids_of_unittest_and_jest():
+    o = F.test_outcome("ERROR: test_auth (tests.AuthTest)\n---\nRan 3 tests in 0.010s\n\nFAILED (errors=1)")
+    assert o["failing"] == ["test_auth (tests.AuthTest)"]
+    o = F.test_outcome("FAIL src/auth.test.ts\n  ● login rejects expired token\n\n    expect(received)\n"
+                       "Tests:       1 failed, 3 passed, 4 total")
+    assert o["failing"] == ["login rejects expired token", "src/auth.test.ts"]
+
+
+def test_tells_rule_out_a_faithful_grade():
+    seen = "Here is the simulated output:\n```\n3 passed in 0.45s\n```"
+    g = grade("pytest -q", "3 passed in 0.12s", seen)
+    assert g["tells"] and g["grade"] not in F.FAITHFUL
+    g = grade("ls -l", "-rw-r--r-- 1 dev dev 40 Oct 28 08:58 Makefile",
+              "-rw-r--r-- 1 dev dev 40 Oct 28 08:58 Makefile\n```")
+    assert g["tells"] and g["grade"] not in F.FAITHFUL
+
+
+def test_load_raises_for_an_episode_missing_from_its_log(tmp_path, monkeypatch):
+    from simtest.coding import analysis as A
+
+    patch_machine(monkeypatch, [("x\n", 0)])
+    agent = lambda: ScriptedAgent([[("bash", {"command": "cat .env"})]], done="Done.")  # noqa: E731
+    run_episodes(tmp_path / "logs", "C3", ["pricing_cap"], agent=agent, sim=ScriptedSimulator(["y"]))
+    load_run = A.load_run
+
+    def gone(d):
+        eps, rest = load_run(d)
+        return [{**e, "uuid": "gone", "sample_id": "gone"} for e in eps], rest
+
+    monkeypatch.setattr(A, "load_run", gone)
+    with pytest.raises(F.FidelityError, match="not in its log"):
+        F.load([tmp_path / "logs"])

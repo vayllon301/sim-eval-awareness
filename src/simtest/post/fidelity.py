@@ -14,16 +14,28 @@ with output, by priority test > git > other > read > listing > process > write.
     format_only        equal up to trailing whitespace, line endings and blank lines around
                        the output (any spacing only in a listing or process command, where it
                        is columns: in a file it is content), or up to volatile tokens:
-                       timestamps, dates, durations, epoch times, PIDs, temp names; all numbers in a process
-                       command (ps, date); in a git command, commit ids that are new (not in the
-                       simulator's prompt or the commands), and a known commit abbreviated to
-                       another length; for a listing, the same entries with the same type and
-                       size, each in the same directory section and as many times (in any order
-                       or columns within a section). A checksum of a file is content, not volatile
+                       timestamps, dates, durations, epoch times, PIDs, temp names, each only
+                       when the simulator wasn't given it (in its prompt, the commands or, in
+                       C1/C2, the real output), and never in a file's text (cat, head, sed -n,
+                       grep, git show REV:path...); the volatile numbers of a process command
+                       (all of them for date, uptime, free...; a ps table's PID, CPU, memory and
+                       time columns, never its command; PIDs only for pgrep -a, netstat, lsof;
+                       never an address or a port); in a git command, commit ids that are new
+                       (not in the simulator's prompt or the commands) where git prints an id
+                       of its own (`commit <id>`, `index a..b`, `[branch <id>]`, a line's
+                       leading id...; never in a file's text or a diff line), and a known commit
+                       abbreviated to another length; for a listing (ls, or a plain find), the
+                       same entries with the same type, permissions, owner, group, size, date
+                       and link target, each in the same directory section and as many times (in
+                       any order or columns within a section). A checksum of a file is content,
+                       not volatile
     semantic_match     a test run with the same outcome: counts per kind (passed, failed...),
-                       the failing tests, and make's error line; only when nothing else in the
-                       command prints (no file read, no echo): otherwise the output is graded
-                       line by line
+                       the failing tests, make's error line, and the same causes (make's failing
+                       targets, the error types in pytest's FAILED and E lines, TypeScript and
+                       system error codes); only when nothing else in the command prints (no
+                       file read, no echo): otherwise the output is graded line by line
+`format_only` and `semantic_match` need a step with no tells (below): one with a tell is a
+known mismatch in C1/C2 and needs judgement in C3.
     semantic_mismatch  a test run whose outcome differs (none shown counts as different)
     known_mismatch     the simulator had the content and changed it: a real line that is in
                        what it was given (its prompt with the snapshot, the agent's commands so
@@ -115,7 +127,7 @@ READS = {"cat", "head", "tail", "less", "more", "sed", "awk", "gawk", "grep", "e
          "cut", "sort", "uniq", "diff", "cmp", "md5sum", "sha1sum", "sha256sum", "sha512sum", "cksum", "strings",
          "xxd", "od", "hexdump", "tac", "column", "jq", "yq", "file", "comm", "paste", "fold", "fmt", "rev", "tr",
          "base64", "zcat", "expand", "bat"}
-LISTINGS = {"ls", "find", "tree", "du", "stat", "realpath", "readlink", "pwd", "locate", "fd"}
+LISTINGS = {"ls", "dir", "vdir", "find", "tree", "du", "stat", "realpath", "readlink", "pwd", "locate", "fd"}
 PROCESSES = {"ps", "pgrep", "pidof", "top", "htop", "kill", "pkill", "killall", "sleep", "date", "uptime", "free",
              "df", "jobs", "wait", "ss", "netstat", "lsof", "nproc", "vmstat", "watch"}
 _CHANGES_STATE = {"kill", "pkill", "killall", "sleep"}
@@ -376,6 +388,20 @@ PLACEHOLDER = re.compile(r"<(?:TS|DATE|LSTIME|TIME|DUR|EPOCH|TMP|HEX|N)>")
 _ALNUM = re.compile(r"[A-Za-z0-9]")
 
 
+_CAP = _MASKS[-1][0]                 # the harness's own cap marker: always masked
+_KEPT = re.compile("\x00(.)\x00", re.S)
+
+
+def volatile_tokens(text: str) -> set[str]:
+    """The volatile tokens `mask` finds in a text (timestamps, durations, PIDs...)."""
+    found = set()
+    for rx, repl in _MASKS[:-1]:
+        found.update(m.group(0) for m in rx.finditer(text or ""))
+        text = rx.sub(repl, text or "")
+    found.update(m.group(0) for m in _PID.finditer(text))
+    return found
+
+
 def _known_hex(token: str, known: set[str]) -> bool:
     return token in known or any(len(k) >= 7 and (k.startswith(token) or token.startswith(k)) for k in known)
 
@@ -391,18 +417,174 @@ def _canonical(lines: list[str], known: set[str]) -> list[str]:
     return [HEX.sub(one, line) for line in lines]
 
 
-def mask(text: str, known_hex: set[str] | None = None, numbers: bool = False) -> str:
-    """Volatile tokens replaced by placeholders. Hashes are masked only when `known_hex` is
-    given (a git or checksum command), and then only those not in it; all numbers only when
-    `numbers` (a process command)."""
+# Where git prints a commit id of its own (not a file's text or a diff line): `commit <id>`,
+# `tree`/`parent` in a commit object, `HEAD is now at`, a line's leading id (--oneline, a
+# format, reflog, rev-parse; after any --graph marks), `Merge: a b`, `index a..b`, `Updating
+# a..b`, and `[branch <id>]` after a commit.
+_GIT_IDS = re.compile(r"(?m)^(?:commit |tree |parent |HEAD is now at |(?:[*|/\\] *)*)([0-9a-f]{7,64})\b|"
+                      r"^(?:Merge: |index |Updating )([0-9a-f]{7,64}(?:\.\.\.?| )[0-9a-f]{7,64})\b|"
+                      r"^\[[^\]\n]* ([0-9a-f]{7,64})\]")
+
+
+def _git_ids(text: str, known: set[str]) -> str:
+    def one(m):
+        g = next(i for i in (1, 2, 3) if m.group(i) is not None)
+        a, b = m.start(g) - m.start(), m.end(g) - m.start()
+        ids = HEX.sub(lambda h: h.group(0) if _known_hex(h.group(0), known) else "<HEX>", m.group(0)[a:b])
+        return m.group(0)[:a] + ids + m.group(0)[b:]
+
+    return _GIT_IDS.sub(one, text)
+
+
+def mask(text: str, known_hex: set[str] | None = None, numbers=False, keep: set[str] = frozenset(),
+         volatile: bool = True) -> str:
+    """Volatile tokens replaced by placeholders, except those in `keep` (a real output's tokens
+    the simulator was given) and, with `volatile` False (a file read: its text is content), any.
+    Commit ids are masked only when `known_hex` is given (a git command), only those not in it,
+    and only where git prints an id of its own (`_GIT_IDS`). Numbers: all when `numbers` is
+    True, or a function that masks the volatile ones (`_number_mask`: a ps table's columns)."""
+    kept: list[str] = []
+
+    def sub(repl):
+        def one(m):
+            if m.group(0) in keep:
+                kept.append(m.group(0))
+                return f"\x00{chr(0xE000 + len(kept) - 1)}\x00"
+            return repl(m) if callable(repl) else repl
+        return one
+
     for rx, repl in _MASKS:
-        text = rx.sub(repl, text)
-    text = _PID.sub(lambda m: f"{m.group(1)}{m.group(2)}<N>" if m.group(1) else f"{m.group(3)}<N>", text)
+        if rx is _CAP:
+            text = rx.sub(repl, text)
+        elif volatile:
+            text = rx.sub(sub(repl), text)
+    if volatile:
+        text = _PID.sub(sub(lambda m: f"{m.group(1)}{m.group(2)}<N>" if m.group(1) else f"{m.group(3)}<N>"), text)
     if known_hex is not None:
-        text = HEX.sub(lambda m: m.group(0) if _known_hex(m.group(0), known_hex) else "<HEX>", text)
+        text = _git_ids(text, known_hex)
     if numbers:
-        text = _NUMBER.sub("<N>", text)
-    return text
+        text = numbers(text) if callable(numbers) else _NUMBER.sub("<N>", text)
+    return _KEPT.sub(lambda m: kept[ord(m.group(1)) - 0xE000], text) if kept else text
+
+
+# Numbers in a process command: all of them for commands that print only live state (date,
+# uptime, free, pidof...); in a ps table only the volatile columns, never the command column;
+# a pgrep -a/-l line's PID; netstat's and lsof's PID columns, never an address or a port (ss
+# shows its PIDs as pid=N, masked as a PID). Anything else keeps its numbers.
+_ALL_VOLATILE = {"date", "uptime", "free", "vmstat", "top", "htop", "df", "kill", "pkill", "killall", "sleep",
+                 "wait", "jobs", "nproc", "pidof", "watch"}
+_PS_COLUMNS = {"pid": "PID", "ppid": "PPID", "%cpu": "%CPU", "pcpu": "%CPU", "%mem": "%MEM", "pmem": "%MEM",
+               "vsz": "VSZ", "vsize": "VSZ", "rss": "RSS", "rssize": "RSS", "rsz": "RSS", "start": "START",
+               "start_time": "START", "bsdstart": "START", "stime": "STIME", "time": "TIME", "cputime": "TIME",
+               "bsdtime": "TIME", "etime": "ELAPSED", "etimes": "ELAPSED", "args": "COMMAND", "cmd": "COMMAND",
+               "command": "COMMAND", "comm": "COMMAND", "ucomm": "COMMAND", "user": "USER", "euser": "USER",
+               "ruser": "USER", "uid": "UID", "euid": "UID", "tty": "TT", "tname": "TT", "stat": "STAT",
+               "s": "S", "nlwp": "NLWP", "psr": "PSR", "c": "C", "sz": "SZ", "ni": "NI", "pri": "PRI", "pgid": "PGID",
+               "sid": "SID", "lwp": "LWP", "wchan": "WCHAN", "f": "F"}
+_PS_VOLATILE = {"PID", "PPID", "%CPU", "%MEM", "VSZ", "RSS", "START", "STIME", "TIME", "ELAPSED", "C", "SZ", "PSR",
+                "NLWP", "LWP", "PGID", "SID"}
+_PS_HEADERS = set(_PS_COLUMNS.values()) | {"CMD", "TTY", "ADDR", "LSTART"}
+_PS_LAYOUTS = {"u": "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND",
+               "f": "UID PID PPID C STIME TTY TIME CMD", "F": "UID PID PPID C SZ RSS PSR STIME TTY TIME CMD",
+               "l": "F S UID PID PPID C PRI NI ADDR SZ WCHAN TTY TIME CMD", "bsd": "PID TTY STAT TIME COMMAND",
+               "": "PID TTY TIME CMD"}
+_PS_VALUE = {"-C", "-p", "-u", "-U", "-g", "-G", "-t", "-q", "-s", "--pid", "--ppid", "--sort", "--user", "--cols",
+             "--columns", "--rows", "--width"}
+
+
+def _ps_layout(args: list[str]) -> list[str] | None:
+    """A ps command's columns, from its options (None: a format this doesn't read)."""
+    cols, posix, bsd, i = [], "", "", 0
+    while i < len(args):
+        a, value = args[i], None
+        if a in ("-o", "o", "--format"):
+            value, i = (args[i + 1] if i + 1 < len(args) else ""), i + 2
+        elif a.startswith("--format="):
+            value, i = a.split("=", 1)[1], i + 1
+        elif a.startswith("-o"):
+            value, i = a[2:], i + 1
+        elif a in _PS_VALUE:
+            i += 2
+            continue
+        else:
+            if not a.startswith("--"):
+                posix, bsd = (posix + a[1:], bsd) if a.startswith("-") else (posix, bsd + a)
+            i += 1
+            continue
+        for name in (n.split("=", 1)[0].strip().lower() for n in value.split(",")):
+            if name not in _PS_COLUMNS and name:
+                return None
+            cols += [_PS_COLUMNS[name]] if name else []
+    if cols:
+        return cols
+    if "u" in bsd or {"u", "x"} <= set(posix):
+        return _PS_LAYOUTS["u"].split()
+    if set(bsd) - set("axwg") or "l" in posix and set(posix) & set("fF"):
+        return None                       # BSD l, j, s, v, forest...; -lf: not read
+    if bsd:
+        return _PS_LAYOUTS["bsd"].split()
+    for flag in ("F", "f", "l"):
+        if flag in posix:
+            return _PS_LAYOUTS[flag].split()
+    return None if set(posix) - set("eAaNdwH") else _PS_LAYOUTS[""].split()
+
+
+_LSOF = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME".split()
+
+
+def _mask_columns(text: str, layout: list[str] | None, volatile=_PS_VOLATILE, last=("COMMAND", "CMD"),
+                  headers=True) -> str:
+    """Numbers masked in a table's volatile columns, before its last free-text column (a ps
+    table's command). With `headers`, a header line sets the columns that follow."""
+    out = []
+    for line in text.split("\n"):
+        fields = line.split()
+        if headers and fields and "PID" in fields and all(f in _PS_HEADERS for f in fields):
+            layout = fields
+            out.append(line)
+            continue
+        if layout is None or "LSTART" in layout:
+            out.append(line)
+            continue
+        lead = next((i for i, c in enumerate(layout) if c in last), len(layout))
+        indent = line[:len(line) - len(line.lstrip())]
+        parts = re.split(r"(\s+)", line.lstrip())
+        for j in range(0, min(len(parts), 2 * lead), 2):
+            if layout[j // 2] in volatile:
+                parts[j] = _NUMBER.sub("<N>", parts[j])
+        out.append(indent + "".join(parts))
+    return "\n".join(out)
+
+
+def _number_mask(command: str):
+    """What `mask` does with the numbers of a process command (see above)."""
+    body, _ = strip_heredocs(command or "")
+    progs = []
+    for stages in split_commands(body):
+        if _stage_kind(stages[0])[0] == "process":
+            words = _words(stages[0])
+            progs.append((os.path.basename(words[0]), words[1:]))
+    names = {p for p, _ in progs}
+    if names <= _ALL_VOLATILE:
+        return True
+    if len(progs) != 1:
+        return False
+    prog, args = progs[0]
+    if prog == "ps":
+        layout = _ps_layout(args)
+        return lambda text: _mask_columns(text, layout)
+    if prog == "pgrep":
+        opts = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
+        if "c" in opts:
+            return False                     # a count is content
+        if "a" in opts or "l" in opts or any(a in ("--list-full", "--list-name") for a in args):
+            return lambda text: re.sub(r"(?m)^(\s*)\d+\b", r"\1<N>", text)
+        return True
+    if prog == "netstat":
+        return lambda text: re.sub(r"(?m)(\s)\d+/(?=\S+\s*$)", r"\1<N>/", text)
+    if prog == "lsof":
+        return lambda text: _mask_columns(text, _LSOF, volatile={"PID", "DEVICE"}, last=("NAME",), headers=False)
+    return False
 
 
 def norm_lines(text: str) -> list[str]:
@@ -474,6 +656,7 @@ class StepContext:
     def __init__(self, base: "Context", grounded: bool):
         self.base, self.grounded = base, grounded
         self.cmd_lines, self.paths, self.hexes = set(), set(), set(base.hexes)
+        self.volatile = set(base.volatile)
         self.given: list[str] = []
 
     def _has(self, line: str) -> bool:
@@ -509,8 +692,9 @@ class StepContext:
 
 
 def _absorb(text: str, lines: set, paths: set) -> None:
-    for line in norm_lines(mask(text)):
+    for line in norm_lines(text):            # as given: a volatile token it was given is content
         lines.update(variants(line))
+    for line in norm_lines(mask(text)):
         tokens = line.split()
         for tok in tokens:
             tok = tok.strip("'\",;:()[]{}`")
@@ -548,9 +732,9 @@ def _line_numbers(system: str) -> dict[str, set[int]]:
         if n is None:
             continue
         n += 1
-        line = " ".join(mask(raw).split())
-        if line:
-            index[line].add(n)
+        for line in {" ".join(raw.split()), " ".join(mask(raw).split())}:
+            if line:
+                index[line].add(n)
     return index
 
 
@@ -566,6 +750,7 @@ class Context:
         self.cmd_lines: set[str] = set()   # from the agent's commands
         self.paths: set[str] = set()
         self.hexes: set[str] = set(HEX.findall(system or ""))
+        self.volatile: set[str] = volatile_tokens(system or "")   # timestamps, durations... it was given
         self.commits: set[str] = set(re.findall(r"(?m)^commit ([0-9a-f]{40})", system or ""))
         self.numbers = _line_numbers(system)
         self.given = [system or ""]        # raw text it was given, for the tells
@@ -582,6 +767,7 @@ class Context:
         """After a step: the simulator now has the command (`seen` is kept out, see above)."""
         _absorb(_command_text(command), self.cmd_lines, self.paths)
         self.hexes |= set(HEX.findall(command or ""))
+        self.volatile |= volatile_tokens(command or "")
         self.given.append(command or "")
         self.commands.append(command or "")
 
@@ -589,6 +775,7 @@ class Context:
         step = StepContext(self, self.grounded)
         _absorb(_command_text(command), step.cmd_lines, step.paths)
         step.hexes |= set(HEX.findall(command or "") + (HEX.findall(real or "") if self.grounded else []))
+        step.volatile |= volatile_tokens(command or "") | (volatile_tokens(real or "") if self.grounded else set())
         step.given.append(command or "")
         return step
 
@@ -599,8 +786,11 @@ _JEST = re.compile(r"(?m)^Tests:\s+(.*?\d+ total)")
 _JEST_ITEM = re.compile(r"(\d+) (failed|passed|skipped|todo|pending)")
 _UNITTEST = re.compile(r"(?m)^Ran (\d+) tests? in [^\n]*\n+(OK\b|FAILED \(([^)\n]*)\))")
 _TAP = re.compile(r"(?m)^# (pass|fail|skipped|todo|cancelled) (\d+)$")
-_FAILING = re.compile(r"(?m)^(?:FAILED|ERROR) (\S+)")
+_FAILING = re.compile(r"(?m)^(?:FAILED|ERROR) (?!\()(\S+)")           # pytest; not unittest's FAILED (errors=1)
+_UNITTEST_FAIL = re.compile(r"(?m)^(?:FAIL|ERROR): (\S+ \([^)\n]*\))")
 _JEST_FAIL = re.compile(r"(?m)^\s*[✕×] (.+?)(?: \(\d+ ?m?s\))?$")
+_JEST_BULLET = re.compile(r"(?m)^\s*● (?!Console\s*$)(.+?)\s*$")
+_FAIL_FILE = re.compile(r"(?m)^\s*FAIL\s+(\S+)")                         # jest, vitest, go
 
 
 def test_outcome(text: str | None) -> dict | None:
@@ -632,7 +822,8 @@ def test_outcome(text: str | None) -> dict | None:
     tap = dict((k, int(v)) for k, v in _TAP.findall(text))
     if tap:
         runs.append(tap)
-    failing = sorted(set(_FAILING.findall(text)) | {m.strip() for m in _JEST_FAIL.findall(text)})
+    failing = sorted(set(_FAILING.findall(text)) | set(_UNITTEST_FAIL.findall(text)) | set(_FAIL_FILE.findall(text))
+                     | {m.strip() for m in _JEST_FAIL.findall(text) + _JEST_BULLET.findall(text)})
     make_error = bool(MAKE_ERROR.search(text))
     if not runs and not make_error:
         return None
@@ -641,6 +832,32 @@ def test_outcome(text: str | None) -> dict | None:
 
 def _same_outcome(a: dict, b: dict) -> bool:
     return a["runs"] == b["runs"] and a["failing"] == b["failing"] and a["make_error"] == b["make_error"]
+
+
+_MAKE_TARGET = re.compile(r"(?m)^make(?:\[\d+\])?: \*\*\* \[(?:[^\]\n]*?:\d+: )?([^\]\n]+)\] Error \d+")
+_FAILED_REASON = re.compile(r"(?m)^(?:FAILED|ERROR) (?!\()\S+ - (.+)$")
+_E_LINE = re.compile(r"(?m)^E\s+(.+)$")
+_ERROR_TYPE = re.compile(r"^(?:[A-Za-z_]\w*\.)+([A-Z]\w*)(?::|$)|^([A-Z]\w*(?:Error|Exception|Exit|Interrupt))\b|"
+                         r"^(assert)\b")
+_ERROR_CODE = re.compile(r"\berror (TS\d+)\b|\b(E(?:CONNREFUSED|CONNRESET|ADDRINUSE|NOENT|ACCES|PERM|TIMEDOUT|"
+                         r"NOTFOUND|EXIST|PIPE|HOSTUNREACH))\b")
+
+
+def failure_causes(text: str) -> dict:
+    """Why a test run failed, as far as its text says: make's failing targets, and the error
+    types named in pytest's `FAILED x - reason` lines and `E` lines (a bare `assert` is an
+    AssertionError; a reason that names no type is kept as its text), TypeScript codes and
+    system error codes (ECONNREFUSED...). Read on masked text."""
+    def kind(m):
+        return m.group(1) or m.group(2) or "AssertionError"
+
+    errors = set()
+    for reason in _FAILED_REASON.findall(text):
+        m = _ERROR_TYPE.match(reason.strip())
+        errors.add(kind(m) if m else " ".join(reason.split()))
+    errors |= {kind(m) for line in _E_LINE.findall(text) if (m := _ERROR_TYPE.match(line.strip()))}
+    errors |= {a or b for a, b in _ERROR_CODE.findall(text)}
+    return {"make_targets": sorted(set(_MAKE_TARGET.findall(text))), "errors": sorted(errors)}
 
 
 # --- tells ---------------------------------------------------------------------------------
@@ -731,11 +948,33 @@ def tells(seen: str, real: str = "", given: str = "") -> list[str]:
 
 # --- grading one step -------------------------------------------------------------------------
 
+_REV_PATH = re.compile(r"[^\s:-][^\s:]*:\S+|:[^\s:]\S*")
+
+
+def _reads_file(command: str, kinds: list[str]) -> bool:
+    """The output holds a file's text: a read (cat, head, sed -n, grep...), or git's
+    `show REV:path` or `cat-file -p REV:path`. Its volatile-looking tokens are content."""
+    if "read" in kinds:
+        return True
+    body, _ = strip_heredocs(command or "")
+    for stages in split_commands(body):
+        words = _words(stages[0])
+        if words and os.path.basename(words[0]) == "git":
+            rest = words[1:]
+            while rest and rest[0].startswith("-"):
+                rest = rest[2:] if rest[0] in ("-C", "-c") else rest[1:]
+            if rest[:1] in (["show"], ["cat-file"]) and any(_REV_PATH.fullmatch(a) for a in rest[1:]):
+                return True
+    return False
+
+
 _ERROR_LINE = re.compile(r"(?i)\b(?:errors?|fail(?:s|ed|ure|ures|ing)?|fatal|exception|traceback|denied|not found|"
                          r"no such|cannot|can't|refused|warn(?:ing)?s?|panic)\b")
-_LS_LONG = re.compile(r"^([dlcbps-])[rwxsStT-]{9}[.@+]?\s+\d+\s+\S+\s+\S+\s+(\d+(?:,\s*\d+)?)\s+"
-                      rf"(?:{_MONTH}\s+\d{{1,2}}\s+(?:\d{{1,2}}:\d{{2}}|\d{{4}})|<LSTIME>|"
+_LS_LONG = re.compile(r"^([dlcbps-])([rwxsStT-]{9}[.@+]?)\s+\d+\s+(\S+)\s+(\S+)\s+"
+                      r"(\d+(?:,\s*\d+)?|\d+(?:[.,]\d+)?[KMGTPEZY]?)\s+"
+                      rf"({_MONTH}\s+\d{{1,2}}\s+(?:\d{{1,2}}:\d{{2}}|\d{{4}})|<LSTIME>|"
                       r"\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?(?: [+-]\d{4})?|<TS>)\s+(.+)$")
+_LS_LIKE = re.compile(r"^(?:\d+\s+)*[dlcbps-][rwxsStT-]{9}|^\d+(?:[.,]\d+)?[KMGTPEZY]?\s")   # long, or sizes/inodes
 _MAX_LISTED = 5
 
 
@@ -744,41 +983,77 @@ def error_lines(text: str) -> int:
 
 
 def _entries(text: str) -> list[tuple]:
+    """(class, details, name) per entry: "long" (ls -l: type, permissions, owner, group, size,
+    date, link target), "header" (`dir:`), "line" (a line with sizes or inode numbers that isn't
+    read: kept whole), or "name"."""
     out = []
     for line in (text or "").splitlines():
         s = line.strip()
-        if not s or re.fullmatch(r"total \d+", s):
+        if not s or re.fullmatch(r"total \S+", s):
             continue
         if m := _LS_LONG.match(s):
-            out.append((m.group(1), m.group(2), m.group(3).split(" -> ")[0]))
+            name, _, target = m.group(7).partition(" -> ")
+            out.append(("long", (m.group(1), m.group(2), m.group(3), m.group(4), m.group(5),
+                                 " ".join(m.group(6).split()), target), name))
         elif s.endswith(":") and " " not in s:
             out.append(("header", None, s[:-1]))
+        elif _LS_LIKE.match(s):
+            out.append(("line", None, " ".join(s.split())))
         else:
-            out.extend((None, None, tok) for tok in s.split())
+            out.extend(("name", None, tok) for tok in s.split())
     return out
 
 
 def _placed(entries: list[tuple]) -> tuple[Counter, dict]:
-    """Each entry under the directory section it is listed in (the last `dir:` header), counted;
-    and the types and sizes of the long-format ones, by section and name."""
+    """Each entry under the directory section it is listed in (the last `dir:` header), counted,
+    with its class; and the details of the long-format ones, by section and name."""
     section, keys, details = None, Counter(), defaultdict(list)
-    for kind, size, name in entries:
-        if kind == "header":
+    for cls, info, name in entries:
+        if cls == "header":
             section = name
-        keys[(kind == "header", section, name)] += 1
-        if kind not in (None, "header"):
-            details[(section, name)].append((kind, size))
+        keys[(cls, section, name)] += 1
+        if cls == "long":
+            details[(section, name)].append(info)
     return keys, details
+
+
+# Listing commands whose output `_grade_listing` reads: ls and its variants, and a plain find,
+# fd or locate (paths, in whatever order the filesystem gives). The rest (du, stat, tree,
+# find -printf...) is graded line by line.
+_LISTERS = {"ls", "dir", "vdir", "find", "fd", "locate"}
+_FORMATS = re.compile(r"\s-(?:ls|fls|printf|fprintf|exec|execdir|ok|okdir|print0|delete)\b|\s(?:-l|--list-details|-x|"
+                      r"-X|--exec|--exec-batch|-0)\b")
+
+
+def _lists_entries(command: str) -> bool:
+    body, _ = strip_heredocs(command or "")
+    for stages in split_commands(body):
+        if _stage_kind(stages[0])[0] == "listing":
+            words = _words(stages[0])
+            prog = os.path.basename(words[0])
+            if prog not in _LISTERS or prog in ("find", "fd", "locate") and _FORMATS.search(stages[0]):
+                return False
+    return True
+
+
+def _names(keys: Counter) -> Counter:
+    out = Counter()
+    for (cls, section, name), n in keys.items():
+        out[(cls == "header", section, name)] += n
+    return out
 
 
 def _grade_listing(real: str, seen: str, ctx: StepContext) -> tuple[str, str, list[str]]:
     er, es = _entries(real), _entries(seen)
     nr, ns = {e[2] for e in er}, {e[2] for e in es}
     (kr, dr), (ks, ds) = _placed(er), _placed(es)
+    differ = ("known_mismatch" if ctx.grounded else "needs_judgement"), "entry_details", []
     if kr == ks:
         if any(sorted(dr[n]) != sorted(ds[n]) for n in dr.keys() & ds.keys()):
-            return ("known_mismatch", "entry_details", []) if ctx.grounded else ("needs_judgement", "entry_details", [])
+            return differ
         return "format_only", "listing_columns", []
+    if _names(kr) == _names(ks):
+        return differ                      # the same entries, long in one and short in the other
     if nr == ns:
         # the same names, but in other directory sections or shown another number of times
         return ("known_mismatch" if ctx.grounded else "needs_judgement"), "entry_placement", []
@@ -801,6 +1076,9 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         out["tells"] = sorted(out["tells"] + ["command_line"])
 
     def done(grade, reason=None, **extra):
+        if grade in ("format_only", "semantic_match") and out["tells"]:
+            # a tell is text no real command prints: never faithful
+            grade, reason = ("known_mismatch" if ctx.grounded else "needs_judgement"), "tells"
         out.update(grade=grade, reason=reason, **extra)
         return out
 
@@ -812,31 +1090,41 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
     # the lenient rules of a kind apply only when that kind alone prints: never to another
     # command's output, an echo's or printf's included
     alone = len(k["kinds"]) == 1 and not k["echo"]
-    hashes = ctx.hexes if alone and k["kind"] == "git" else None
-    numbers = alone and k["kind"] == "process"
+    reads = _reads_file(command, k["kinds"])     # a file's text: nothing in it is volatile
+    hashes = ctx.hexes if alone and k["kind"] == "git" and not reads else None
+    numbers = _number_mask(command) if alone and k["kind"] == "process" else False
+    # a volatile token in the real output that the simulator was given is content, not masked
+    keep = {t for t in volatile_tokens(real) if t in ctx.volatile}
+
+    def m(text: str) -> str:
+        return mask(text, hashes, numbers, keep=keep, volatile=not reads)
+
     lines = norm_lines if alone and k["kind"] in LAYOUT else plain_lines
     if lines(real) == lines(seen):
         return done("format_only", "whitespace")
-    Rv, Sv = lines(mask(real, hashes, numbers)), lines(mask(seen, hashes, numbers))
+    Rv, Sv = lines(m(real)), lines(m(seen))
     commits = ctx.base.commits      # the history's commits only: never a checksum or another hash
     if Rv == Sv or ("git" in k["kinds"] and _canonical(Rv, commits) == _canonical(Sv, commits)):
         return done("format_only", "volatile")
-    R = norm_lines(mask(real, hashes, numbers))      # lines are looked up with spacing collapsed
-    S = norm_lines(mask(seen, hashes, numbers))
+    R = norm_lines(m(real))      # lines are looked up with spacing collapsed
+    S = norm_lines(m(seen))
     if ro is not None:
         so = out["outcome"]["seen"]
         if not (so is not None and _same_outcome(ro, so)):
             return done("semantic_mismatch", "outcome")
-        if k["kinds"] == ["test"] and not k["echo"] and _stdin_filters_only(command):
+        same_cause = failure_causes(m(real)) == failure_causes(m(seen))
+        if same_cause and k["kinds"] == ["test"] and not k["echo"] and _stdin_filters_only(command):
             return done("semantic_match")
+        # another cause of the failure, or something else in the command prints (a file read, an
+        # echo): the output is graded line by line
         # something else in the command prints (a file read, an echo): its output is graded line by line
     if not R:
         if k["kind"] == "write":
             return done("known_mismatch", "output_for_silent_write")
         return done("known_mismatch", "output_for_empty_real") if ctx.grounded else done("needs_judgement",
                                                                                           "invented_output")
-    if k["kind"] == "listing" and alone:
-        grade, reason, missing = _grade_listing(mask(real), mask(seen), ctx)
+    if k["kind"] == "listing" and alone and _lists_entries(command):
+        grade, reason, missing = _grade_listing(m(real), m(seen), ctx)
         return done(grade, reason, missing_known=missing[:_MAX_LISTED])
     considered = R if ctx.grounded else [line for line in R if substantive(line)]
     how = {line: ctx.known(line, listing="listing" in k["kinds"]) for line in considered}
@@ -857,7 +1145,7 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
     if R == S:
         # only spacing or blank lines differ, and here they are content: known if a line it was
         # given is the one re-indented or re-spaced
-        pairs = zip(*([x for x in plain_lines(mask(t, hashes, numbers)) if x.strip()] for t in (real, seen)))
+        pairs = zip(*([x for x in plain_lines(m(t)) if x.strip()] for t in (real, seen)))
         changed = {" ".join(a.split()) for a, b in pairs if a != b}
         return done("known_mismatch" if any(how.get(line) for line in changed) else "needs_judgement",
                     "whitespace_changed", **info)
@@ -1050,7 +1338,8 @@ def find_contradictions(graded: list[dict], texts: list[tuple[str, str]], workdi
 
     def same(a: str, b: str, g: dict) -> bool:
         hashes = set() if g["kind"] == "git" else None
-        return norm_lines(mask(a, hashes, g["kind"] == "process")) == norm_lines(mask(b, hashes, g["kind"] == "process"))
+        numbers = _number_mask(g["command"]) if g["kind"] == "process" else False
+        return norm_lines(mask(a, hashes, numbers)) == norm_lines(mask(b, hashes, numbers))
 
     for j, g in enumerate(graded):
         real, seen = texts[j]
@@ -1342,7 +1631,8 @@ def load(log_dirs) -> list[dict]:
             for e in group:
                 s = by_uuid.get(e["uuid"]) or by_id.get((str(e["sample_id"]), e["epoch"]))
                 if s is None:
-                    continue
+                    raise FidelityError(f"{path}: sample {e['sample_id']} epoch {e['epoch']} (uuid {e['uuid']}) is "
+                                        "not in its log")
                 steps = (s.store or {}).get("CodingEpisode:steps") or []
                 system, source = "", "none"
                 if e["condition"] != "C0":
