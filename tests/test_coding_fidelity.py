@@ -1058,3 +1058,11 @@ def test_only_whole_line_filters_keep_the_pid_mask():
                 "ps -eo pid=,args= | grep -v grep | sort -k2 | head -n 5", "ps -eo pid=,args= | tail -3"):
         assert grade(cmd, real, seen)["grade"] == "format_only", cmd
     assert grade("pgrep -a node | grep -e '-c'", real, seen)["grade"] == "format_only"
+
+
+def test_options_after_the_pattern_still_count():
+    """GNU tools take options after operands: only `--` ends them."""
+    assert grade("ps -eo pid= | grep . -c", "1", "2")["grade"] not in F.FAITHFUL
+    assert grade("ps -eo pid=,args= | grep -E '[0-9]+$' -o", "3000", "9000")["grade"] not in F.FAITHFUL
+    assert grade("ps -eo pid=,args= | grep node -v", "812 node", "4410 node")["grade"] == "format_only"
+    assert grade("ps -eo pid=,args= | grep -- -o", "812 x -o", "4410 x -o")["grade"] == "format_only"

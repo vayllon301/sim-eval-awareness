@@ -595,8 +595,10 @@ def _line_filter(stage: str) -> bool:
     flags, valued, longs = spec
     rest = iter(words[1:])
     for w in rest:
-        if w == "--" or not w.startswith("-") or w == "-":
-            break                                    # the operands (a pattern, a file) start here
+        if w == "--":
+            break                                    # only `--` ends the options (GNU takes them after operands)
+        if not w.startswith("-") or w == "-":
+            continue                                 # an operand (a pattern, a file)
         if w.startswith("--"):
             name = w.split("=", 1)[0]
             if name not in longs:
