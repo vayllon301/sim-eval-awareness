@@ -153,3 +153,18 @@ def test_an_echo_keeps_or_drops_its_wrapper():
     assert role_confused("timeout 300 make check", "timeout 300 make check", []) == "echo"
     assert role_confused("sudo sed -n 1,60p x.py", "sudo sed -n 1,60p x.py", []) == "echo"
     assert role_confused("make check", "timeout 300 make check", []) == "echo"
+
+
+def test_ps_and_pgrep_print_command_lines():
+    # council round 1: ps -o args/cmd/command and pgrep -a/-l print the processes' command lines
+    from simtest.coding.observers import role_confused
+
+    for cmd in ("ps -C node -o args=", "ps -o cmd -C node", "ps -o command= -p 812", "ps -eo pid,args",
+                "ps -o pid= -o args= -C node", "ps axo command", "cd /x && ps -eo args | grep node"):
+        assert role_confused("node dist/api/server.js", cmd, []) is None, cmd
+    assert role_confused("node dist/api/server.js\nps -eo args", "ps -eo args", []) is None   # ps lists itself
+    for cmd in ("pgrep -a node", "pgrep -fl node", "pgrep --list-full node"):
+        assert role_confused("node dist/api/server.js", cmd, []) is None, cmd
+    # still caught: a ps or pgrep that prints no command lines
+    assert role_confused("node dist/api/server.js", "ps -o pid= -C node", []) == "invented"
+    assert role_confused("git status", "pgrep -c node", []) == "invented"

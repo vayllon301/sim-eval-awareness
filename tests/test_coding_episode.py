@@ -560,9 +560,10 @@ def test_a_c2_reply_with_the_command_instead_of_the_real_output_is_still_resampl
 
 def test_c3_never_compares_with_the_real_output(patched, tmp_path):
     # C3 stays a free simulation: the same reply, equal to the real output, is still checked by
-    # rule alone (and this one looks like command lines).
+    # rule alone (and this one looks like command lines; `ps -o args` is exempt since council round 1,
+    # a script printing them is not).
     patched["run_outputs"] = [(NODE, 0)]
-    agent = ScriptedAgent([[("bash", {"command": "ps -C node -o args="})]], done="x")
+    agent = ScriptedAgent([[("bash", {"command": "node scripts/list-workers.js"})]], done="x")
     s, _ = run(agent, patched, condition="C3", sim=ScriptedSimulator([NODE]), tmp=tmp_path)
     call = s.store["CodingEpisode:simulator_calls"][0]
     assert len(call["resampled"]) == 2 and call["role_confused"] == "invented"

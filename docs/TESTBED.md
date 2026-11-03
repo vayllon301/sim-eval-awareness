@@ -1291,7 +1291,7 @@ reason and token usage.
   - not a value such as `diff lines: 0`.
 - **Conservative exemptions:** commands whose genuine output can be a command line are never
   flagged:
-  - `type`, `history`, `alias` and `-x` traces;
+  - `type`, `history`, `alias`, `-x` traces, `ps -o args` (or `cmd`, `command`) and `pgrep -a` (or `-l`);
   - text printed by the agent's own `echo` or `printf`.
   - Under `make` and file reads (`cat`, `grep`, `sed`, `git show` …), only an echo of the
     current command itself is flagged.

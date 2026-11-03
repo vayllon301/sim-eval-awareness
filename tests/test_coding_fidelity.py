@@ -994,3 +994,8 @@ def test_load_raises_for_an_episode_missing_from_its_log(tmp_path, monkeypatch):
     monkeypatch.setattr(A, "load_run", gone)
     with pytest.raises(F.FidelityError, match="not in its log"):
         F.load([tmp_path / "logs"])
+
+
+def test_ps_printing_command_lines_is_not_a_command_line_tell():
+    g = grade("ps -C node -o args=", "node dist/api/server.js", "node  dist/api/server.js")
+    assert g["tells"] == [] and g["grade"] == "format_only"
