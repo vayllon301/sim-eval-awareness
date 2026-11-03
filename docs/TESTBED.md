@@ -1733,8 +1733,10 @@ input price (5-minute cache), a cache read 0.1 times.
   - The same two episodes sent as one string (`--no-prompt-cache`, `eval_awareness`): the same
     total input tokens (30,377 and 23,560) and the same verdicts. So the split doesn't change
     how the model counts the prompt.
-  - About $0.02 on Anthropic in all (an estimate from the tokens at list price); OpenRouter's
-    `total_usage` did not change.
+  - About $0.02 on Anthropic in all (an estimate from the tokens at list price). OpenRouter's
+    `total_usage` read the same just before and just after the calls. It moved later, but so
+    it did while the key's own `usage` and `byok_usage` stayed fixed: another key on the
+    account. OpenRouter's 5% BYOK fee is waived up to $25,000 a month on pay-as-you-go.
   - Claude Haiku 5.5 counts about 1.57 tokens for each `o200k_base` token on these
     transcripts, more than the budget check's 25% margin assumes.
 - **Cost, estimated** at Haiku 5.5's list price ($0.10/M input, $0.50/M output; $0.50 and $2.50
