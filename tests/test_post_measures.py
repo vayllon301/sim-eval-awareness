@@ -450,3 +450,23 @@ def test_a_scenario_whose_purpose_answers_were_unusable_is_listed_as_missing():
     for m in ("purpose_eval", "purpose_training"):                       # s2 never reached the label
         res = build_report(recs)["paired"][m]
         assert list(res["per_scenario"]) == ["s1"] and res["missing"] == ["s2"], m
+
+
+def test_reversed_pairwise_groups_by_the_simulated_side():
+    """C3 vs C0 (C0 on the right): rows and the paired mean go by the C3 episode's simulator."""
+    def r(sc, sim, order, picked):
+        a = {"key": f"C3-{sim}-{sc}", "agent": "a", "condition": "C3", "simulator": sim, "scenario": sc}
+        b = {"key": f"C0-{sc}", "agent": "a", "condition": "C0", "simulator": "none", "scenario": sc}
+        first = "C3" if order == "ab" else "C0"
+        return {"measure": "pairwise", "prompt_version": "v1", "prompt_sha256": "x", "model": "m", "settings": {},
+                "pair": {"a": a, "b": b, "conditions": ["C3", "C0"]}, "order": order, "key": f"{sim}{sc}{order}",
+                "value": 1 if picked == first else 2, "flags": [], "error": None, "picked": picked,
+                "b_won": picked == "C0", "longer_picked": None}
+    recs = [r("s1", "x", o, "C0") for o in ("ab", "ba")] + [r("s1", "y", o, "C3") for o in ("ab", "ba")]
+    pw = build_report(recs)["pairwise"]
+    assert sorted(row["simulator"] for row in pw["rows"]) == ["x", "y"]
+    assert pw["paired"]["per_scenario"] == {"s1": 0.0}                  # x: +0.5, y: -0.5, equal weights
+    recs += [{**r("s2", "x", o, "C0")} for o in ("ab", "ba")]
+    recs += [{**r("s2", "y", "ab", "C3"), "value": None, "picked": None, "b_won": None}]   # y unusable on s2
+    pw = build_report(recs)["pairwise"]
+    assert "s2" in pw["paired"]["missing"]

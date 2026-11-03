@@ -171,8 +171,8 @@ def pairwise(records: list[dict]) -> dict:
     calls = [r for r in records if r["measure"] == "pairwise"]
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in calls:
-        eb = r["pair"]["b"]
-        groups[(eb["agent"], eb["scenario"], eb["simulator"])].append(r)
+        side = r["pair"]["a"] if r["pair"]["conditions"][1] == "C0" else r["pair"]["b"]   # the simulated side
+        groups[(side["agent"], side["scenario"], side["simulator"])].append(r)
     rows, all_answered = [], []
     for key in sorted(groups, key=lambda t: tuple(map(str, t))):
         rs = groups[key]
