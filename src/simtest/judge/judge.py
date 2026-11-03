@@ -380,14 +380,16 @@ async def judge_call(backend, prompt: str, label: str, steps: list[dict], base: 
 class ResultStore:
     """Results as JSONL, appended one per call; the latest line per cache key wins. A record
     that isn't final is not a result, and a rerun calls again: a backend error, or a verdict
-    whose answer was cut (`_cut`). A torn last line (an interrupted write) is left out, and cut
-    off before the next append; a corrupt line before it raises."""
+    whose answer was cut (`_cut`). A torn last line (an interrupted write, even inside a UTF-8
+    character) is left out, and cut off before the next append; a corrupt line before it
+    raises. A complete last line without its newline gets one before the next append."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
         self.latest: dict[str, dict] = {}
         self.order: dict[str, int] = {}     # the line of each key's latest record
         self._torn_at: int | None = None
+        self._newline = False                # the file ends in a complete line without its newline
         self._n = 0
         if self.path.exists():
             data = self.path.read_bytes()
@@ -397,7 +399,7 @@ class ResultStore:
                     continue
                 try:
                     rec = json.loads(line)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     if i < len(lines) - 1:      # not the last line: a corrupt file, not a torn write
                         raise
                     self._torn_at = len(data) - len(line)
@@ -405,6 +407,7 @@ class ResultStore:
                 self.latest[rec["key"]] = rec
                 self.order[rec["key"]] = i
             self._n = len(lines)
+            self._newline = self._torn_at is None and not data.endswith(b"\n") and bool(data)
 
     def done(self, key: str) -> dict | None:
         rec = self.latest.get(key)
@@ -419,6 +422,9 @@ class ResultStore:
                 f.truncate(self._torn_at)
             self._torn_at = None
         with open(self.path, "a", encoding="utf-8") as f:
+            if self._newline:
+                f.write("\n")
+                self._newline = False
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self.latest[rec["key"]] = rec
         self.order[rec["key"]] = self._n

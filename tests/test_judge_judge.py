@@ -644,3 +644,27 @@ def test_a_stored_cut_scout_verdict_is_not_final(tmp_path):
                          "scout": {"stop_reason": "tool_calls"}}))
     assert J.ResultStore(p).done("s1") is not None and J.read_results(p)[0]["value"] == "EVAL"
 
+
+def test_a_torn_multibyte_last_line_is_tolerated(tmp_path):
+    rec = {"key": "k1", "label": "eval_awareness", "episode": {"label_id": "L1"}, "error": None}
+    p = tmp_path / "r.jsonl"
+    torn = json.dumps({**rec, "key": "k2", "rationale": "café"}, ensure_ascii=False).encode()
+    torn = torn[:torn.index("é".encode()) + 1]                           # half of a two-byte character
+    p.write_bytes(_lines(rec).encode() + torn)
+    store = J.ResultStore(p)
+    assert list(store.latest) == ["k1"]
+    store.append({**rec, "key": "k3"})
+    assert list(J.ResultStore(p).latest) == ["k1", "k3"]
+    p.write_bytes(_lines(rec).encode() + torn + b"\n" + _lines({**rec, "key": "k3"}).encode())
+    with pytest.raises(UnicodeDecodeError):
+        J.ResultStore(p)                                                 # not the last line: a corrupt file
+
+
+def test_a_complete_last_line_without_its_newline_is_not_glued_to_the_next(tmp_path):
+    rec = {"key": "k1", "label": "eval_awareness", "episode": {"label_id": "L1"}, "error": None}
+    p = tmp_path / "r.jsonl"
+    p.write_text(json.dumps(rec))
+    store = J.ResultStore(p)
+    assert list(store.latest) == ["k1"]
+    store.append({**rec, "key": "k2"})
+    assert list(J.ResultStore(p).latest) == ["k1", "k2"]
