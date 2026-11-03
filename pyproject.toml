@@ -14,6 +14,7 @@ dependencies = [
     "openai>=3.35.1",
     "pandas>=3.0.6",
     "pyyaml>=6",
+    "anthropic>=2.4.0",
 ]
 
 [project.optional-dependencies]
