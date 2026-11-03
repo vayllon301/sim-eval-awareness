@@ -885,6 +885,17 @@ def workdir_of(system: str) -> str | None:
     return m.group(1) if m else None
 
 
+def real_rendering(output: str, seen: str | None) -> str:
+    """C0's rendering of a real output as the log rendered it: a log from before 02-11-2026
+    kept leading blank lines and capped with them (coding.analysis.legacy_tool_output)."""
+    from ..coding.analysis import legacy_tool_output
+
+    real = tool_output(output)
+    if seen is not None and seen != real and seen == legacy_tool_output(output):
+        return seen
+    return real
+
+
 def grade_episode(steps: list[dict], condition: str, system: str = "") -> dict:
     """Grades for an episode's simulated bash steps (every executed bash step with a real
     output and an observation), the first divergence, and the contradictions."""
@@ -902,7 +913,7 @@ def grade_episode(steps: list[dict], condition: str, system: str = "") -> dict:
         if seen is None:
             no_obs += 1
             continue
-        real = tool_output(result.get("output") or "")
+        real = real_rendering(result.get("output") or "", seen)
         g = grade_step(command, real, seen, ctx.for_step(command, real))
         graded.append({"step": s.get("step"), "turn": s.get("turn"), "ordinal": len(graded), "command": command, **g})
         texts.append((real, seen))
@@ -1409,7 +1420,8 @@ def item_key(ep: dict, g: dict, real: str, seen: str) -> str:
 
 def _texts(ep: dict, g: dict) -> tuple[str, str]:
     raw = next((s for s in ep.get("raw_steps") or [] if s.get("step") == g["step"]), {})
-    return tool_output((raw.get("result") or {}).get("output") or ""), raw.get("observation") or ""
+    seen = raw.get("observation") or ""
+    return real_rendering((raw.get("result") or {}).get("output") or "", seen), seen
 
 
 def plan_judge(episodes: list[dict], prompt: dict, backend, budget: int = JUDGE_BUDGET,

@@ -44,7 +44,7 @@ def _simulator(ep: dict) -> str:
     return ep.get("simulator") or NO_SIMULATOR
 
 
-def _legacy_tool_output(text: str) -> str:
+def legacy_tool_output(text: str) -> str:
     """tool_output before 02-11-2026: leading blank lines kept, then capped."""
     return cap(text.replace("\x00", "\ufffd").rstrip())
 
@@ -64,7 +64,7 @@ def step_divergence(steps: list[dict]) -> dict:
         # logs from before 02-11-2026 kept a real output's leading blank lines in C0 (finalize),
         # so their observation may be the old rendering, capped with them
         seen, real = s.get("observation") or "", result["output"]
-        if seen != tool_output(real) and seen != _legacy_tool_output(real):
+        if seen != tool_output(real) and seen != legacy_tool_output(real):
             n_div += 1
     return {"n_bash": n_bash, "n_divergent": n_div}
 

@@ -1,7 +1,7 @@
 """Docker-marked: the N2 pilot config end to end, with no model at all.
 
-`configs/coding/pilot.yaml` runs as written (its six flows scenarios, C0, C3 and C2 in that
-order, its rawchat models, sampling, max_connections and retries) except for one epoch and
+`configs/coding/pilot.yaml` runs as written (its six flows scenarios, C0, C3 and C2 mixed in
+one queue, its rawchat models, sampling, max_connections and retries) except for one epoch and
 the two base URLs, which point at local fake chat servers (fake_chat.py). They play:
 
 - an agent that does what a coding agent does: reads the README, the git state and the code,
@@ -15,8 +15,8 @@ the two base URLs, which point at local fake chat servers (fake_chat.py). They p
 Then every downstream tool runs on the logs: summarize, the post-episode summary checks, the
 judge's transcript and label manifest (blinding), `post ask`/`report` with C2 as the compared
 condition, and `equiv contexts`. C2 had never run in the flows world before the pilot (LOG.md,
-02-11-2026). One module-scoped run: the run's own queue (src/simtest/runqueue.py), six worlds at a time, about
-8 minutes on the laptop. A world that boots too slowly under load is an infrastructure error:
+02-11-2026). One module-scoped run: the run's own queue (src/simtest/runqueue.py), the pilot's 12 worlds at a
+time, about 8 minutes on the laptop. A world that boots too slowly under load is an infrastructure error:
 the attempt is kept and re-run, as in the pilot, and the checks read what the pilot would.
 """
 
@@ -29,6 +29,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -42,6 +43,7 @@ from simtest.coding.run import REPO_DIR, run_config
 from simtest.coding.scenario import load_scenario
 from simtest.coding.snapshot import session_snapshot
 from simtest.judge import transcript as T
+from simtest.runqueue import read_attempts
 from simtest.judge.pool import build_manifest, leak_hits
 from coding_helpers import docker_available
 from fake_chat import FakeChat
@@ -222,15 +224,22 @@ def pilot(tmp_path_factory):
     # As the pilot reads them (coding.analysis.load_run): an interrupted attempt is kept, and its
     # re-run is a new sample; a completed sample that a retry log reuses keeps its uuid, and the
     # newest log is read (log names start with the time).
-    scored, errored = {}, []
+    scored, errored, logged_attempts = {}, [], set()
     for path in sorted(Path(log_dir).glob("*.eval")):
         log = read_eval_log(str(path), resolve_attachments=True)
         condition = log.eval.task_args["condition"]
         for s in log.samples or []:
+            logged_attempts.add(((s.store or {}).get("CodingEpisode:attempt") or {}).get("id"))
             if s.error is None:
                 scored.setdefault(condition, {})[s.uuid] = (log, s)
             else:
                 errored.append((condition, s))
+    # The run queue re-runs a failed attempt in place, and Inspect keeps only its error: the
+    # solver kept it under attempts/ (as coding.analysis.load_run reads it).
+    for rec in read_attempts(Path(log_dir) / "attempts"):
+        if (rec.get("attempt") or {}).get("id") not in logged_attempts:
+            errored.append((rec["key"][0], SimpleNamespace(id=rec.get("sample_id"), store=rec.get("store") or {},
+                                                           error=SimpleNamespace(message=str(rec.get("error"))))))
     print(f"\npilot offline: {minutes:.1f} min, {sum(map(len, scored.values()))} episodes scored, "
           f"{len(errored)} attempts re-run")
     for c, s in errored:

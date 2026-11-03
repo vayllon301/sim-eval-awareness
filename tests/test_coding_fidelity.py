@@ -837,3 +837,12 @@ def test_the_judge_needs_yes_for_a_real_model(tmp_path, monkeypatch, capsys):
           str(tmp_path / "j.jsonl")])
     out = capsys.readouterr().out
     assert "1 call" in out and "--yes" in out and not called and not (tmp_path / "j.jsonl").exists()
+
+
+def test_a_c0_log_from_before_leading_blank_lines_were_dropped_is_exact():
+    # before 02-11-2026 C0 kept a real output's leading blank line, and capped with it
+    from simtest.coding.machine import cap
+    for real in ("\n> app@1.0 build\nok", "\n" + "x" * 20500):
+        legacy = cap(real.rstrip())
+        out = F.grade_episode([step(0, "npm run build", real, legacy)], "C0", SNAPSHOT)
+        assert [g["grade"] for g in out["steps"]] == ["exact"], real[:20]
