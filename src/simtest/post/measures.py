@@ -337,31 +337,31 @@ def _call(measure, prompt_text, base, backend, budget, retry: bool) -> dict:
 
 
 def pairs(episodes: list[dict], a: str = "C0", b: str = "C3") -> tuple[list[tuple[dict, dict]], list[dict]]:
-    """(pairs, unpaired): within agent x scenario, the condition-a episodes and the
-    condition-b episodes of one simulator (and, when a is simulated too, a's of the same
-    simulator), each sorted by epoch, paired in that order (epochs are exchangeable, so this is
-    a fixed arbitrary pairing). Unpaired episodes are listed."""
+    """(pairs, unpaired): within agent x scenario x simulator, the condition-a episodes and the
+    condition-b episodes, each sorted by epoch, paired in that order (epochs are exchangeable, so
+    this is a fixed arbitrary pairing). C0 has no simulator: its episodes are shared by every
+    simulator of the other condition, on either side. Unpaired episodes are listed."""
     by_a: dict[tuple, list[dict]] = {}
     by_b: dict[tuple, list[dict]] = {}
-    a_sim = lambda e: None if a == "C0" else e["simulator"]  # noqa: E731  (C0 is shared; a simulated a is not)
+    sim = lambda c, e: None if c == "C0" else e["simulator"]  # noqa: E731  (C0 is shared)
     for e in episodes:
         if e["condition"] == a:
-            by_a.setdefault((e["agent"], e["scenario"], a_sim(e)), []).append(e)
+            by_a.setdefault((e["agent"], e["scenario"], sim(a, e)), []).append(e)
         elif e["condition"] == b:
-            by_b.setdefault((e["agent"], e["scenario"], e["simulator"]), []).append(e)
+            by_b.setdefault((e["agent"], e["scenario"], sim(b, e)), []).append(e)
+    groups, other, other_c = (by_a, by_b, a) if b == "C0" else (by_b, by_a, b)   # the simulated side's simulators
     order = lambda e: (e["epoch"], e["key"])  # noqa: E731
-    out, unpaired, used = [], [], set()
-    for (agent, scenario, sim), bs in sorted(by_b.items(), key=lambda kv: tuple(map(str, kv[0]))):
-        as_ = sorted(by_a.get((agent, scenario, None if a == "C0" else sim), []), key=order)
-        bs = sorted(bs, key=order)
-        for ea, eb in zip(as_, bs):
-            out.append((ea, eb))
-            used.add(ea["key"])
+    out, unpaired = [], []
+    for agent, scenario, s in sorted(groups, key=lambda k: tuple(map(str, k))):
+        as_ = sorted(by_a.get((agent, scenario, None if a == "C0" else s), []), key=order)
+        bs = sorted(by_b.get((agent, scenario, None if b == "C0" else s), []), key=order)
+        out += zip(as_, bs)
         unpaired += [{**ep_ref(e), "reason": f"no {a} partner"} for e in bs[len(as_):]]
-        unpaired += [{**ep_ref(e), "reason": f"no {b}/{sim} partner"} for e in as_[len(bs):]]
-    for k, as_ in by_a.items():
-        if not any((k[0], k[1]) == (kb[0], kb[1]) and k[2] in (None, kb[2]) for kb in by_b):
-            unpaired += [{**ep_ref(e), "reason": f"no {b} episode of this scenario"} for e in as_]
+        unpaired += [{**ep_ref(e), "reason": f"no {b} partner" if b == "C0" else f"no {b}/{s} partner"}
+                     for e in as_[len(bs):]]
+    for k, es in other.items():
+        if not any(k[:2] == g[:2] and k[2] in (None, g[2]) for g in groups):
+            unpaired += [{**ep_ref(e), "reason": f"no {other_c} episode of this scenario"} for e in es]
     return out, unpaired
 
 

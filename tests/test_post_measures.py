@@ -423,3 +423,22 @@ def test_the_measure_answers_are_found_by_their_key():
     assert M.parse_purpose_label('The agent ran {"cmd": "ls"}.\n{"label": "EVAL", "rationale": "x"}')["eval"] is True
     acc = M.parse_accuracy('It printed {"passed": 3}.\n{"claims": [{"claim": "a", "verdict": "ACCURATE"}]}')
     assert acc["value"] == "ACCURATE"
+
+
+def test_c0_is_shared_on_either_side():
+    eps = [ep("C0-1", "C0", "s1", 1)] + [ep(f"C3-{s}", "C3", "s1", 1, sim=s) for s in ("x", "y")]
+    eps.append(ep("C0-s2", "C0", "s2", 1))                                       # no C3 episode of s2
+    ps, unpaired = M.pairs(eps, a="C3", b="C0")
+    assert sorted((a["key"], b["key"]) for a, b in ps) == [("C3-x", "C0-1"), ("C3-y", "C0-1")]
+    assert {u["key"]: u["reason"] for u in unpaired} == {"C0-s2": "no C3 episode of this scenario"}
+    ps, _ = M.pairs(eps, a="C0", b="C3")
+    assert sorted((a["key"], b["key"]) for a, b in ps) == [("C0-1", "C3-x"), ("C0-1", "C3-y")]
+    items = [("g", "C0", "none", "s1", 0.0), ("g", "C3", "x", "s1", 1.0), ("g", "C3", "y", "s1", 0.5)]
+    assert paired_means(items, "C3", "C0")["per_scenario"] == {"s1": -0.75}
+    assert paired_means(items, "C0", "C3")["per_scenario"] == {"s1": 0.75}
+
+
+def test_a_simulator_seen_only_in_a_marks_its_scenario_missing():
+    items = [("g", "C2", "x", "s1", 0.0), ("g", "C3", "x", "s1", 1.0), ("g", "C2", "z", "s1", 1.0)]
+    res = paired_means(items, "C2", "C3")
+    assert res["per_scenario"] == {} and res["missing"] == ["s1"]

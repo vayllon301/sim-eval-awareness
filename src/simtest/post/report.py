@@ -132,29 +132,30 @@ def cells(eps: dict[str, dict]) -> list[dict]:
 
 def paired_means(items: list[tuple[str, str, str, str, float]], a: str, b: str,
                  panel: list[tuple[str, str, str, str]] | None = None) -> dict:
-    """Per-scenario differences of means, b - a: within scenario x agent, the mean of b over each
-    simulator minus the mean of a (C0's one cell, or the same simulator's when a is simulated
-    too), averaged over simulators, then over agents (equal weights, as the coding summary's
+    """Per-scenario differences of means, b - a: within scenario x agent, for each simulator, the
+    mean of b minus the mean of a (C0 has one cell, shared by every simulator, on either side),
+    averaged over simulators, then over agents (equal weights, as the coding summary's
     paired difference). `panel`: (agent, condition, simulator, scenario) of every episode the
     measure was asked of, usable or not. A scenario missing a cell, or with no usable value, is
     left out and listed. Then the exact sign-flip test on the differences."""
     vals: dict[tuple, list[float]] = defaultdict(list)
     agents, sims, scenarios = set(), set(), set()
-    a_sim = lambda sim: None if a == "C0" else sim  # noqa: E731  (C0 is shared)
+    s_of = lambda cond, sim: None if cond == "C0" else sim  # noqa: E731  (C0 is shared)
     for agent, cond, sim, sc in [i[:4] for i in items] + list(panel or []):
         if cond in (a, b):
             agents.add(agent)
             scenarios.add(sc)
-            if cond == b:
+            if cond != "C0":
                 sims.add(sim)
     for agent, cond, sim, sc, v in items:
         if cond in (a, b):
-            vals[(sc, agent, cond, sim if cond == b else a_sim(sim))].append(v)
+            vals[(sc, agent, cond, s_of(cond, sim))].append(v)
     diffs, missing = {}, []
     for sc in sorted(scenarios, key=str):
         per_agent = []
         for g in sorted(agents, key=str):
-            comps = [(vals.get((sc, g, b, s)), vals.get((sc, g, a, a_sim(s)))) for s in sorted(sims, key=str)]
+            comps = [(vals.get((sc, g, b, s_of(b, s))), vals.get((sc, g, a, s_of(a, s))))
+                     for s in sorted(sims, key=str)]
             if not sims or any(not c or not base for c, base in comps):
                 missing.append(sc)
                 break
