@@ -1045,3 +1045,16 @@ def test_a_judgement_corrected_in_the_same_answer_is_unusable():
                          "evidence": "x", "rationale": "y"})
     with pytest.raises(Exception):
         F.parse_judgement(f"My first reading: {first}\nOn reflection, correcting it: {second}")
+
+
+def test_only_whole_line_filters_keep_the_pid_mask():
+    assert grade("pidof node | wc -w", "1", "2")["grade"] not in F.FAITHFUL
+    real, seen = "1:812 node server.js", "9:812 node server.js"
+    for cmd in ("ps -eo pid=,args= | grep -n node", "ps -eo pid=,args= | grep --line-number node"):
+        assert grade(cmd, real, seen)["grade"] not in F.FAITHFUL, cmd
+    assert grade("ps -eo pid=,args= | head -c 40", "812 node se", "813 node se")["grade"] not in F.FAITHFUL
+    real, seen = "812 node server.js -c config", "4410 node server.js -c config"
+    for cmd in ("ps -eo pid=,args= | grep -- '-c'", "ps -eo pid=,args= | grep -e '-c'",
+                "ps -eo pid=,args= | grep -v grep | sort -k2 | head -n 5", "ps -eo pid=,args= | tail -3"):
+        assert grade(cmd, real, seen)["grade"] == "format_only", cmd
+    assert grade("pgrep -a node | grep -e '-c'", real, seen)["grade"] == "format_only"

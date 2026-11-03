@@ -572,16 +572,48 @@ def _mask_columns(text: str, layout: list[str] | None, volatile=_PS_VOLATILE, la
     return "\n".join(out)
 
 
-_LINE_FILTERS = {"grep", "egrep", "fgrep", "head", "tail", "sort", "less", "more", "cat"}   # keep whole lines
+# Stages that print some of their input lines whole, with the options that keep it so: short flags,
+# options that take a value, and long forms. Any other option (grep -c/-o/-n/-b, head -c, ...) means
+# the numbers in the output may no longer be the process's own.
+_LINE_FILTERS = {
+    "grep": ("ivEFGwxsh", "e", {"--ignore-case", "--invert-match", "--extended-regexp", "--fixed-strings",
+                                "--basic-regexp", "--word-regexp", "--line-regexp", "--no-messages",
+                                "--no-filename", "--regexp"}),
+    "head": ("", "n", {"--lines"}), "tail": ("", "n", {"--lines"}),
+    "sort": ("bfhMnruV", "kt", {"--key", "--field-separator", "--numeric-sort", "--reverse", "--unique"}),
+    "cat": ("", "", set()), "less": ("", "", set()), "more": ("", "", set()),
+}
+_LINE_FILTERS["egrep"] = _LINE_FILTERS["fgrep"] = _LINE_FILTERS["grep"]
 
 
 def _line_filter(stage: str) -> bool:
-    """A pipeline stage that prints some of its input lines unchanged (grep -c and -o don't)."""
+    """A pipeline stage that prints some of its input lines whole (see _LINE_FILTERS)."""
     words = _words(stage) or [""]
-    if os.path.basename(words[0]) not in _LINE_FILTERS:
+    spec = _LINE_FILTERS.get(os.path.basename(words[0]))
+    if spec is None:
         return False
-    opts = "".join(w[1:] for w in words[1:] if w.startswith("-") and not w.startswith("--"))
-    return not ("grep" in words[0] and ("c" in opts or "o" in opts or "--count" in words or "--only-matching" in words))
+    flags, valued, longs = spec
+    rest = iter(words[1:])
+    for w in rest:
+        if w == "--" or not w.startswith("-") or w == "-":
+            break                                    # the operands (a pattern, a file) start here
+        if w.startswith("--"):
+            name = w.split("=", 1)[0]
+            if name not in longs:
+                return False
+            if "=" not in w and name in ("--regexp", "--lines", "--key", "--field-separator"):
+                next(rest, None)
+            continue
+        if re.fullmatch(r"-\d+", w) and words[0].endswith(("head", "tail")):
+            continue                                 # head -5
+        for i, ch in enumerate(w[1:]):
+            if ch in valued:
+                if i == len(w) - 2:
+                    next(rest, None)                 # the value is the next word
+                break
+            if ch not in flags:
+                return False
+    return True
 
 
 def _number_mask(command: str):
@@ -594,11 +626,11 @@ def _number_mask(command: str):
             progs.append((os.path.basename(words[0]), words[1:]))
             # a later stage that isn't a line filter (wc, awk, cut…) turns the PIDs into other numbers
             counted |= not all(_line_filter(x) for x in stages[1:])
+    if counted:
+        return False
     names = {p for p, _ in progs}
     if names <= _ALL_VOLATILE:
         return True
-    if counted:
-        return False
     if len(progs) != 1:
         return False
     prog, args = progs[0]
