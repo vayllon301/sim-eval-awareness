@@ -1,7 +1,8 @@
 """Prompt caching for the primary judge on Anthropic models through OpenRouter (judge.py,
 backends.py, command.py): the blocks sent concatenate to the exact prompt, only the shared
-prefix (the header and the transcript) carries `cache_control`, the settings and the cache key
-record it, and every other model is called exactly as before. Offline: Inspect's request is captured where it would
+prefix (the header and the transcript) carries `cache_control`, an episode's first call
+finishes before its other calls start, the settings and the cache key record it, and every
+other model is called exactly as before. Offline: Inspect's request is captured where it would
 go on the wire (after OpenRouter's provider adds its markers) and answered locally."""
 
 from __future__ import annotations
@@ -179,3 +180,122 @@ def test_the_cli_turns_caching_off_and_the_plan_says_so(wire, tmp_path):
     off = C._backend(args("--no-prompt-cache"))
     assert not off.prompt_cache and "prompt cache" not in C._plan_summary(v3_calls(off), J.ResultStore(
         tmp_path / "r.jsonl"), off)
+
+
+# --- the order of the calls --------------------------------------------------------------
+
+LABELS = list(J.LABELS)
+
+
+class Timed:
+    """A backend that logs when each call starts and ends; calls take different times."""
+    name, model, max_output = "fake", "fake", 0
+
+    def __init__(self, prompt_cache=True, quota=False):
+        self.prompt_cache = prompt_cache
+        self.settings = {"prompt_cache": "prefix"} if prompt_cache else {}
+        self.quota = quota
+        self.log, self.live, self.peak = [], set(), 0
+
+    async def complete(self, prompt, cache_prefix=None):
+        ep, label = prompt.split("\n\n")[0].removeprefix("HEAD "), prompt.split("\n\n")[1]
+        self.log.append(("start", ep, label))
+        self.live.add((ep, label))
+        self.peak = max(self.peak, len(self.live))
+        await asyncio.sleep(0.002 * (1 + (int(ep[1:]) * 7 + LABELS.index(label) * 3) % 5))
+        self.live.discard((ep, label))
+        self.log.append(("end", ep, label))
+        if self.quota:
+            raise J.QuotaError("You've hit your usage limit")
+        return {"text": ANY, "stop_reason": "stop"}
+
+
+def fake_calls(n_eps, too_long=()):
+    out = []
+    for i in range(n_eps):
+        for label in LABELS:
+            head = f"HEAD e{i}\n\n"
+            key = f"e{i}:{label}"
+            out.append({"key": key, "label": label, "prompt": head + label, "steps": steps(), "cache_prefix": len(head),
+                        "fits": (f"e{i}", label) not in too_long,
+                        "base": {"key": key, "label": label, "episode": {"key": f"e{i}"}, "prompt_tokens": 9}})
+    return out
+
+
+def first_and_rest(log):
+    """Per episode: the index of its first call's end, and the indices of its other calls' starts."""
+    starts, ends = {}, {}
+    for i, (what, ep, label) in enumerate(log):
+        (starts if what == "start" else ends)[(ep, label)] = i
+    out = {}
+    for ep in {e for _, e, _ in log}:
+        mine = sorted((i, lab) for (e, lab), i in starts.items() if e == ep)
+        lead = mine[0][1]
+        out[ep] = (lead, ends[(ep, lead)], [i for i, lab in mine[1:]])
+    return out
+
+
+def test_an_episode_first_call_finishes_before_its_other_calls_start(tmp_path):
+    be = Timed()
+    recs = asyncio.run(J.run_calls(fake_calls(6), be, J.ResultStore(tmp_path / "r.jsonl"), concurrency=4,
+                                   progress=None))
+    assert len(recs) == 30 and sorted(r["key"] for r in recs) == sorted(c["key"] for c in fake_calls(6))
+    for ep, (lead, lead_end, rest) in first_and_rest(be.log).items():
+        assert lead == LABELS[0] and len(rest) == 4 and all(s > lead_end for s in rest), ep
+    assert be.peak == 4                                   # the slots stay full: concurrency across episodes
+    # Never more than concurrency // 4 + 1 first calls at once, so the calls they release start soon.
+    live_leads, peak_leads = set(), 0
+    for what, ep, label in be.log:
+        if label == LABELS[0]:
+            (live_leads.add if what == "start" else live_leads.discard)(ep)
+            peak_leads = max(peak_leads, len(live_leads))
+    assert peak_leads == 2
+
+
+def test_waiting_calls_of_a_started_episode_go_before_a_new_episode(tmp_path):
+    be = Timed()
+    asyncio.run(J.run_calls(fake_calls(6), be, J.ResultStore(tmp_path / "r.jsonl"), concurrency=4, progress=None))
+    ready = set()                       # calls whose episode's first call has ended, not yet started
+    for what, ep, label in be.log:
+        if what == "end" and label == LABELS[0]:
+            ready |= {(ep, lab) for lab in LABELS[1:]}
+        elif what == "start":
+            if label == LABELS[0]:
+                assert not ready, f"{ep}'s first call started while {sorted(ready)} waited"
+            ready.discard((ep, label))
+    assert not ready
+
+
+def test_without_caching_an_episode_calls_start_together_as_before(tmp_path):
+    be = Timed(prompt_cache=False)
+    asyncio.run(J.run_calls(fake_calls(1), be, J.ResultStore(tmp_path / "r.jsonl"), concurrency=5, progress=None))
+    assert [w for w, _, _ in be.log[:5]] == ["start"] * 5
+
+
+def test_a_too_long_first_call_hands_the_lead_to_the_next_label(tmp_path):
+    be = Timed()
+    store = J.ResultStore(tmp_path / "r.jsonl")
+    recs = asyncio.run(J.run_calls(fake_calls(2, too_long={("e0", LABELS[0])}), be, store, concurrency=4,
+                                   progress=None))
+    assert len(recs) == 10 and store.latest["e0:" + LABELS[0]]["error"]["kind"] == "too_long"
+    lead, lead_end, rest = first_and_rest(be.log)["e0"]
+    assert lead == LABELS[1] and len(rest) == 3 and all(s > lead_end for s in rest)
+
+
+def test_a_rerun_leads_with_the_first_call_left(tmp_path):
+    store = J.ResultStore(tmp_path / "r.jsonl")
+    calls = fake_calls(2)
+    store.append({**calls[0]["base"], "error": None, "verdict_raw": "REAL", "attempts": [{"stop_reason": "stop"}]})
+    be = Timed()
+    recs = asyncio.run(J.run_calls(calls, be, store, concurrency=4, progress=None))
+    assert len(recs) == 9 and ("start", "e0", LABELS[0]) not in be.log
+    lead, lead_end, rest = first_and_rest(be.log)["e0"]
+    assert lead == LABELS[1] and all(s > lead_end for s in rest)
+
+
+def test_a_usage_limit_on_a_first_call_stops_the_cached_run(tmp_path):
+    be = Timed(quota=True)
+    store = J.ResultStore(tmp_path / "r.jsonl")
+    recs = asyncio.run(J.run_calls(fake_calls(3), be, store, concurrency=1, progress=None))
+    assert len(recs) == 1 and recs[0]["error"]["quota"] and len(be.log) == 2
+    assert store.done(recs[0]["key"]) is None             # called again on the next run

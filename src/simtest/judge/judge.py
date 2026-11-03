@@ -22,7 +22,8 @@ each call reads one episode's transcript, rendered exactly as the hand labeller 
   recorded as a `too_long` error.
 - Prompt caching (Anthropic models on OpenRouter, `backends.InspectBackend.prompt_cache`): the
   part of an episode's prompts that its labels share (`cache_prefix_chars`) is sent as its own,
-  cached block. The text the judge reads is the same.
+  cached block, and the episode's first call finishes before its other calls start
+  (`run_calls`). The text the judge reads is the same.
 
 Every record carries the prompt version and the hash of the prompt file, the backend, model
 and settings, the episode key and the transcript hash, under a cache key built from them
@@ -32,11 +33,13 @@ and settings, the episode key and the transcript hash, under a cache key built f
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import re
 import subprocess
 import time
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -553,11 +556,62 @@ def _print(line: str) -> None:
     print(line, flush=True)
 
 
+def first_call_slots(slots: int) -> int:
+    """How many first calls may run at once under prompt caching. Each one releases up to four calls.
+    With about a quarter of the slots on first calls, the released calls start within one to three
+    calls' time (simulated with uneven call times, 93-97% of the slots stay busy): well inside the
+    cache's five minutes."""
+    return slots // 4 + 1
+
+
+async def _first_then_rest(todo: list[dict], one, slots: int, stopped) -> list[dict]:
+    """Prompt caching: an episode's first call to be sent runs alone; when it has finished (whatever
+    its outcome), the episode's other calls run, reading the prefix it wrote. Calls released that
+    way go before any new episode's first call, and at most `first_call_slots` first calls run at
+    once. Up to `slots` calls run at a time, across episodes. A call that might not fit is
+    recorded at once and never holds an episode back."""
+    results: dict[int, dict | None] = {}
+    episodes: dict[str, list[int]] = {}
+    for i, c in enumerate(todo):
+        if not c["fits"]:
+            results[i] = await one(c)          # too_long: never sent
+        else:
+            episodes.setdefault(c["base"]["episode"]["key"], []).append(i)
+    waiting = deque(episodes.values())        # episodes whose first call hasn't started
+    ready: deque[int] = deque()               # calls whose episode's first call has finished
+    running: dict[asyncio.Future, tuple[int, list[int] | None]] = {}   # task -> (call, released calls)
+    max_first = first_call_slots(slots)
+    try:
+        while True:
+            while len(running) < slots and not stopped():
+                if ready:
+                    i = ready.popleft()
+                    running[asyncio.ensure_future(one(todo[i]))] = (i, None)
+                elif waiting and sum(rest is not None for _, rest in running.values()) < max_first:
+                    first, *rest = waiting.popleft()
+                    running[asyncio.ensure_future(one(todo[first]))] = (first, rest)
+                else:
+                    break
+            if not running:
+                break
+            finished, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+            for t in finished:
+                i, rest = running.pop(t)
+                results[i] = t.result()
+                ready.extend(rest or ())
+    finally:
+        for t in running:
+            t.cancel()
+    return [results[i] for i in sorted(results) if results[i] is not None]
+
+
 async def run_calls(calls: list[dict], backend, store: ResultStore, concurrency: int = 4,
                     progress=_print, call=None) -> list[dict]:
     """Every planned call not already in the store; results are appended as they finish.
     `call(c)` makes one call's record (default: `judge_call` on the backend); the second
-    judge (scout.py) passes its own."""
+    judge (scout.py) passes its own. With a backend that caches prompts (`backend.prompt_cache`),
+    each episode's first call finishes before its other calls start (`_first_then_rest`);
+    otherwise every call waits only for a free slot."""
     call = call or (lambda c: judge_call(backend, c["prompt"], c["label"], c["steps"], c["base"],
                                          cache_prefix=c.get("cache_prefix")))
     todo = [c for c in calls if store.done(c["key"]) is None]
@@ -565,14 +619,14 @@ async def run_calls(calls: list[dict], backend, store: ResultStore, concurrency:
     done = 0
     stopped = False
 
-    async def one(c):
+    async def one(c, slot=sem):
         nonlocal done, stopped
         if not c["fits"]:
             rec = finish_record({**c["base"], "attempts": [], "judged_at": _now()}, None, None,
                                 {"kind": "too_long", "message": f"{c['base']['prompt_tokens']} prompt tokens "
                                  "might not fit the budget; not sent, not truncated"}, T.turn_ids(c["steps"]))
         else:
-            async with sem:
+            async with slot:
                 if stopped:
                     return None
                 rec = await call(c)
@@ -589,4 +643,7 @@ async def run_calls(calls: list[dict], backend, store: ResultStore, concurrency:
             progress(f"[{done}/{len(todo)}] {rec['episode']['key']} {rec['label']}: {v}")
         return rec
 
+    if getattr(backend, "prompt_cache", False):
+        return await _first_then_rest(todo, lambda c: one(c, contextlib.nullcontext()), max(1, concurrency),
+                                      lambda: stopped)
     return [r for r in await asyncio.gather(*(one(c) for c in todo)) if r is not None]
