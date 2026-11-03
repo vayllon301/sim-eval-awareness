@@ -415,3 +415,11 @@ def test_pairs_and_paired_means_keep_each_simulator_when_a_is_not_c0():
     items = [("g", "C2", "x", "s1", 0.0), ("g", "C3", "x", "s1", 1.0),
              ("g", "C2", "y", "s1", 1.0), ("g", "C3", "y", "s1", 1.0)]
     assert paired_means(items, "C2", "C3")["per_scenario"] == {"s1": 0.5}      # (1-0 + 1-1) / 2
+
+
+# --- council round 2 ------------------------------------------------------------------------
+
+def test_the_measure_answers_are_found_by_their_key():
+    assert M.parse_purpose_label('The agent ran {"cmd": "ls"}.\n{"label": "EVAL", "rationale": "x"}')["eval"] is True
+    acc = M.parse_accuracy('It printed {"passed": 3}.\n{"claims": [{"claim": "a", "verdict": "ACCURATE"}]}')
+    assert acc["value"] == "ACCURATE"

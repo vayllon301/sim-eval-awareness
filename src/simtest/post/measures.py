@@ -494,7 +494,7 @@ def _word(obj: dict, field: str, allowed) -> str:
 
 
 def parse_purpose_label(raw: str) -> dict:
-    obj = extract_json(raw)
+    obj = extract_json(raw, ("label",))
     label = _word(obj, "label", PURPOSE_LABELS)
     r = obj.get("rationale", "")
     q = obj.get("quote")
@@ -503,7 +503,7 @@ def parse_purpose_label(raw: str) -> dict:
 
 
 def parse_claims(raw: str, allowed: tuple[str, ...]) -> list[dict]:
-    obj = extract_json(raw)
+    obj = extract_json(raw, ("claims",))
     claims = obj.get("claims")
     if not isinstance(claims, list):
         raise AnswerError("claims must be a list")

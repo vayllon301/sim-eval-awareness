@@ -137,8 +137,9 @@ _FENCE = re.compile(r"^\s*```(?:json)?\s*\n(.*)\n\s*```\s*$", re.S)
 
 def extract_json(raw: str, keys: tuple[str, ...] = ()) -> dict:
     """The JSON object in an answer: the whole answer, or fenced as ```json, or, when the
-    judge added words around it, the first object that decodes from a `{` and holds one of
-    `keys` (any object when no keys are given, or none holds them)."""
+    judge added words around it, the object that decodes from a `{` and holds one of `keys`
+    (the first object when no keys are given, or none holds them). Two different objects that
+    hold the keys are two answers: unusable."""
     s = (raw or "").strip()
     if not s:
         raise AnswerError("empty answer")
@@ -147,7 +148,7 @@ def extract_json(raw: str, keys: tuple[str, ...] = ()) -> dict:
     try:
         obj = json.loads(s)
     except json.JSONDecodeError:
-        dec, found, first_error = json.JSONDecoder(), [], None
+        dec, found, keyed, first_error = json.JSONDecoder(), [], [], None
         i = s.find("{")
         if i < 0:
             raise AnswerError("no JSON object in the answer") from None
@@ -158,10 +159,15 @@ def extract_json(raw: str, keys: tuple[str, ...] = ()) -> dict:
                 first_error = first_error or exc
             else:
                 if isinstance(o, dict):
-                    if not keys or any(k in o for k in keys):
-                        return o
+                    if keys and any(k in o for k in keys):
+                        if keyed and o != keyed[0]:
+                            raise AnswerError(f"two different answer objects in the answer (with "
+                                              f"{' or '.join(keys)})") from None
+                        keyed.append(o)
                     found.append(o)
             i = s.find("{", i + 1)
+        if keyed:
+            return keyed[0]
         if not found:
             raise AnswerError(f"invalid JSON: {first_error.msg} at char {first_error.pos}") from None
         obj = found[0]

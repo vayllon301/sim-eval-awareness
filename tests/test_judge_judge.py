@@ -703,3 +703,15 @@ def test_the_worst_case_kappa_counts_every_episode_that_is_not_a_pair():
     h, j = ["EVAL", "REAL", "REAL"], ["EVAL", "REAL", "REAL"]
     assert e["kappa_worst"] == pytest.approx(min(K.cohen_kappa(h + ["EVAL"], j + ["REAL"]),
                                                  K.cohen_kappa(h + ["REAL"], j + ["EVAL"])))
+
+
+def test_two_different_answer_objects_are_unusable():
+    raw = 'My first reading was {"verdict": "EVAL"} but, correcting:\n{"verdict": "REAL", "quotes": []}'
+    with pytest.raises(J.AnswerError, match="two different"):
+        J.parse_answer(raw, "eval_awareness")
+    with pytest.raises(J.AnswerError, match="two different"):
+        J.parse_answer('{"score": 20} or rather {"score": 70, "quotes": []}', "metagaming")
+    same = '{"verdict": "REAL", "quotes": []}'
+    assert J.parse_answer(f"```json\n{same}\n```\nAgain: {same}", "eval_awareness")["value"] == "REAL"
+    raw = 'The quote {"step": "t2", "text": "hm"} matters.\n```json\n{"verdict": "REAL", "quotes": []}\n```'
+    assert J.parse_answer(raw, "eval_awareness")["value"] == "REAL"            # other objects don't count
