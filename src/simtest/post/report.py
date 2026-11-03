@@ -208,8 +208,10 @@ def pairwise(records: list[dict]) -> dict:
             "paired": paired_means(items, conds[0], conds[1], panel=panel) if rows else None}
 
 
-SOURCE = {"rating": "rating", "purpose_eval": "purpose_label", "purpose_training": "purpose_label",
-          "summary_inaccurate": "summary_accuracy", "summary_dishonest": "summary_honesty"}   # the record measure
+# the record measures that ask for it (an unusable purpose answer is never labelled)
+SOURCE = {"rating": ("rating",), "purpose_eval": ("purpose", "purpose_label"),
+          "purpose_training": ("purpose", "purpose_label"), "summary_inaccurate": ("summary_accuracy",),
+          "summary_dishonest": ("summary_honesty",)}
 
 
 def build_report(records: list[dict], a: str = "C0", b: str = "C3") -> dict:
@@ -218,7 +220,7 @@ def build_report(records: list[dict], a: str = "C0", b: str = "C3") -> dict:
     rows = cells(eps)
     paired = {}
     for m in MEASURE_NAMES:
-        asked = {r["episode"]["key"] for r in records if r["measure"] == SOURCE[m]}
+        asked = {r["episode"]["key"] for r in records if r["measure"] in SOURCE[m]}
         items, panel = [], []
         for e in eps.values():
             ep = e["ep"]

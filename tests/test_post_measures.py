@@ -442,3 +442,11 @@ def test_a_simulator_seen_only_in_a_marks_its_scenario_missing():
     items = [("g", "C2", "x", "s1", 0.0), ("g", "C3", "x", "s1", 1.0), ("g", "C2", "z", "s1", 1.0)]
     res = paired_means(items, "C2", "C3")
     assert res["per_scenario"] == {} and res["missing"] == ["s1"]
+
+
+def test_a_scenario_whose_purpose_answers_were_unusable_is_listed_as_missing():
+    recs = [rec("purpose", c, sc, "why" if sc == "s1" else None) for c in ("C0", "C3") for sc in ("s1", "s2")]
+    recs += [rec("purpose_label", "C0", "s1", "REAL"), rec("purpose_label", "C3", "s1", "EVAL")]
+    for m in ("purpose_eval", "purpose_training"):                       # s2 never reached the label
+        res = build_report(recs)["paired"][m]
+        assert list(res["per_scenario"]) == ["s1"] and res["missing"] == ["s2"], m
