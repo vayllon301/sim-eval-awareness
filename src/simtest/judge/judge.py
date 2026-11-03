@@ -367,16 +367,27 @@ async def judge_call(backend, prompt: str, label: str, steps: list[dict], base: 
 
 class ResultStore:
     """Results as JSONL, appended one per call; the latest line per cache key wins. A
-    backend error is not a result: a rerun calls again."""
+    backend error is not a result: a rerun calls again. A torn last line (an interrupted
+    write) is left out, and cut off before the next append; a corrupt line before it raises."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
         self.latest: dict[str, dict] = {}
+        self._torn_at: int | None = None
         if self.path.exists():
-            for line in self.path.read_text().splitlines():
-                if line.strip():
+            data = self.path.read_bytes()
+            lines = data.split(b"\n")
+            for i, line in enumerate(lines):
+                if not line.strip():
+                    continue
+                try:
                     rec = json.loads(line)
-                    self.latest[rec["key"]] = rec
+                except json.JSONDecodeError:
+                    if i < len(lines) - 1:      # not the last line: a corrupt file, not a torn write
+                        raise
+                    self._torn_at = len(data) - len(line)
+                    continue
+                self.latest[rec["key"]] = rec
 
     def done(self, key: str) -> dict | None:
         rec = self.latest.get(key)
@@ -386,13 +397,26 @@ class ResultStore:
 
     def append(self, rec: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self._torn_at is not None:
+            with open(self.path, "r+b") as f:
+                f.truncate(self._torn_at)
+            self._torn_at = None
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self.latest[rec["key"]] = rec
 
 
+def _final(rec: dict) -> bool:
+    return (rec.get("error") or {}).get("kind") != "backend"
+
+
 def read_results(path: Path) -> list[dict]:
-    return list(ResultStore(path).latest.values())
+    """The latest record per cache key, less any backend error superseded by a final record
+    for the same episode and label (under another key: a rerun with other settings)."""
+    recs = list(ResultStore(path).latest.values())
+    ident = lambda r: (r["episode"].get("label_id") or r["episode"].get("key"), r["label"])  # noqa: E731
+    final = {ident(r) for r in recs if _final(r)}
+    return [r for r in recs if _final(r) or ident(r) not in final]
 
 
 # --- a run -----------------------------------------------------------------------------

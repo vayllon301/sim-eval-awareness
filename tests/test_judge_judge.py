@@ -553,7 +553,7 @@ def test_a_torn_last_result_line_is_tolerated_a_corrupt_middle_line_is_not(tmp_p
 def test_a_backend_error_superseded_under_another_config_is_dropped(tmp_path):
     hand = {"L1": {"verdict": "EVAL", "transcript_sha256": "h"}}
     err = {**_result("L1", "eval_awareness", None, error={"kind": "backend", "message": "503"}), "key": "old"}
-    final = {**_result("L1", "eval_awareness", "EVAL"), "key": "new"}
+    final = {**_result("L1", "eval_awareness", "EVAL"), "key": "new", "verdict_raw": "EVAL"}
     p = tmp_path / "r.jsonl"
     p.write_text(json.dumps(err) + "\n" + json.dumps(final) + "\n")
     rs = J.read_results(p)

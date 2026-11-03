@@ -145,6 +145,13 @@ def _execute(args, episodes, read, guard=None, min_turns: int = 0) -> None:
 
 def show(results: list[dict], keys: set[str] | None = None) -> str:
     rs = [r for r in results if keys is None or r["key"] in keys]
+    seen = set()
+    for r in rs:
+        ident = (r["episode"].get("label_id") or r["episode"].get("key"), r["label"])
+        if ident in seen:
+            raise ValueError(f"two judge results for {ident[0]} {ident[1]}: one prompt version and model "
+                             "per results file")
+        seen.add(ident)
     by = defaultdict(Counter)
     qn, qf, errs = Counter(), Counter(), Counter()
     for r in rs:
