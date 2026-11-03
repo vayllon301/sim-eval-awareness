@@ -66,7 +66,7 @@ STRICT = {"YES": "EVAL", "UNSURE": "REAL", "NO": "REAL"}   # the sensitivity rea
 # A call's prompt is the transcript plus the scanner's question and template, the answer
 # tool's schema and Scout's one-line answer format. Scout makes up to 3 attempts, each
 # resending the conversation so far (the transcript, its last answer and a reminder).
-COMPLETE_STOP = ("stop", "tool_calls")   # the answer is a tool call
+COMPLETE_STOP = J.SCOUT_COMPLETE_STOP   # ("stop", "tool_calls"): the answer is a tool call
 TOOL_TOKENS = 600      # the answer tool's schema and the answer format, rounded up
 ATTEMPTS = 3
 REMINDER_TOKENS = 200

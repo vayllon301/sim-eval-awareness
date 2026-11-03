@@ -577,3 +577,70 @@ def test_json_after_prose_with_braces_is_found():
     raw = 'The quote {"step": "t2", "text": "hm"} matters.\n```json\n{"verdict": "REAL", "quotes": []}\n```'
     assert J.parse_answer(raw, "eval_awareness")["value"] == "REAL"
     assert J.parse_answer('Score {x}: {"score": 70, "quotes": []}', "metagaming")["score"] == 70
+
+
+# --- council round 2 ------------------------------------------------------------------------
+
+def _lines(*recs):
+    return "".join(json.dumps(r) + "\n" for r in recs)
+
+
+def test_a_newer_backend_error_is_not_hidden_by_an_older_result(tmp_path):
+    final = {**_result("L1", "eval_awareness", "EVAL"), "key": "a", "verdict_raw": "EVAL"}
+    err = {**_result("L1", "eval_awareness", None, error={"kind": "backend", "message": "503"}), "key": "b"}
+    p = tmp_path / "r.jsonl"
+    p.write_text(_lines(final, err))
+    rs = J.read_results(p)
+    assert sorted(r["key"] for r in rs) == ["a", "b"]                   # the mixture stays visible
+    with pytest.raises(ValueError, match="two judge results"):
+        K.compare(rs, {"L1": {"verdict": "EVAL", "transcript_sha256": "h"}}, n_boot=10)
+    with pytest.raises(ValueError, match="two judge results"):
+        C.show(rs)
+
+
+def test_only_the_latest_of_two_backend_errors_is_kept(tmp_path):
+    e1 = {**_result("L1", "eval_awareness", None, error={"kind": "backend", "message": "503"}), "key": "a"}
+    e2 = {**_result("L1", "eval_awareness", None, error={"kind": "backend", "message": "429"}), "key": "b"}
+    p = tmp_path / "r.jsonl"
+    p.write_text(_lines(e1, e2))
+    rs = J.read_results(p)
+    assert [r["key"] for r in rs] == ["b"]
+    assert "errors eval_awareness backend: 1" in C.show(rs)
+    e = K.compare(rs, {"L1": {"verdict": "EVAL", "transcript_sha256": "h"}}, n_boot=10)["labels"]["eval_awareness"]
+    assert [x["message"] for x in e["judge_errors"]] == ["429"]
+
+
+def _cut_verdict(key="k1", stop="max_tokens"):
+    return {**_result("L1", "eval_awareness", "EVAL"), "key": key, "verdict_raw": "EVAL",
+            "attempts": [{"attempt": 1, "raw": GOOD_EVAL, "stop_reason": stop}]}
+
+
+def test_a_stored_cut_verdict_is_not_final(tmp_path):
+    p = tmp_path / "r.jsonl"
+    p.write_text(_lines(_cut_verdict()))
+    store = J.ResultStore(p)
+    assert store.done("k1") is None                                      # re-judged on a rerun
+    (r,) = J.read_results(p)
+    assert r["value"] is None and r["positive"] is None and r["error"]["kind"] == "cut"
+    assert "max_tokens" in r["error"]["message"]
+    e = K.compare([r], {"L1": {"verdict": "EVAL", "transcript_sha256": "h"}}, n_boot=10)["labels"]["eval_awareness"]
+    assert e["n"] == 0 and e["complete"] is False and len(e["judge_errors"]) == 1
+    for stop in ("stop", None):                                          # complete, or codex (no stop reason)
+        p.write_text(_lines(_cut_verdict(stop=stop)))
+        assert J.ResultStore(p).done("k1") is not None and J.read_results(p)[0]["value"] == "EVAL"
+    p.write_text(_lines(_cut_verdict(key="old"), {**_result("L1", "eval_awareness", "REAL"), "key": "new",
+                                                   "verdict_raw": "REAL"}))
+    assert [r["key"] for r in J.read_results(p)] == ["new"]              # re-judged under other settings
+
+
+def test_a_stored_cut_scout_verdict_is_not_final(tmp_path):
+    rec = {**_result("L1", "eval_awareness", "EVAL"), "key": "s1", "verdict_raw": "YES", "backend": "scout",
+           "attempts": [{"attempt": 1, "stop_reason": "max_tokens"}], "scout": {"stop_reason": "max_tokens"},
+           "alt_values": {"unsure_as_real": "EVAL"}}
+    p = tmp_path / "r.jsonl"
+    p.write_text(_lines(rec))
+    assert J.ResultStore(p).done("s1") is None and J.read_results(p)[0]["error"]["kind"] == "cut"
+    p.write_text(_lines({**rec, "attempts": [{"attempt": 1, "stop_reason": "tool_calls"}],
+                         "scout": {"stop_reason": "tool_calls"}}))
+    assert J.ResultStore(p).done("s1") is not None and J.read_results(p)[0]["value"] == "EVAL"
+

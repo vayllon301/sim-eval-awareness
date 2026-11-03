@@ -378,14 +378,17 @@ async def judge_call(backend, prompt: str, label: str, steps: list[dict], base: 
 # --- the store -------------------------------------------------------------------------
 
 class ResultStore:
-    """Results as JSONL, appended one per call; the latest line per cache key wins. A
-    backend error is not a result: a rerun calls again. A torn last line (an interrupted
-    write) is left out, and cut off before the next append; a corrupt line before it raises."""
+    """Results as JSONL, appended one per call; the latest line per cache key wins. A record
+    that isn't final is not a result, and a rerun calls again: a backend error, or a verdict
+    whose answer was cut (`_cut`). A torn last line (an interrupted write) is left out, and cut
+    off before the next append; a corrupt line before it raises."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
         self.latest: dict[str, dict] = {}
+        self.order: dict[str, int] = {}     # the line of each key's latest record
         self._torn_at: int | None = None
+        self._n = 0
         if self.path.exists():
             data = self.path.read_bytes()
             lines = data.split(b"\n")
@@ -400,10 +403,12 @@ class ResultStore:
                     self._torn_at = len(data) - len(line)
                     continue
                 self.latest[rec["key"]] = rec
+                self.order[rec["key"]] = i
+            self._n = len(lines)
 
     def done(self, key: str) -> dict | None:
         rec = self.latest.get(key)
-        if rec is None or (rec.get("error") or {}).get("kind") == "backend":
+        if rec is None or not _final(rec):
             return None
         return rec
 
@@ -416,19 +421,55 @@ class ResultStore:
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self.latest[rec["key"]] = rec
+        self.order[rec["key"]] = self._n
+        self._n += 1
+
+
+SCOUT_COMPLETE_STOP = ("stop", "tool_calls")   # Scout's answer is a tool call (scout.py)
+
+
+def _stop(rec: dict) -> tuple:
+    """(the stop reason of the answer a verdict was read from, the complete ones)."""
+    if rec.get("backend") == "scout":
+        return (rec.get("scout") or {}).get("stop_reason"), SCOUT_COMPLETE_STOP
+    return ((rec.get("attempts") or [{}])[-1]).get("stop_reason"), COMPLETE_STOP
+
+
+def _cut(rec: dict) -> bool:
+    """A judge or Scout verdict read from a cut answer: stored before the stop-reason check,
+    it is no verdict (the rule `judge_call` and `scout._record` apply)."""
+    if rec.get("error") or "verdict_raw" not in rec:
+        return False
+    stop, complete = _stop(rec)
+    return stop not in complete
 
 
 def _final(rec: dict) -> bool:
-    return (rec.get("error") or {}).get("kind") != "backend"
+    return (rec.get("error") or {}).get("kind") != "backend" and not _cut(rec)
 
 
 def read_results(path: Path) -> list[dict]:
-    """The latest record per cache key, less any backend error superseded by a final record
-    for the same episode and label (under another key: a rerun with other settings)."""
-    recs = list(ResultStore(path).latest.values())
+    """The latest record per cache key, in the order written; a cut verdict is read as a `cut`
+    error. A record that isn't final is left out when a later record for the same episode and
+    label is final or isn't final either (under another key: a rerun with other settings). A
+    later one stays, so a final record and a newer error still make two results."""
+    store = ResultStore(path)
+    recs = sorted(store.latest.values(), key=lambda r: store.order[r["key"]])
     ident = lambda r: (r["episode"].get("label_id") or r["episode"].get("key"), r["label"])  # noqa: E731
-    final = {ident(r) for r in recs if _final(r)}
-    return [r for r in recs if _final(r) or ident(r) not in final]
+    last_final, last_other = {}, {}
+    for n, r in enumerate(recs):
+        (last_final if _final(r) else last_other)[ident(r)] = n
+    out = []
+    for n, r in enumerate(recs):
+        if not _final(r):
+            if n != last_other[ident(r)] or n < last_final.get(ident(r), -1):
+                continue
+            if _cut(r):
+                r = finish_record(r, None, None, {"kind": "cut", "message": f"the answer was cut (stop reason "
+                                                  f"{_stop(r)[0]}); stored before the check, re-judged on a rerun"},
+                                  []) | ({"alt_values": None, "scout": None} if r.get("backend") == "scout" else {})
+        out.append(r)
+    return out
 
 
 # --- a run -----------------------------------------------------------------------------
