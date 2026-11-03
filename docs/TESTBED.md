@@ -1836,7 +1836,11 @@ primary test, and power by simulation for this test.
     e ~ N(0, effect-spread) for the effect. `c0` and `c3` are a typical scenario's rates (the
     median), not the mean, which the table also prints. `--c0 0` keeps C0 at zero.
   - n episodes per scenario and condition, binomial counts, the difference with its ties, and
-    the same exact test. Rejected when p ≤ alpha (0.05).
+    the same exact test. Rejected when p ≤ alpha (0.05). The test stays two-sided, but power
+    counts only rejections in the expected direction (`--direction`, default `greater`: C3
+    above C0; a one-sided test's own side), so a reversed effect is never read as power.
+    `--direction any` counts every rejection. The direction changes the counting, not the
+    draws: a cell's seed is the same.
   - Power with a Wilson 95% interval for the Monte Carlo error and the mean number of ties;
     `--json` adds the share of runs that could not reject whatever the effect (too many ties).
   - Each grid cell has its own seed from the base seed and the cell, so a cell doesn't depend

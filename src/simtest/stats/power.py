@@ -13,7 +13,13 @@ One simulated run:
 - n episodes per scenario and condition: k0_s ~ Binomial(n, p0_s), k3_s ~ Binomial(n, p3_s).
 - The difference d_s = (k3_s - k0_s) / n, ties (d_s = 0) included, and the exact sign-flip
   test of `signflip` on the S differences (the same counting, on the integers k3_s - k0_s).
-- Rejected when p <= alpha.
+- Rejected when p <= alpha. For sizing, a rejection counts only in the expected direction
+  (`direction`): with the two-sided test, "greater" counts only runs whose sum is above zero
+  (C3 above C0), so a reversed effect is never read as power. The test stays two-sided.
+  `simulate_power` counts any rejection by default (the test's size); `power_grid` and
+  `simtest power` default to the expected direction: C3 > C0 for the two-sided test, the
+  test's own side for a one-sided one. The direction changes only the counting, never the
+  draws: a cell's seed is the same.
 
 Power is the share of rejected runs, with a Wilson 95% interval for the Monte Carlo error.
 Each grid cell has its own seed, derived from the base seed and the cell, so a cell's result
@@ -44,6 +50,12 @@ DEFAULT_SCENARIOS = (8, 10, 12, 14, 16)
 DEFAULT_REPEATS = (5, 10, 15, 20, 25, 30)
 DEFAULT_TARGET = 0.8
 DEFAULT_MIN_SCENARIOS = 8
+DIRECTIONS = ("any", "greater", "less")    # which rejections count: "greater" is C3 above C0
+
+
+def expected_direction(alternative: str) -> str:
+    """The direction sizing counts by default: C3 > C0, or a one-sided test's own side."""
+    return "less" if alternative == "less" else "greater"
 
 
 def _expit(x):
@@ -76,14 +88,20 @@ def _check(name: str, p: float) -> None:
 
 def simulate_power(n_scenarios: int, repeats: int, c0: float, c3: float, spread: float = 0.0,
                    effect_spread: float = 0.0, alpha: float = 0.05, reps: int = 10_000, seed: int = 0,
-                   alternative: str = "two-sided") -> dict:
-    """Power of the exact sign-flip test for one design cell (see the module docstring)."""
+                   alternative: str = "two-sided", direction: str = "any") -> dict:
+    """Power of the exact sign-flip test for one design cell (see the module docstring).
+    `direction`: the rejections that count, "any", or only those whose sum is "greater" (C3
+    above C0) or "less" than zero."""
     import numpy as np
 
     _check("c0", c0)
     _check("c3", c3)
     if alternative not in ALTERNATIVES:
         raise ValueError(f"alternative must be one of {ALTERNATIVES}")
+    if direction not in DIRECTIONS:
+        raise ValueError(f"direction must be one of {DIRECTIONS}")
+    if alternative != "two-sided" and direction not in ("any", alternative):
+        raise ValueError(f"a one-sided {alternative} test rejects only in its direction, not {direction}")
     if n_scenarios < 1 or repeats < 1 or reps < 1:
         raise ValueError("scenarios, repeats and reps must be at least 1")
     if spread < 0 or effect_spread < 0:
@@ -106,12 +124,12 @@ def simulate_power(n_scenarios: int, repeats: int, c0: float, c3: float, spread:
         key = (mags, abs(t)) if alternative == "two-sided" else (mags, t)
         if key not in cache:
             cache[key] = integer_p([int(v) for v in row], alternative)
-        rejected += cache[key] <= alpha
+        rejected += cache[key] <= alpha and (direction == "any" or (t > 0 if direction == "greater" else t < 0))
         cannot += min_p(S, mags.count(0), alternative) > alpha
     ties = (d == 0).sum(axis=1)
     lo, hi = wilson(int(rejected), reps)
     return {"scenarios": S, "repeats": n, "c0": c0, "c3": c3, "spread": spread, "effect_spread": effect_spread,
-            "alpha": alpha, "alternative": alternative, "reps": reps, "seed": seed,
+            "alpha": alpha, "alternative": alternative, "direction": direction, "reps": reps, "seed": seed,
             "power": rejected / reps, "ci": [lo, hi], "mean_ties": float(ties.mean()),
             "cannot_reject": cannot / reps, "mean_diff": float((d / n).mean()),
             "mean_rate_c0": float(p0.mean()), "mean_rate_c3": float(p3.mean())}
@@ -139,9 +157,18 @@ def planned_repeats(n: int, exclusion: float = 0.0) -> int:
     return m
 
 
-def power_grid(c0: float, c3: float, scenarios=DEFAULT_SCENARIOS, repeats=DEFAULT_REPEATS, **kw) -> list[dict]:
-    """simulate_power over every S in `scenarios` and n in `repeats`."""
-    return [simulate_power(S, n, c0, c3, **kw) for S in scenarios for n in repeats]
+def power_grid(c0: float, c3: float, scenarios=DEFAULT_SCENARIOS, repeats=DEFAULT_REPEATS,
+               direction: str | None = None, **kw) -> list[dict]:
+    """simulate_power over every S in `scenarios` and n in `repeats`, counting rejections in the
+    expected direction unless `direction` says otherwise ("any" counts every rejection)."""
+    direction = direction or expected_direction(kw.get("alternative", "two-sided"))
+    return [simulate_power(S, n, c0, c3, direction=direction, **kw) for S in scenarios for n in repeats]
+
+
+def _counted(r: dict) -> str:
+    d = r.get("direction", "any")
+    return "any rejection" if d == "any" else "rejections with C3 > C0 only" if d == "greater" else \
+        "rejections with C3 < C0 only"
 
 
 def format_grid(rows: list[dict], label: str | None = None) -> str:
@@ -150,11 +177,12 @@ def format_grid(rows: list[dict], label: str | None = None) -> str:
     out = []
     groups: dict[tuple, list[dict]] = {}
     for r in rows:
-        groups.setdefault((r["c0"], r["c3"], r["spread"], r["effect_spread"], r["alpha"], r["alternative"]),
-                          []).append(r)
-    for (c0, c3, sp, esp, alpha, alt), rs in groups.items():
-        head = (f"Power of the exact sign-flip test ({alt}, alpha {alpha}): C0 {c0:g}, C3 {c3:g}, logit spread "
-                f"{sp:g} shared + {esp:g} in the effect; {rs[0]['reps']:,} runs per cell, seed {rs[0]['seed']}")
+        groups.setdefault((r["c0"], r["c3"], r["spread"], r["effect_spread"], r["alpha"], r["alternative"],
+                           r.get("direction", "any")), []).append(r)
+    for (c0, c3, sp, esp, alpha, alt, _), rs in groups.items():
+        head = (f"Power of the exact sign-flip test ({alt}, alpha {alpha}; {_counted(rs[0])}): C0 {c0:g}, C3 {c3:g}, "
+                f"logit spread {sp:g} shared + {esp:g} in the effect; {rs[0]['reps']:,} runs per cell, "
+                f"seed {rs[0]['seed']}")
         if label:
             head = f"[{label}] " + head
         out.append(head)
@@ -238,7 +266,8 @@ def cheapest_designs(rows: list[dict], cost: dict, conditions=None, target: floa
 
     if not rows:
         raise ValueError("no design cells to rank")
-    pairs = {(r["c0"], r["c3"], r["spread"], r["effect_spread"], r["alpha"], r["alternative"]) for r in rows}
+    pairs = {(r["c0"], r["c3"], r["spread"], r["effect_spread"], r["alpha"], r["alternative"], r.get("direction", "any"))
+             for r in rows}
     if len(pairs) > 1:
         raise ValueError("rank one (c0, c3) pair at a time")
     conds, per_set = _ranking_inputs(cost, conditions, target, min_scenarios, exclusion, budget)
@@ -269,8 +298,8 @@ def cheapest_designs(rows: list[dict], cost: dict, conditions=None, target: floa
 
     r0 = rows[0]
     return {"c0": r0["c0"], "c3": r0["c3"], "spread": r0["spread"], "effect_spread": r0["effect_spread"],
-            "alpha": r0["alpha"], "alternative": r0["alternative"], "reps": r0["reps"], "seed": r0["seed"],
-            "target": target, "rule": "ci[0] >= target", "conditions": conds,
+            "alpha": r0["alpha"], "alternative": r0["alternative"], "direction": r0.get("direction", "any"),
+            "reps": r0["reps"], "seed": r0["seed"], "target": target, "rule": "ci[0] >= target", "conditions": conds,
             "cost": {c: cost[c] for c in conds}, "units_per_set": float(per_set),
             "min_scenarios": min_scenarios, "exclusion": exclusion, "budget": budget, "cells": len(seen),
             "designs": [out(d) for d in designs], "cheapest": out(designs[0]) if designs else None,
@@ -298,7 +327,7 @@ def format_ranking(res: dict, label: str | None = None) -> str:
     budget = f"; within {_units(res['budget'])} units" if res["budget"] is not None else ""
     head = (f"Cheapest designs that reach power {t:g}: C0 {res['c0']:g}, C3 {res['c3']:g}, logit spread "
             f"{res['spread']:g} shared + {res['effect_spread']:g} in the effect; {res['reps']:,} runs per cell, "
-            f"seed {res['seed']}")
+            f"seed {res['seed']}; {_counted(res)}")
     out = [f"[{label}] {head}" if label else head,
            f"- a design reaches it when the lower end of its 95% Monte Carlo interval is at least {t:g}, not the "
            f"point estimate (the cheapest cell by estimate would often be Monte Carlo noise)",
@@ -351,6 +380,9 @@ def add_parser(sub) -> None:
                    help="episodes per scenario and condition")
     p.add_argument("--alpha", type=float, default=0.05)
     p.add_argument("--alternative", choices=ALTERNATIVES, default="two-sided")
+    p.add_argument("--direction", choices=DIRECTIONS, default=None,
+                   help="the rejections power counts: default C3 > C0 (greater) for the two-sided test, the test's "
+                        "own side when one-sided; any counts a reversed effect too")
     p.add_argument("--reps", type=int, default=10_000, help="simulated runs per cell")
     p.add_argument("--seed", type=int, default=20261102)
     p.add_argument("--label", default=None, help='printed on every table, e.g. "development, not the pilot"')
@@ -390,6 +422,9 @@ def _cost_item(text: str) -> tuple[str, float]:
 
 def main(args) -> None:
     esp = args.spread if args.effect_spread is None else args.effect_spread
+    if args.alternative != "two-sided" and args.direction not in (None, "any", args.alternative):
+        raise SystemExit(f"--direction {args.direction}: a one-sided {args.alternative} test rejects only in its "
+                         "own direction")
     ranking_options = (args.target, args.min_scenarios, args.exclusion, args.budget)
     if args.cost is None and any(v is not None for v in ranking_options):
         raise SystemExit("--target, --min-scenarios, --exclusion and --budget rank designs by cost: they need --cost")
@@ -411,7 +446,7 @@ def main(args) -> None:
         for c3 in args.c3:
             pair = power_grid(c0, c3, scenarios=args.scenarios, repeats=args.repeats, spread=args.spread,
                               effect_spread=esp, alpha=args.alpha, reps=args.reps, seed=args.seed,
-                              alternative=args.alternative)
+                              alternative=args.alternative, direction=args.direction)
             rows += pair
             if args.cost is not None:
                 ranking.append(cheapest_designs(pair, **rank))

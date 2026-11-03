@@ -275,3 +275,32 @@ def test_cli_rejects_bad_ranking_options(extra, why, capsys):
         main(["power", "--c0", "0.1", "--c3", "0.3", "--scenarios", "8", "--repeats", "5", "--reps", "50"] + extra)
     message = f"{exc.value.code} {capsys.readouterr().err}"
     assert why in message and "unrecognized" not in message, message
+
+
+# --- council round 1 ------------------------------------------------------------------------
+
+def test_sizing_counts_only_rejections_in_the_expected_direction(capsys):
+    from simtest.cli import main
+
+    # C3 below C0: a two-sided test rejects often, but for the reversed effect
+    any_ = simulate_power(12, 20, 0.4, 0.1, reps=2000, seed=10)
+    up = simulate_power(12, 20, 0.4, 0.1, reps=2000, seed=10, direction="greater")
+    assert any_["power"] > 0.9 and up["power"] == 0.0 and up["direction"] == "greater"
+    assert simulate_power(12, 20, 0.4, 0.1, reps=2000, seed=10, direction="less")["power"] == any_["power"]
+    # the same draws (the seed doesn't depend on the direction): the counts differ only by sign
+    ahead = simulate_power(12, 20, 0.1, 0.4, reps=2000, seed=10)
+    assert simulate_power(12, 20, 0.1, 0.4, reps=2000, seed=10, direction="greater")["power"] <= ahead["power"]
+    # sizing defaults to C3 > C0 for the two-sided test, and to the test's own side when one-sided
+    assert power_grid(0.4, 0.1, scenarios=(12,), repeats=(20,), reps=500, seed=1)[0]["direction"] == "greater"
+    assert power_grid(0.4, 0.1, scenarios=(12,), repeats=(20,), reps=500, seed=1)[0]["power"] == 0.0
+    assert power_grid(0.4, 0.1, scenarios=(12,), repeats=(20,), reps=500, seed=1,
+                      alternative="less")[0]["direction"] == "less"
+    with pytest.raises(ValueError, match="direction"):
+        simulate_power(8, 10, 0.1, 0.3, alternative="less", direction="greater")
+    main(["power", "--c0", "0.4", "--c3", "0.1", "--scenarios", "12", "--repeats", "20", "--reps", "200", "--json"])
+    assert json.loads(capsys.readouterr().out)["rows"][0]["power"] == 0.0
+    main(["power", "--c0", "0.4", "--c3", "0.1", "--scenarios", "12", "--repeats", "20", "--reps", "200",
+          "--direction", "any", "--json"])
+    assert json.loads(capsys.readouterr().out)["rows"][0]["power"] > 0.9
+    main(["power", "--c0", "0.1", "--c3", "0.4", "--scenarios", "12", "--repeats", "20", "--reps", "200"])
+    assert "C3 > C0 only" in capsys.readouterr().out
