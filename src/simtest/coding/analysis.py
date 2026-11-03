@@ -21,6 +21,7 @@ from ..analysis import (  # reuse the office statistics and formatting helpers
     _ratio, format_paired as _format_paired, paired_difference as _paired_difference, wilson,
 )
 from ..post.summary import RATE_KEYS as POST_RATE_KEYS, summary_checks
+from ..runqueue import NEVER_RAN, never_started, queue_events, queued_log, read_attempts
 from ..stats.signflip import format_test, sign_flip_test
 from ..task import NO_SIMULATOR
 from .episode import VALID_END_REASONS
@@ -283,9 +284,25 @@ def load_run(log_dir):
     # (new uuid) in a later log, so both are kept and reported. A completed sample reused on
     # resume keeps its uuid across logs, so uuid deduplication (newest log wins) counts it
     # once. The uuid is the sample run's identity; a fallback keys by (log, sample, epoch).
+    #
+    # Under the run queue (src/simtest/runqueue.py) two more kinds of record exist:
+    # - an episode that ended without starting (NotStarted: outside the session's epochs, after
+    #   its admission deadline, carried over; or cancelled while it waited for a slot). It made no
+    #   model call, so it is not an attempt: skipped here, and started by the next session;
+    # - a failed attempt re-run in place: Inspect keeps only its error, so the solver kept it in
+    #   full under attempts/. Each one not already in a log as its sample's final attempt is
+    #   reported here as an errored episode.
     best: dict = {}
+    logged_attempts: set = set()
+    tasks: dict = {}
     for i, log in enumerate(logs):
+        tasks.setdefault((log.eval.task_args.get("condition"), _simulator_name(log)), log)
+        queued = queued_log(log)
         for j, s in enumerate(log.samples or []):
+            if never_started(s.error.message if s.error else None, s.store, queued):
+                continue
+            if attempt_id := ((s.store or {}).get("CodingEpisode:attempt") or {}).get("id"):
+                logged_attempts.add(attempt_id)
             score = (s.scores or {}).get(SCORER_NAME)
             md = score.metadata if score is not None and score.metadata else {}
             if s.error is not None or not md:
@@ -317,4 +334,54 @@ def load_run(log_dir):
             prev = best.get(key)
             if prev is None or log.eval.created > prev[0]:
                 best[key] = (log.eval.created, ep)
+    records = read_attempts(Path(log_dir) / "attempts")
+    accounted = logged_attempts | {(r.get("attempt") or {}).get("id") for r in records}
+    for rec in records:
+        attempt = rec.get("attempt") or {}
+        if attempt.get("id") in logged_attempts:
+            continue
+        cond, sim, scenario, epoch = rec["key"]
+        log = tasks.get((cond, sim))
+        if log is None:
+            raise LogDirError(f"Refusing to summarize {log_dir}: a failed attempt ({rec['key']}) matches no task's log.")
+        if rec.get("version") != log.eval.task_version:
+            raise LogDirError(f"Refusing to summarize {log_dir}: a failed attempt of {rec['key']} comes from another "
+                              f"version of the task ({rec.get('version')} against {log.eval.task_version}).")
+        store = rec.get("store") or {}
+        best[("attempt", attempt.get("id"))] = (log.eval.created, {
+            "agent": _agent_name(log), "model": log.eval.model, "condition": cond, "simulator": sim,
+            "scenario": scenario, "variant": store.get("CodingEpisode:variant"), "epoch": epoch,
+            "end_reason": "error", "error": rec.get("error"), "metrics": {}, "violation_observed": None,
+            "error_status": None, "notes": ["rerun_in_queue"],
+            "divergence": step_divergence(store.get("CodingEpisode:steps") or []), "post": None,
+            "fingerprint": rec.get("version"), "log": "attempts", "log_path": None,
+            "sample_id": rec.get("sample_id"), "uuid": None, "attempt": attempt,
+            "attempt_store": store,   # the attempt's own record (no log file holds it)
+        })
+    # - an attempt with no record but its admission: the process was killed (SIGKILL, a crash)
+    #   before the solver could write it, and Inspect's crash recovery rebuilds such a sample with an
+    #   empty store. queue.jsonl writes each admission before the episode starts, so it is the record:
+    #   reported as an errored episode (or one still running, if a run is under way).
+    events = queue_events(log_dir)
+    released = {e.get("id") for e in events if e.get("event") == "release"}
+    never_ran = {e.get("id") for e in events if e.get("event") == "release" and e.get("outcome") == NEVER_RAN}
+    for e in events:
+        if e.get("event") != "admit" or e.get("id") in accounted or e.get("id") in never_ran:
+            continue
+        cond, sim, scenario, epoch = e["key"]
+        log = tasks.get((cond, sim))
+        if log is None:
+            raise LogDirError(f"Refusing to summarize {log_dir}: queue.jsonl admits {e['key']}, which matches no "
+                              f"task's log.")
+        how = ("it ended without a record" if e.get("id") in released
+               else "the process was killed, or it is still running")
+        best[("admitted", e.get("id"))] = (log.eval.created, {
+            "agent": _agent_name(log), "model": log.eval.model, "condition": cond, "simulator": sim,
+            "scenario": scenario, "variant": None, "epoch": epoch, "end_reason": "error",
+            "error": f"interrupted: admitted (queue.jsonl, attempt {e.get('attempt')}) but {how}",
+            "metrics": {}, "violation_observed": None, "error_status": None, "notes": ["interrupted_no_record"],
+            "divergence": step_divergence([]), "post": None, "fingerprint": log.eval.task_version,
+            "log": "queue.jsonl", "log_path": None, "sample_id": scenario, "uuid": None,
+            "attempt": {"id": e.get("id"), "attempt": e.get("attempt"), "rank": e.get("rank")},
+        })
     return [ep for _, ep in best.values()], design

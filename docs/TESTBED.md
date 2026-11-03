@@ -524,7 +524,9 @@ uv run inspect view --log-dir logs/m1-baseline   # read transcripts
 - `run` refuses a dirty git working tree (every result must map to a commit). Use
   `--allow-dirty` only for throwaway runs.
 - Re-running the same command resumes: completed samples are reused and errored ones
-  re-run (`eval_set` retries a failed task `run.retry_attempts` times, default 2). If the
+  re-run (office family: `eval_set` retries a failed task `run.retry_attempts` times, default 2;
+  coding family: in place, at the back of the run's queue, see
+  [One queue for every condition](#one-queue-for-every-condition-runqueuepy-from-02-11-2026)). If the
   fingerprint changed, `eval_set` refuses the log dir; use a new `name` in that case. The
   fingerprint (the task `version`) covers scenario files, package source including
   prompts, `uv.lock`, task args (including the simulator name and the run's design), and the effective
@@ -1415,6 +1417,52 @@ and the final summary's deterministic measures in a table of their own (see
 [Post-episode measures](#post-episode-measures-post)). Shipped configs: `dev_c0.yaml` (the agent solves
 every scenario in C0) and `dev_c0_c3.yaml` (C0 vs C3).
 
+### One queue for every condition (`runqueue.py`, from 02-11-2026)
+
+`simtest run` runs every condition's task at once (`max_tasks`), and each episode waits in one
+queue before its machine starts (`src/simtest/runqueue.py`). Each condition keeps its own task,
+log, fingerprint and analysis, as before.
+
+- **In flight:** `run.max_connections` episodes at once in total, whatever the condition (and
+  each model's connection limit). No slot sits idle while one condition finishes, and every
+  condition shares the same batch mix on the servers. That matters: the simulator's FP8 MoE
+  scales its activations over the whole batch ([INTERP.md](INTERP.md)).
+- **Order:** seeded (`run.order_seed`) and blocked: epoch by epoch, the scenarios in a random
+  order, and for each (scenario, epoch) one episode of every arm (condition and simulator) in
+  a random order. Every arm has started the same number of episodes at any point, give or
+  take one, so time in the session is not confounded with the condition. Until every episode
+  has arrived (or none for 10 s), nothing starts, so the arrival order doesn't matter.
+- **Re-runs:** an errored episode is re-run from the start up to `run.retry_attempts` times,
+  by Inspect's in-place retry (a fresh state), at the back of the same queue, so it runs mixed
+  with the rest instead of alone at the end. Inspect keeps only the failed attempt's error,
+  so the solver writes the attempt in full (error, messages, the episode's store) to
+  `logs/<name>/attempts/`, and `load_run` reports each one as an errored episode (note
+  `rerun_in_queue`). An attempt that is also its sample's last one in a log is counted once.
+- **Not started:** an episode can end without starting: outside this session's `--epochs`,
+  after `--admit-for` hours, or carried over by `--carry-under K` (when fewer than K episodes
+  are left to wait or run, so a few re-runs don't hold the GPU alone). It made no model call.
+  Inspect logs it as an errored sample whose message holds `simtest-queue: not started`; the
+  analysis skips it, and the next `simtest run` of the config starts it, mixed into that
+  session's queue. A running episode is never cut: cutting the long ones and re-running them
+  would favour short episodes.
+- **The record:** `logs/<name>/queue.jsonl` has a line for every start, end and not-started,
+  with the arms running at that moment. `simtest summarize` prints the batch mix: per arm, the
+  mean number of episodes of each arm running beside its starts.
+- `simtest run` exits 3 when the run is incomplete (re-run to resume), so scripts can tell it
+  from an error.
+
+`simtest plan CONFIG --durations explore/colab_probe/durations-g4.json` estimates the GPU hours
+and units by replaying measured episode durations through the slots (`stats/replay.py`;
+`--compare` adds the old order, one condition after another; `--fail-rate` re-runs a share of
+attempts). With `--time-limit H` it splits the run into jobs of whole epochs that fit H (at the
+95th percentile), each with an `--admit-for` that leaves room for the longest measured episode.
+
+`simtest preflight CONFIG` runs the config end to end offline before a GPU session: the images,
+the snapshot check, every episode through the same queue on the real machines, with scripted
+mock models (`src/simtest/preflight.py`). It passes only if every episode is scored with a valid
+end and every simulated episode called its simulator; on a clean tree it writes
+`logs/preflight/<name>.ok` with the commit.
+
 ## Simulator fidelity per step (`post/fidelity.py`)
 
 PLAN.md, Measures: simulator fidelity per step, AgentWorld-style, and the simulator confound
@@ -1787,6 +1835,29 @@ primary test, and power by simulation for this test.
     on the rest of the grid. Excluded episodes would lower n; the simulation assumes none.
   - `--label` is printed on every table, so a grid run on development rates can't be read as
     the pilot's.
+  - **The cheapest design for a power target**: `--cost C0=0.4 C1=4 C2=4 C3=4 [--target 0.8]
+    [--min-scenarios 8] [--exclusion 0.1] [--budget …]`. The keys are the run's conditions
+    (C0 and C3 required), the values the units one episode costs in each. After the grid, one
+    ranking per (c0, c3) pair: the designs that reach the target, cheapest first, with S, n,
+    planned n, episodes, units and power, then one line naming the cheapest. `--json` adds it
+    as `ranking`. Nothing here changes the test, alpha or the simulation.
+    - Cost: every scenario runs every condition with the same n, so a design costs
+      S × planned n × (the sum of the conditions' units). The order is therefore the order of
+      S × planned n; the units give the totals and the budget.
+    - A design reaches the target when the lower end of its 95% Monte Carlo interval does
+      (ci[0] ≥ target), not its estimate. On the estimate, the cheapest cell would often be the
+      one Monte Carlo noise pushed up, and its power would be overstated. The chosen cell's
+      power still comes from the runs that picked it: rerun it alone with another `--seed` to
+      confirm it.
+    - Never fewer than `--min-scenarios` scenarios (8, the plan's floor). Ties in cost go to
+      more scenarios: the scenario is the unit of the test and of generalization.
+    - The grid's n is the scored n. `--exclusion` plans the smallest n_planned with
+      n_planned × (1 − exclusion) ≥ n, so ceil(n / (1 − exclusion)), exact on the decimal given
+      (`planned_repeats`). The cost counts the planned episodes, excluded ones included.
+    - When no design reaches the target, it says so and prints the best power found. Under
+      `--budget`, it also prints the cheapest design over the budget that does.
+    - N3, with the Colab G4 costs (C1's is a guess until measured):
+      `uv run simtest power --c0 0.1 --c3 0.35 --cost C0=0.4 C1=4 C2=4 C3=4 --exclusion 0.1`.
 
 ## Post-episode measures (`post/`)
 

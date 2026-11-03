@@ -127,7 +127,9 @@ smoke test is `explore/interp/gpu_smoke.sh` (docs/INTERP.md, "GPU smoke test").
 header has the full sequence: start a Colab VM, run the script, open the SSH tunnel to ports
 18000 and 18001, and stop the VM at the end. Colab compute units are paid. The profiles, and
 `simtest equiv`, which checks that two backends compute the same models, are in
-[`docs/BACKENDS.md`](docs/BACKENDS.md).
+[`docs/BACKENDS.md`](docs/BACKENDS.md). A whole session in one command (the preflight first, then
+`explore/colab_probe/session.sh`, with a watchdog that stops the VM at a unit cap or when idle),
+and Hopper's chunked Slurm jobs, are in [`docs/SESSIONS.md`](docs/SESSIONS.md).
 
 ### The testbed runner
 
@@ -140,6 +142,9 @@ uv run inspect view --log-dir logs/<name>                 # transcripts
 
 - Runs refuse a dirty working tree, so every result maps to a commit.
 - Re-running the same `run` command resumes it.
+- Coding configs run every condition in one seeded queue with a fixed total in flight;
+  `simtest preflight` runs a config offline first, and `simtest plan` estimates its GPU hours
+  ([`docs/TESTBED.md`](docs/TESTBED.md)).
 - Logs go to `logs/<name>/` and are not in git. Published logs are in `experiments/`.
 
 ## Status

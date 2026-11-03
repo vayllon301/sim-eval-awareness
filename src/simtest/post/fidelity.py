@@ -1284,6 +1284,13 @@ _IDENTITY = ("agent", "model", "condition", "simulator", "scenario", "variant", 
              "log", "log_path", "sample_id", "uuid")
 
 
+class _Stored:
+    """A stand-in sample for a kept attempt: only its store."""
+
+    def __init__(self, store):
+        self.store = store
+
+
 def load(log_dirs) -> list[dict]:
     """Every episode of the log directories (deduplicated as simtest summarize does), graded.
     Each: its identity, `log_dir`, `commit` (the run's), `context_source` (events: the
@@ -1301,6 +1308,19 @@ def load(log_dirs) -> list[dict]:
             raise FidelityError(str(exc)) from exc
         by_log: dict[str, list[dict]] = defaultdict(list)
         for e in eps:
+            if e["log_path"] is None:
+                # A failed attempt the run queue kept without a log file: graded from its own record
+                # (attempts/), or with no steps if only its admission is known (queue.jsonl). It is an
+                # error episode, so it counts in n_excluded, never in the rates.
+                store = e.get("attempt_store") or {}
+                steps = store.get("CodingEpisode:steps") or []
+                system, source = "", "none"
+                if e["condition"] != "C0" and (text := _scenario_system(e, _Stored(store))) is not None:
+                    system, source = text, "scenario"
+                out.append({**{k: e.get(k) for k in _IDENTITY}, "log_dir": str(d), "commit": None,
+                            "context_source": source, "fidelity": grade_episode(steps, e["condition"], system),
+                            "raw_steps": steps, "system": system})
+                continue
             by_log[e["log_path"]].append(e)
         for path, group in by_log.items():
             log = read_eval_log(path)
@@ -1381,8 +1401,10 @@ def _sha(text: str) -> str:
 
 def item_key(ep: dict, g: dict, real: str, seen: str) -> str:
     """A step's identity for the grader: the episode, the step and both outputs."""
-    return _sha(json.dumps([ep.get("uuid") or [ep.get("log_path"), ep.get("sample_id"), ep.get("epoch")],
-                            g["step"], _sha(real), _sha(seen)], default=str))
+    who = ep.get("uuid") or [ep.get("log_path"), ep.get("sample_id"), ep.get("epoch")]
+    if ep.get("log_path") is None and (ep.get("attempt") or {}).get("id"):
+        who = ["attempt", ep["condition"], ep["attempt"]["id"]]   # a kept attempt has no log or uuid
+    return _sha(json.dumps([who, g["step"], _sha(real), _sha(seen)], default=str))
 
 
 def _texts(ep: dict, g: dict) -> tuple[str, str]:

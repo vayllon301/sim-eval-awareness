@@ -42,6 +42,8 @@ from urllib.parse import unquote, urlparse
 
 import yaml
 
+from ..runqueue import summary_never_started
+
 from . import transcript as T
 
 SPEC_KEYS = {"name", "root", "seed", "n", "take_all", "fill", "scenarios", "dirs"}
@@ -112,12 +114,24 @@ def scan(spec: dict, root: Path) -> tuple[list[dict], list[dict], list[dict]]:
                                 "condition": head.eval.task_args.get("condition"), "samples": len(sums),
                                 "counted": 0, "duplicates": 0}
             for s in sums:
+                if summary_never_started(path, head, s):   # the run queue never started it: not an episode
+                    files[path.name]["not_started"] = files[path.name].get("not_started", 0) + 1
+                    continue
                 key = (path.name, (s.metadata or {}).get("scenario", s.id), s.epoch)
                 if key in index:
                     raise PoolError(f"{d}: two samples for {key}")
                 index[key] = s
         counted: dict[str, str] = {}   # uuid -> the file it is counted from
         for ep in eps:
+            if ep.get("log_path") is None and ep.get("attempt"):
+                # A failed attempt re-run in the queue, kept under attempts/ (not in a log file).
+                skipped.append({"log": f"{d}/attempts", "sample_id": ep["sample_id"], "epoch": ep["epoch"],
+                                "uuid": None, "run": d, "condition": ep["condition"], "simulator": ep["simulator"],
+                                "agent": ep["agent"], "model": ep["model"], "scenario": ep["scenario"],
+                                "variant": ep["variant"], "end_reason": ep["end_reason"],
+                                "reason": f"excluded by simtest summarize: end reason error, a failed attempt re-run "
+                                          f"in the queue ({_last_line(ep.get('error'))})"})
+                continue
             s = index.get((ep["log"], ep["scenario"], ep["epoch"]))
             if s is None:
                 raise PoolError(f"{d}: no sample summary for {ep['log']} {ep['scenario']} epoch {ep['epoch']}")
@@ -144,7 +158,7 @@ def scan(spec: dict, root: Path) -> tuple[list[dict], list[dict], list[dict]]:
             if owner is not None and owner != fname:
                 files[fname]["duplicates"] += 1
         for f in files.values():
-            if f["counted"] + f["duplicates"] != f["samples"]:
+            if f["counted"] + f["duplicates"] + f.get("not_started", 0) != f["samples"]:
                 raise PoolError(f"{f['path']}: {f['samples']} samples, but {f['counted']} counted and "
                                 f"{f['duplicates']} duplicates")
             if f["samples"] == 0:

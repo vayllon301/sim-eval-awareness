@@ -9,6 +9,8 @@ backend too.
 This page covers how `explore/colab_probe/serve.sh` serves both models on each GPU we may get, how
 `simtest equiv` checks whether two backends compute the same models before work moves between
 them, and the measurement that decides between the simulator's two FP8 schemes.
+How a whole session runs (the preflight, `session.sh`, the watchdog, Hopper's chunked jobs) is in
+[`SESSIONS.md`](SESSIONS.md).
 
 ## Serving (`serve.sh`)
 

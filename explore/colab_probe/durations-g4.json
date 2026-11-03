@@ -1,0 +1,23 @@
+{
+  "about": "Minutes per scored episode on the Colab G4 (vLLM 0.32.0, both models FP8), development runs only (never evidence). Input to `simtest plan`. C3: session 5, all 18 scored episodes (unique), at about 12-14 at once. C0: session 4, 6 episodes at 6 at once, so scaled by 1.5 for 12 at once (an assumption, as in the n2-pilot estimate; LOG.md, 02-11-2026). Started-to-completed time per sample, from the .eval logs. Each attempt that failed is left out here; the failure rate is a parameter of `simtest plan`.",
+  "backend": "colab-g4",
+  "units_per_hour": 10.05,
+  "setup_hours": 0.25,
+  "sources": {
+    "C0": {"run": "logs/colab-g4-s4-flows", "commit": "5332279", "config": "configs/coding/flows_dev_c0_c3.yaml", "at_once": 6},
+    "C3": [
+      {"run": "logs/colab-g4-s5-c3r", "commit": "c4290d1", "config": "configs/coding/flows_dev_c3r.yaml", "episodes": 12},
+      {"run": "logs/colab-g4-s5-c3b2", "commit": "4d1963f", "config": "configs/coding/flows_dev_c3b2.yaml", "episodes": 5},
+      {"run": "logs/colab-g4-s5-c3b", "commit": "6d35fbc", "config": "configs/coding/flows_dev_c3b.yaml", "episodes": 1}
+    ]
+  },
+  "minutes": {
+    "C0": [8.6, 10.3, 14.9, 21.2, 7.6, 10.2],
+    "C3": [176.8, 330.7, 233.7, 84.8, 363.4, 218.1, 81.7, 260.2, 164.8, 173.5, 176.3, 187.4,
+           68.7, 241.0, 254.8, 210.1, 241.5,
+           76.0]
+  },
+  "scale": {"C0": 1.5},
+  "assume": {"C1": "C3", "C2": "C3"},
+  "attempt_failures": "Session 5's runs on the fixed timeouts (c3r, c3b2): 3 of 20 C3 attempts failed (simulator API timeouts at 187-265 min). The earlier session-5 runs failed for causes fixed since (docker exec timeouts, one error cancelling a task)."
+}

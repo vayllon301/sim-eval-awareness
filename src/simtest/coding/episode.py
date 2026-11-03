@@ -41,6 +41,8 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import LimitExceededError, StoreModel, span
 from pydantic import Field
 
+from .. import runqueue
+from ..task import NO_SIMULATOR
 from ..observers import IncompleteOutput, OutputError, incomplete_reason, is_infrastructure
 from ..unicode import clean, has_lone_surrogate, sanitize_output
 from .checks import baseline, probe
@@ -75,6 +77,7 @@ class CodingEpisode(StoreModel):
     end_reason: str = ""
     error: str | None = None
     error_status: int | None = None
+    attempt: dict[str, Any] = Field(default_factory=dict)   # the run queue's admission (src/simtest/runqueue.py)
 
 
 def loaded_scenarios(specs: list[str]) -> dict[str, CodingScenario]:
@@ -102,10 +105,30 @@ def not_executed(stop_reason: str) -> str:
 
 @solver
 def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turns: int = 40,
-                 deadline: int = 60) -> Solver:
+                 deadline: int = 60, version: str | None = None) -> Solver:
     loaded = loaded_scenarios(scenarios)
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
+        """Under `simtest run`, the episode first waits for its slot in the run's queue (none
+        outside a run, as in the unit tests). A failed attempt is kept in full under the log
+        directory's `attempts/`, then the error goes on to Inspect, which re-runs the episode
+        from a fresh state at the back of the queue."""
+        queue = runqueue.current()
+        if queue is None:
+            return await episode_run(state)
+        key = (condition, state.metadata.get("simulator", NO_SIMULATOR), state.metadata["scenario"], state.epoch)
+        async with queue.slot(key) as adm:   # NotStarted comes out of here, before anything ran
+            _report_waiting(adm.waited)
+            attempt = {"id": adm.id, "attempt": adm.attempt, "rank": adm.rank, "admitted_at": adm.admitted_at,
+                       "waited": round(adm.waited, 3)}
+            state.store_as(CodingEpisode).attempt = attempt
+            try:
+                return await episode_run(state)
+            except BaseException as exc:
+                runqueue.write_attempt(queue.attempts_dir, failed_attempt(state, key, attempt, version, exc))
+                raise
+
+    async def episode_run(state: TaskState) -> TaskState:
         scenario = loaded[state.metadata["scenario"]]
         simulator = get_model(role="simulator", required=True) if condition != "C0" else None
         observer = None  # made once the session start is known (C2/C3 show it in the snapshot)
@@ -233,6 +256,31 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
         return state
 
     return solve
+
+
+def failed_attempt(state: TaskState, key: tuple, attempt: dict, version: str | None, exc: BaseException) -> dict:
+    """Everything a failed attempt left: the error, the transcript and the episode's store."""
+    import time
+
+    messages = []
+    for m in state.messages:
+        try:
+            messages.append(m.model_dump(mode="json"))
+        except Exception:
+            messages.append({"role": getattr(m, "role", "?"), "unserializable": True})
+    store = {k: v for k, v in state.store.items() if k.startswith("CodingEpisode:")}
+    return clean({"key": list(key), "sample_id": state.sample_id, "epoch": state.epoch, "sample_uuid": state.uuid,
+                  "version": version, "attempt": attempt, "ended_at": time.time(), "error": repr(exc),
+                  "messages": messages, "store": json.loads(json.dumps(store, default=str))})
+
+
+def _report_waiting(seconds: float) -> None:
+    """Time in the queue is waiting, not working time (Inspect's working time, per sample)."""
+    try:
+        from inspect_ai._util.working import report_sample_waiting_time
+    except ImportError:   # a private helper; the pinned Inspect has it
+        return
+    report_sample_waiting_time(seconds)
 
 
 def _raw_arguments(call) -> str:
