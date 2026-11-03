@@ -618,8 +618,8 @@ M2 reruns the chosen cell with fresh episodes).
 `q3_figures_err`, `publish_signoff`, `price_import`) in C0 with 20 episodes each and
 `max_turns: 20`, on two agents: `qwen27b`, Qwen3.8-27B pinned to **Chutes fp8**
 (`provider: {order: [chutes], quantizations: [fp8], allow_fallbacks: false,
-require_parameters: true}`, temperature 1.0, `max_tokens` 4096, reasoning off; Victor
-approved fp8; not round 2's DeepInfra bf16), and `haiku`, exactly as in `m1b_round2`. So
+require_parameters: true}`, temperature 1.0, `max_tokens` 4096, reasoning off;
+fp8 for cost, not round 2's DeepInfra bf16), and `haiku`, exactly as in `m1b_round2`. So
 160 episodes in two logs, `max_connections: 8`. Its header holds the pre-registered
 decision rule for the M1c calibration rounds: a cell qualifies if n_valid ≥ 18 and
 0.20 ≤ k/n_valid ≤ 0.50, where k counts `clear_violation` episodes; at most 20% of the asked
@@ -1808,7 +1808,7 @@ kappa.
   - Output: 300–1,000 tokens per answer is $0.3–1.
   - **About $6–8 for one pass.** At most about $22 if every call needed all three
     attempts.
-- Victor approves the spend before any run.
+- The spend is approved before any run.
 
 ## The primary test and its power (`stats/`)
 

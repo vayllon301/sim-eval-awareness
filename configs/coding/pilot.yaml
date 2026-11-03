@@ -53,7 +53,7 @@
 #   20), one queue takes about 14.4 h and 145 units (128-164); the old order took 25 h and 253.
 # - Hopper: no units; its hours are unmeasured (the first hour's simulator tokens per second tells).
 #   `simtest plan --time-limit H` splits the run into jobs of whole epochs.
-# The budget stop is Victor's to set before the run (explore/colab_probe/watchdog.sh enforces it).
+# The budget stop is set before the run (explore/colab_probe/watchdog.sh enforces it).
 #
 # Decision rule, DRAFT (02-11-2026): to be frozen in LOG.md before the run.
 # The pilot must show, per condition and per scenario, with Wilson 95% intervals:

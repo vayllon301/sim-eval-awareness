@@ -36,7 +36,7 @@ agents:
   qwen27b:
     model: openrouter/qwen/qwen3.8-27b
     config: {temperature: 1.0, max_tokens: 4096}
-    # Chutes fp8 (approved by Victor), not round 2's DeepInfra bf16
+    # Chutes fp8 (for cost), not round 2's DeepInfra bf16
     args: {provider: {order: [chutes], quantizations: [fp8], allow_fallbacks: false, require_parameters: true}, reasoning_enabled: false, strict_tools: false}
   haiku:
     model: openrouter/anthropic/claude-haiku-5.5
