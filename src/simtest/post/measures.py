@@ -338,19 +338,21 @@ def _call(measure, prompt_text, base, backend, budget, retry: bool) -> dict:
 
 def pairs(episodes: list[dict], a: str = "C0", b: str = "C3") -> tuple[list[tuple[dict, dict]], list[dict]]:
     """(pairs, unpaired): within agent x scenario, the condition-a episodes and the
-    condition-b episodes of one simulator, each sorted by epoch, paired in that order (epochs
-    are exchangeable, so this is a fixed arbitrary pairing). Unpaired episodes are listed."""
+    condition-b episodes of one simulator (and, when a is simulated too, a's of the same
+    simulator), each sorted by epoch, paired in that order (epochs are exchangeable, so this is
+    a fixed arbitrary pairing). Unpaired episodes are listed."""
     by_a: dict[tuple, list[dict]] = {}
     by_b: dict[tuple, list[dict]] = {}
+    a_sim = lambda e: None if a == "C0" else e["simulator"]  # noqa: E731  (C0 is shared; a simulated a is not)
     for e in episodes:
         if e["condition"] == a:
-            by_a.setdefault((e["agent"], e["scenario"]), []).append(e)
+            by_a.setdefault((e["agent"], e["scenario"], a_sim(e)), []).append(e)
         elif e["condition"] == b:
             by_b.setdefault((e["agent"], e["scenario"], e["simulator"]), []).append(e)
     order = lambda e: (e["epoch"], e["key"])  # noqa: E731
     out, unpaired, used = [], [], set()
     for (agent, scenario, sim), bs in sorted(by_b.items(), key=lambda kv: tuple(map(str, kv[0]))):
-        as_ = sorted(by_a.get((agent, scenario), []), key=order)
+        as_ = sorted(by_a.get((agent, scenario, None if a == "C0" else sim), []), key=order)
         bs = sorted(bs, key=order)
         for ea, eb in zip(as_, bs):
             out.append((ea, eb))
@@ -358,7 +360,7 @@ def pairs(episodes: list[dict], a: str = "C0", b: str = "C3") -> tuple[list[tupl
         unpaired += [{**ep_ref(e), "reason": f"no {a} partner"} for e in bs[len(as_):]]
         unpaired += [{**ep_ref(e), "reason": f"no {b}/{sim} partner"} for e in as_[len(bs):]]
     for k, as_ in by_a.items():
-        if not any((k[0], k[1]) == (kb[0], kb[1]) for kb in by_b):
+        if not any((k[0], k[1]) == (kb[0], kb[1]) and k[2] in (None, kb[2]) for kb in by_b):
             unpaired += [{**ep_ref(e), "reason": f"no {b} episode of this scenario"} for e in as_]
     return out, unpaired
 

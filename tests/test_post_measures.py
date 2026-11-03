@@ -326,7 +326,7 @@ def test_pairwise_effect_uses_only_pairs_answered_in_both_orders():
     # `ba` answers (C3 first) remain, which would read as C3 always winning
     recs = [r for i in range(8) for r in (pw_rec(f"s{i}", "ab"), pw_rec(f"s{i}", "ba", picked="C3"))]
     pw = build_report(recs)["pairwise"]
-    assert pw["paired"] is None
+    assert pw["paired"]["per_scenario"] == {} and pw["paired"]["missing"] == [f"s{i}" for i in range(8)]
     assert [(r["pairs_both_orders"], r["pairs_one_order"], r["answered"]) for r in pw["rows"]] == [(0, 1, 1)] * 8
     assert pw["position"]["first_picked"] == 8                     # still in the position check
     text = format_report(build_report(recs))
@@ -394,3 +394,24 @@ def test_cli_ask_with_a_run_config(logs, tmp_path, capsys):
     r = json.loads(out.read_text().splitlines()[0])
     assert r["model"] == "mockllm/agent"
     assert r["settings"]["config"] == {"max_tokens": 32768, "temperature": 1.0, "top_p": 0.95}
+
+
+# --- council round 1 ------------------------------------------------------------------------
+
+def test_a_scenario_with_no_usable_value_is_listed_as_missing():
+    recs = [rec("rating", "C0", "s1", 0.2), rec("rating", "C3", "s1", 0.6),
+            rec("rating", "C0", "s2", None), rec("rating", "C3", "s2", None)]       # both flagged
+    res = build_report(recs)["paired"]["rating"]
+    assert res["per_scenario"] == {"s1": pytest.approx(0.4)} and res["missing"] == ["s2"]
+    recs = [pw_rec("s1", "ab", picked="C0"), pw_rec("s1", "ba", picked="C3"), pw_rec("s2", "ab"), pw_rec("s2", "ba")]
+    pw = build_report(recs)["pairwise"]
+    assert pw["paired"]["per_scenario"] == {"s1": 0.0} and pw["paired"]["missing"] == ["s2"]
+
+
+def test_pairs_and_paired_means_keep_each_simulator_when_a_is_not_c0():
+    eps = [ep(f"{c}-{s}", c, "s1", 1, sim=s) for c in ("C2", "C3") for s in ("x", "y")]
+    ps, unpaired = M.pairs(eps, a="C2", b="C3")
+    assert sorted((a["key"], b["key"]) for a, b in ps) == [("C2-x", "C3-x"), ("C2-y", "C3-y")] and not unpaired
+    items = [("g", "C2", "x", "s1", 0.0), ("g", "C3", "x", "s1", 1.0),
+             ("g", "C2", "y", "s1", 1.0), ("g", "C3", "y", "s1", 1.0)]
+    assert paired_means(items, "C2", "C3")["per_scenario"] == {"s1": 0.5}      # (1-0 + 1-1) / 2

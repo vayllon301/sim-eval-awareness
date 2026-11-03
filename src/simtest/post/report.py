@@ -130,31 +130,35 @@ def cells(eps: dict[str, dict]) -> list[dict]:
     return rows
 
 
-def paired_means(items: list[tuple[str, str, str, str, float]], a: str, b: str) -> dict:
+def paired_means(items: list[tuple[str, str, str, str, float]], a: str, b: str,
+                 panel: list[tuple[str, str, str, str]] | None = None) -> dict:
     """Per-scenario differences of means, b - a: within scenario x agent, the mean of b over each
-    simulator minus the mean of a, averaged over simulators, then over agents (equal weights, as
-    the coding summary's paired difference). A scenario missing a cell is left out and listed.
-    Then the exact sign-flip test on the differences."""
+    simulator minus the mean of a (C0's one cell, or the same simulator's when a is simulated
+    too), averaged over simulators, then over agents (equal weights, as the coding summary's
+    paired difference). `panel`: (agent, condition, simulator, scenario) of every episode the
+    measure was asked of, usable or not. A scenario missing a cell, or with no usable value, is
+    left out and listed. Then the exact sign-flip test on the differences."""
     vals: dict[tuple, list[float]] = defaultdict(list)
     agents, sims, scenarios = set(), set(), set()
+    a_sim = lambda sim: None if a == "C0" else sim  # noqa: E731  (C0 is shared)
+    for agent, cond, sim, sc in [i[:4] for i in items] + list(panel or []):
+        if cond in (a, b):
+            agents.add(agent)
+            scenarios.add(sc)
+            if cond == b:
+                sims.add(sim)
     for agent, cond, sim, sc, v in items:
-        if cond not in (a, b):
-            continue
-        vals[(sc, agent, cond, sim if cond == b else None)].append(v)
-        agents.add(agent)
-        scenarios.add(sc)
-        if cond == b:
-            sims.add(sim)
+        if cond in (a, b):
+            vals[(sc, agent, cond, sim if cond == b else a_sim(sim))].append(v)
     diffs, missing = {}, []
     for sc in sorted(scenarios, key=str):
         per_agent = []
         for g in sorted(agents, key=str):
-            base = vals.get((sc, g, a, None))
-            comps = [vals.get((sc, g, b, s)) for s in sorted(sims, key=str)]
-            if not base or not sims or any(not c for c in comps):
+            comps = [(vals.get((sc, g, b, s)), vals.get((sc, g, a, a_sim(s)))) for s in sorted(sims, key=str)]
+            if not sims or any(not c or not base for c, base in comps):
                 missing.append(sc)
                 break
-            per_agent.append(_mean([_mean(c) - _mean(base) for c in comps]))
+            per_agent.append(_mean([_mean(c) - _mean(base) for c, base in comps]))
         else:
             if per_agent:
                 diffs[sc] = _mean(per_agent)
@@ -195,11 +199,16 @@ def pairwise(records: list[dict]) -> dict:
     items = [(r["agent"], conds[1], r["simulator"], r["scenario"], r["b_won"] / r["answered_both"] - 0.5)
              for r in rows if r["answered_both"]]
     # the b win rate minus 0.5 as "b" and a zero "a" cell, so paired_means gives one difference per scenario
-    items += [(r["agent"], conds[0], None, r["scenario"], 0.0) for r in rows if r["answered_both"]]
+    items += [(r["agent"], conds[0], r["simulator"], r["scenario"], 0.0) for r in rows if r["answered_both"]]
+    panel = [(r["agent"], c, r["simulator"], r["scenario"]) for r in rows for c in conds]   # answered or not
     return {"conditions": conds, "rows": rows, "answered": n,
             "position": {"first_picked": first, "n": n, "ci": list(wilson(first, n))},
             "length": {"longer_picked": sum(longer), "n": len(longer), "ci": list(wilson(sum(longer), len(longer)))},
-            "paired": paired_means(items, conds[0], conds[1]) if items else None}
+            "paired": paired_means(items, conds[0], conds[1], panel=panel) if rows else None}
+
+
+SOURCE = {"rating": "rating", "purpose_eval": "purpose_label", "purpose_training": "purpose_label",
+          "summary_inaccurate": "summary_accuracy", "summary_dishonest": "summary_honesty"}   # the record measure
 
 
 def build_report(records: list[dict], a: str = "C0", b: str = "C3") -> dict:
@@ -208,14 +217,18 @@ def build_report(records: list[dict], a: str = "C0", b: str = "C3") -> dict:
     rows = cells(eps)
     paired = {}
     for m in MEASURE_NAMES:
-        items = []
+        asked = {r["episode"]["key"] for r in records if r["measure"] == SOURCE[m]}
+        items, panel = [], []
         for e in eps.values():
+            ep = e["ep"]
+            cell = (ep["agent"], ep["condition"], ep["simulator"], ep["scenario"])
+            if ep["key"] in asked:
+                panel.append(cell)       # before its value is known to be usable
             v = episode_measures(e)[m]
             if v is not None:
-                ep = e["ep"]
-                items.append((ep["agent"], ep["condition"], ep["simulator"], ep["scenario"], float(v)))
-        if items:
-            paired[m] = paired_means(items, a, b)
+                items.append((*cell, float(v)))
+        if items or panel:
+            paired[m] = paired_means(items, a, b, panel=panel)
     measures = sorted({r["measure"] for r in records}, key=list(MEASURES).index)
     return {"a": a, "b": b, "measures": measures, "cells": rows, "paired": paired, "pairwise": pairwise(records)}
 
@@ -267,9 +280,14 @@ def format_report(rep: dict) -> str:
         if ln["n"]:
             out.append(f"Length check: the longer transcript picked {ln['longer_picked']}/{ln['n']} "
                        f"[{ln['ci'][0]:.2f}, {ln['ci'][1]:.2f}]")
-        if pw["paired"]:
+        if pw["paired"] and pw["paired"]["per_scenario"]:
             res = pw["paired"]
             per = ", ".join(f"{sc} {d:+.3f}" for sc, d in res["per_scenario"].items())
+            miss = f"; left out (no pair answered in both orders): {', '.join(map(str, res['missing']))}" \
+                if res["missing"] else ""
             out.append(f"Per scenario, {cb} win rate - 0.5: mean {res['mean_diff']:+.3f} [{per}]; "
-                       f"{format_test(res['sign_flip'])}")
+                       f"{format_test(res['sign_flip'])}{miss}")
+        elif pw["paired"]:
+            out.append(f"No scenario has a pair answered in both orders (left out: "
+                       f"{', '.join(map(str, pw['paired']['missing']))})")
     return "\n".join(out)
