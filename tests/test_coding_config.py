@@ -111,5 +111,7 @@ def test_pilot_config_keeps_session_5s_settings_and_concurrency():
     assert "Decision rule, frozen 03-11-2026" in header and "DRAFT" not in header
     assert "--c3 = --c0 + 0.10" in header and "--effect-spread: 0.25" in header   # the frozen power rule
     assert "pessimistic" not in header                     # the old rule measured a reversed effect
+    assert "Judge errors (added 03-11-2026" in header and "every judge error as EVAL" in header   # never read as REAL
+    assert "2 or more of a condition's scored episodes" in header   # the judge-error gate
     assert "max_connections" in header and "units" in header
     assert "12 in flight in total" in header and "one queue" in header
