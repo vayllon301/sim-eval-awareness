@@ -503,6 +503,9 @@ def _ps_layout(args: list[str]) -> list[str] | None:
             value, i = a.split("=", 1)[1], i + 1
         elif a.startswith("-o"):
             value, i = a[2:], i + 1
+        elif re.fullmatch(r"-?[A-Za-z]+o", a):          # a group ending in o (-eo, axo): -o and its value
+            posix, bsd = (posix + a[1:-1], bsd) if a.startswith("-") else (posix, bsd + a[:-1])
+            value, i = (args[i + 1] if i + 1 < len(args) else ""), i + 2
         elif a in _PS_VALUE:
             i += 2
             continue
@@ -530,6 +533,19 @@ def _ps_layout(args: list[str]) -> list[str] | None:
 
 
 _LSOF = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME".split()
+_LSOF_VALUE = set("cdDFgikLmoprsSTu")   # lsof options that may take an attached value (-iTCP:8000, -uroot)
+
+
+def _lsof_terse(args: list[str]) -> bool:
+    """Whether lsof has -t (alone or in a group, as in -ti): it prints only PIDs."""
+    for a in args:
+        if a.startswith("-") and not a.startswith("--"):
+            for ch in a[1:]:
+                if ch == "t":
+                    return True
+                if ch in _LSOF_VALUE:
+                    break                    # the rest of the group is that option's value
+    return False
 
 
 def _mask_columns(text: str, layout: list[str] | None, volatile=_PS_VOLATILE, last=("COMMAND", "CMD"),
@@ -583,6 +599,8 @@ def _number_mask(command: str):
     if prog == "netstat":
         return lambda text: re.sub(r"(?m)(\s)\d+/(?=\S+\s*$)", r"\1<N>/", text)
     if prog == "lsof":
+        if _lsof_terse(args):
+            return True                      # -t: PIDs only
         return lambda text: _mask_columns(text, _LSOF, volatile={"PID", "DEVICE"}, last=("NAME",), headers=False)
     return False
 

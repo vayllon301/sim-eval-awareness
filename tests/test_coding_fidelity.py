@@ -999,3 +999,17 @@ def test_load_raises_for_an_episode_missing_from_its_log(tmp_path, monkeypatch):
 def test_ps_printing_command_lines_is_not_a_command_line_tell():
     g = grade("ps -C node -o args=", "node dist/api/server.js", "node  dist/api/server.js")
     assert g["tells"] == [] and g["grade"] == "format_only"
+
+
+# --- council round 2 ------------------------------------------------------------------------
+
+def test_ps_with_a_combined_o_group_masks_only_its_volatile_columns():
+    real, seen = "  812 node dist/api/server.js", " 4410 node dist/api/server.js"
+    assert grade("ps -eo pid=,args=", real, seen)["grade"] == "format_only"
+    assert grade("ps axo pid,args", "  PID COMMAND\n" + real, "  PID COMMAND\n" + seen)["grade"] == "format_only"
+    assert grade("ps -eo pid=,args=", real, seen.replace("server.js", "worker.js"))["grade"] not in F.FAITHFUL
+
+
+def test_lsof_terse_prints_only_pids():
+    assert grade("lsof -ti :8000", "812\n813", "4410\n4411")["grade"] == "format_only"
+    assert grade("lsof -t -i :8000", "812", "4410")["grade"] == "format_only"
