@@ -284,7 +284,7 @@ def test_rule_is_incomplete_and_keeps_fp8_without_complete_evidence(kw):
     assert "fp8" in r["action"]
 
 
-def test_rule_asks_victor_when_per_channel_is_much_slower():
+def test_rule_asks_for_the_budget_when_per_channel_is_much_slower():
     assert _rule(speed_ratio=0.85)["confirm_budget"]
     assert not _rule(speed_ratio=0.95)["confirm_budget"]
     assert not _rule(fid_pc=_fid(0.5), speed_ratio=0.5)["confirm_budget"]   # kept: nothing to confirm

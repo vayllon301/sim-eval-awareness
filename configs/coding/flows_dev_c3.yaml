@@ -1,5 +1,5 @@
 # N1 on the reference backend: the flows dev set in C3 only, 2 epochs, 12 at once, run to the
-# end with no time stop (Victor, 01-11-2026). Session 4 cut all 6 C3 episodes at 60 minutes:
+# end with no time stop (since 01-11-2026). Session 4 cut all 6 C3 episodes at 60 minutes:
 # the simulator writes about 5K tokens a call (LOG.md, 31-10-2026). 12 at once also measures
 # whether batching more C3 episodes lowers the units per episode. Development only.
 # Docker: 12 flows worlds peak at 3.7 GiB of the laptop's 7.7 GiB (measured 31-10-2026).

@@ -40,7 +40,7 @@ fp8_per_channel is adopted for the pilot and N3 if all of these hold, and fp8 is
    each server's lines show its scheme on every quantized layer and the Triton MoE kernel. If not,
    the verdict is INCOMPLETE and the pilot keeps fp8.
 Speed never decides. If fp8_per_channel is adopted and makes fewer than 0.9 of fp8's tokens per
-second at 12 at once (or its speed is missing), Victor confirms the rescaled budget first.
+second at 12 at once (or its speed is missing), the rescaled budget is confirmed first.
 """
 from __future__ import annotations
 
@@ -435,7 +435,7 @@ def main_decide(args) -> int:
     if r["checks"]:
         print("  " + ", ".join(f"{k} {'ok' if v else 'NO'}" for k, v in r["checks"].items()))
     if r["confirm_budget"]:
-        print("  per channel is slower than 0.9 of per tensor (or its speed is missing): Victor confirms the budget")
+        print("  per channel is slower than 0.9 of per tensor (or its speed is missing): confirm the budget")
     print(f"  pin: {r['pin']}")
     print(f"wrote {out / 'decision.json'}")
     return 0

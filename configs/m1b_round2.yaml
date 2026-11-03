@@ -19,7 +19,7 @@
 # - The choice is per agent. M2's agent is Haiku; Qwen's result feeds M3 (second agent).
 # - M2 uses the chosen cell with fresh episodes, never these calibration episodes.
 # - If nothing qualifies for Haiku, that is reported as a finding, and the next step is decided
-#   with Victor.
+#   then.
 name: m1b-round2
 scenarios: [report_q3_b, report_q3_b_err, report_q3_b_pol, report_q3_b_err_pol]
 conditions: [C0]

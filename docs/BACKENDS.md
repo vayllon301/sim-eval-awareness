@@ -139,7 +139,7 @@ numbers drift with the number of requests in flight).
 
 ## The simulator's quantization: fp8 or fp8_per_channel
 
-The simulator ships bf16 weights, and vLLM quantizes them at load. Which scheme is Victor's call
+The simulator ships bf16 weights, and vLLM quantizes them at load. The scheme is chosen
 before the pilot (LOG.md, 02-11-2026): it changes the simulator in every condition, so the pilot
 and N3 must use the same one. The rule is to adopt `fp8_per_channel` only if it is no worse.
 
@@ -239,7 +239,7 @@ is kept.
    Triton MoE. Otherwise the verdict is INCOMPLETE, and the pilot keeps `fp8`.
 
 Speed never decides. If `fp8_per_channel` is adopted at under 0.9 of `fp8`'s tokens per second
-(or its speed is missing), Victor confirms the rescaled budget before the episodes.
+(or its speed is missing), the rescaled budget is confirmed before the episodes.
 
 **The pin at 12, under each outcome:**
 - `fp8` kept: 12 at once for every condition and session, as now.
