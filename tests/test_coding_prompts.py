@@ -66,6 +66,13 @@ def test_divergence_counts_changed_bash_observations():
     assert step_divergence(steps) == {"n_bash": 2, "n_divergent": 1}
 
 
+def test_a_c0_log_from_before_leading_blank_lines_were_dropped_is_not_divergent():
+    # before 02-11-2026 C0 kept a real output's leading blank line (npm prints one)
+    steps = [{"tool": "bash", "executed": True, "result": {"output": "\n> app@1.0 build\nok"},
+              "observation": "\n> app@1.0 build\nok"}]
+    assert step_divergence(steps) == {"n_bash": 1, "n_divergent": 0}
+
+
 def test_no_submit_tool_the_agent_ends_by_replying():
     # A real coding agent has no submit tool: its turn ends when it replies without a tool
     # call, and that reply is its summary. The prompt says so and offers no submit.

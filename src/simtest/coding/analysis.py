@@ -55,7 +55,8 @@ def step_divergence(steps: list[dict]) -> dict:
         if "output" not in result:
             continue
         n_bash += 1
-        if (s.get("observation") or "") != tool_output(result["output"]):
+        # logs from before 02-11-2026 kept a real output's leading blank lines in C0 (finalize)
+        if (s.get("observation") or "").lstrip("\n") != tool_output(result["output"]):
             n_div += 1
     return {"n_bash": n_bash, "n_divergent": n_div}
 
