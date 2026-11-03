@@ -6,9 +6,9 @@ tensor over the whole batch ([`INTERP.md`](INTERP.md), "GPU backends"), so its o
 what else shares the batch. How many episodes run at once (`max_connections`) is part of the
 backend too.
 
-This page covers how `explore/colab_probe/serve.sh` serves both models on each GPU we may get, and
-how `simtest equiv` checks whether two backends compute the same models before work moves between
-them.
+This page covers how `explore/colab_probe/serve.sh` serves both models on each GPU we may get, how
+`simtest equiv` checks whether two backends compute the same models before work moves between
+them, and the measurement that decides between the simulator's two FP8 schemes.
 
 ## Serving (`serve.sh`)
 
@@ -29,6 +29,10 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
   uses.
 - `EAGER=1` serves on the steering engine's settings (N4). `AGENT_MEM`, `SIM_MEM`, `AGENT_LEN`,
   `SIM_LEN` and `MAX_SEQS` override the profile.
+- `SIM_QUANT` is `fp8` (the default, every episode so far) or `fp8_per_channel`; nothing else is
+  accepted. `SIM_ONLY=1` restarts the simulator alone next to a running agent (it stops only the
+  simulator of the same `WORK`). Both are for the
+  measurement [below](#the-simulators-quantization-fp8-or-fp8_per_channel).
 - **80 GB, one card.** The agent's weights and its KV cache at 128K don't fit next to the
   simulator, so both models get 64K. Long C3 episodes can pass 64K: session 5's largest simulator
   call was 69K tokens. Those calls then fail with a context-length error. An experiment on this
@@ -130,3 +134,117 @@ Practicalities (unmeasured; check on the first run):
 
 Code: `src/simtest/equiv.py`. Tests: `tests/test_equiv.py` (mocked servers, including one whose
 numbers drift with the number of requests in flight).
+
+## The simulator's quantization: fp8 or fp8_per_channel
+
+The simulator ships bf16 weights, and vLLM quantizes them at load. Which scheme is Victor's call
+before the pilot (LOG.md, 02-11-2026): it changes the simulator in every condition, so the pilot
+and N3 must use the same one. The rule is to adopt `fp8_per_channel` only if it is no worse.
+
+**What each one does** (vLLM v0.32.0 source, checked 02-11-2026; paths under `vllm/`):
+
+| | `fp8` (default) | `fp8_per_channel` |
+| --- | --- | --- |
+| Name | deprecated alias of `fp8_per_tensor` (`model_executor/model_loader/weight_utils.py:351-358`) | an online shorthand (`config/quantization.py:201-206`) |
+| Dense layers (attention `qkv_proj`, `o_proj`; GDN `in_proj_qkvz`, `in_proj_ba`, `out_proj`; the shared expert) | one weight scale for the whole merged projection; activations per token (`model_executor/layers/quantization/online/fp8.py:204-262`) | one weight scale per output channel; activations per token (`online/fp8.py:391-454`) |
+| Routed experts (MoE) | one weight scale per expert and projection; activations per tensor over the whole batch, both expert GEMMs (`online/fp8.py:517-523, 608-662`; `fused_moe/experts/triton_moe.py:340-351`) | weight scales per output channel; activations per token, both expert GEMMs (`online/fp8.py:763-846`; `fused_moe/prepare_finalize/no_dp_ep.py:27-32`; `triton_moe.py:522-526`; `fused_moe/utils.py:323-337`) |
+| Not quantized, both | the router, the shared-expert gate, the GDN `conv1d`, embeddings and `lm_head` (`models/qwen3_next.py:191-201`; `layers/mamba/gdn/qwen_gdn_linear_attn.py:503-508`; `online/base.py:388-411`) | |
+| Dense kernel, G4 (sm_120) and H100 (sm_90) | CUTLASS `scaled_mm` (`kernels/linear/__init__.py:443-452`; `csrc/quantization/w8a8/cutlass/scaled_mm_entry.cu:145-158`) | the same; Marlin, the weight-only fallback, is refused (`online/fp8.py:430-438`) |
+| MoE kernel, G4 | Triton (the 29-10-2026 G4 log) | Triton (`fused_moe/experts/triton_moe.py:157-163`): the CUTLASS grouped GEMM isn't built for sm_120 (`scaled_mm_entry.cu:176-194`), and FlashInfer's and DeepGEMM's kernels don't take this scheme (`experts/flashinfer_cutlass_moe.py:146-181`, `experts/trtllm_fp8_moe.py:165-222`, `experts/deep_gemm_moe.py:178-188`) |
+| MoE kernel, H100 (from the source; never run) | Triton: the CUTLASS MoE is left out for this scheme (`fused_moe/oracle/fp8.py:510-512`) | CUTLASS grouped GEMM by default (`oracle/fp8.py:86-102`; `experts/cutlass_moe.py:311-328`); `serve.sh` passes `--moe-backend triton` (`config/kernel.py:294`; `oracle/fp8.py:450-477`), so both GPUs run Triton, as with `fp8` |
+
+- No batch-wide maximum is left in `fp8_per_channel`'s quantization: every activation scale is one
+  token's (`_custom_ops.py:1880-1883`), and weight scales are fixed at load.
+- vllm-lens and `EAGER=1` don't depend on the scheme: the hooks read decoder-layer outputs. The
+  interp backend takes the scheme as an argument and puts it in the fingerprint
+  (`src/simtest/interp/vllm_backend.py:104-123`), so vectors built on one scheme are never used on
+  the other.
+
+**What stays batch-dependent with either scheme.** So `max_connections` stays pinned at 12:
+- The Triton MoE's tile sizes are chosen from the number of tokens in the batch
+  (`fused_moe/fused_moe.py:1374-1398, 1419-1446`). vLLM's batch-invariant mode replaces them with
+  one fixed tile (`fused_moe.py:1305-1312`).
+- FlashAttention splits the KV by a heuristic that depends on the batch (`v1/attention/backends/flash_attn.py:829-863`).
+- A long prompt's prefill chunks end where the step's token budget runs out, so their boundaries
+  depend on the other requests (`v1/core/sched/scheduler.py:710-712`).
+- `VLLM_BATCH_INVARIANT=1`, vLLM's fix for all three, refuses this model: the GDN layers' backend
+  doesn't support it (`v1/attention/selector.py:242-246`; `v1/attention/backend.py:206-207`).
+- No seed is sent, at temperature 0.6, so a rerun samples other tokens anyway.
+
+What `fp8_per_channel` removes is the systematic part: under `fp8`, a bigger batch has a larger
+maximum, so every token's MoE activations are rounded to a coarser grid.
+
+### The measurement, in the pilot session's first hour
+
+On the reference G4, before any episode, one setting after the other (both simulators don't fit
+next to the agent). `fp8` goes first: if `fp8_per_channel` is adopted, no restart is needed.
+
+```bash
+# before the session, on the laptop (offline): the contexts from sessions 4 and 5
+uv run simtest equiv contexts logs/colab-g4-s5-c3r logs/colab-g4-s5-c3b2 logs/colab-g4-s4-flows --out logs/equiv/contexts.jsonl
+mkdir -p logs/simquant/fp8 logs/simquant/fp8_per_channel
+# the session's usual setup: serve.sh with MIX=c3 (fp8), the tunnel; no episodes yet
+SIM_LINES="grep -h -E \"Quantizing|Fp8 MoE backend|Selected .* for Fp8\" /content/probe/simulator.log; grep -- \"--served-model-name simulator\" /content/probe/versions.txt | tail -1"
+# 1. fp8: the server's lines, the noise floor of both models, fidelity and speed
+eval "$SSH '$SIM_LINES'" > logs/simquant/fp8/server.txt
+uv run simtest equiv score logs/equiv/contexts.jsonl --agent-url http://localhost:18000/v1 \
+    --simulator-url http://localhost:18001/v1 --concurrency 1 12 --out logs/simquant/equiv/fp8 --label "G4, session N, fp8"
+uv run python -I explore/sim_quant.py fidelity fp8
+# 2. fp8_per_channel: restart the simulator alone (the agent keeps serving), then the same
+eval "$SSH 'MIX=c3 SIM_QUANT=fp8_per_channel SIM_ONLY=1 bash -s'" < explore/colab_probe/serve.sh
+eval "$SSH '$SIM_LINES'" > logs/simquant/fp8_per_channel/server.txt
+uv run simtest equiv score logs/equiv/contexts.jsonl --simulator-url http://localhost:18001/v1 \
+    --concurrency 1 12 --out logs/simquant/equiv/fp8_per_channel --label "G4, session N, fp8_per_channel"
+uv run python -I explore/sim_quant.py fidelity fp8_per_channel
+# 3. the rule; if it keeps fp8 (KEEP or INCOMPLETE), restart the simulator as fp8 before the episodes
+uv run python -I explore/sim_quant.py decide
+eval "$SSH 'MIX=c3 SIM_ONLY=1 bash -s'" < explore/colab_probe/serve.sh
+```
+
+- **Fidelity:** the bake-off's forced mode (LOG.md, 26-10-2026): each of the 84 recorded steps
+  predicted from the real history, one sample each, 12 requests at once. `sim_quant.py` scores it
+  with `bakeoff_score.py`, and with the graded fidelity (`simtest.post.fidelity`) if the checkout
+  has it; that one is reported, not in the rule.
+- **Batching noise:** `simtest equiv`'s noise floor of the simulator, 1 against 12 at once, for each
+  setting. The agent's floor under `fp8` is kept too: it is the reference for a later move to Hopper.
+- **Speed:** generation tokens per second with 12 running and none waiting, from the server's
+  `/metrics`, during each fidelity pass. The agent is idle then, so episodes will be slower.
+- **Cost:** about 45 minutes of the G4, so about 7.5 units at 10.05 an hour (7–9): two forced
+  passes of 14–18 minutes each (the 29-10 pass's 339K generated tokens replayed through 12 slots at
+  400–500 tokens a second), a few minutes of `equiv` per setting, about 4 minutes per simulator
+  restart, and 4 more if it reverts to `fp8`. An `equiv` request that runs a server out of memory
+  (above) adds a restart of both servers, about 1 unit.
+- **Not covered:** the noise floor batches prefills only, and decoding is where `fp8`'s shared scale
+  differs most between 1 and 12 at once, so the measured reduction is a lower bound. One sample
+  per step can catch a broken quantization, not a difference of a few thousandths. Triton's
+  per-channel path has never run on our sm_120: the first startup is its test.
+
+**Decision rule (DRAFT, 02-11-2026; frozen in LOG.md before the run).** `fp8_per_channel` is
+adopted for the pilot and N3, in every condition and phase, if all of these hold. Otherwise `fp8`
+is kept.
+1. **Fidelity:** on the 81 deterministic forced steps, its mean similarity is at least `fp8`'s
+   minus 0.02, and at most 3 of its 84 steps hit the 16K cap (the 29-10-2026 rule). 0.02 is about
+   2 standard errors of the paired difference between two forced passes: 0.0097, from the MLX
+   (26-10) and G4 (29-10) runs. That pair also differed in quantization and engine, so it is an
+   upper bound on the run-to-run spread.
+2. **Batching noise:** the simulator's mean |difference in log-prob|, 1 against 12 at once, is lower
+   than under `fp8`, with the 95% paired bootstrap interval of the difference below zero, and its
+   top-1 agreement is no lower.
+3. **Complete evidence:** both passes predicted the bake-off's recording (pinned by its hash) and
+   scored exactly its 84 steps, none with an error; the four score files come from the simulator
+   server on vLLM 0.32.0, each `--label` ends with its setting, and they cover the same simulator
+   contexts with the same token IDs; each server shows its scheme on every quantized layer and the
+   Triton MoE. Otherwise the verdict is INCOMPLETE, and the pilot keeps `fp8`.
+
+Speed never decides. If `fp8_per_channel` is adopted at under 0.9 of `fp8`'s tokens per second
+(or its speed is missing), Victor confirms the rescaled budget before the episodes.
+
+**The pin at 12, under each outcome:**
+- `fp8` kept: 12 at once for every condition and session, as now.
+- `fp8_per_channel` adopted: still 12 for the pilot and N3 (the batch dependence above remains).
+  Another number at once, for example on Hopper, needs a `simtest equiv` check recorded in LOG.md
+  first: the noise floor at 1 against N no larger than at 1 against 12, for both models. Under
+  `fp8` that check isn't offered: a bigger batch coarsens the simulator's MoE.
+
+Code: `explore/sim_quant.py`. Tests: `tests/test_sim_quant.py`, and the options in
+`tests/test_serve_script.py`.

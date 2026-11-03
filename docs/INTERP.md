@@ -121,8 +121,17 @@ they use the episodes' FP8 weights by construction.
 - *A consequence for every simulator number.* The MoE's activation scale is computed over
   the whole batch, so the simulator's output depends on what else is in the batch. The
   episodes ran 13–16 at once; the vLLM backend sends one request at a time.
-  `fp8_per_channel` (per-token activations, the MoE included) would remove the dependence,
-  but it changes the simulator's weights for every condition: Victor's call, not made here.
+  `fp8_per_channel` (per-token activations, the MoE included) removes that part of the
+  dependence, but it changes the simulator's weights for every condition: Victor's call, not
+  made here.
+  - Checked in vLLM 0.32.0's source (02-11-2026, [`BACKENDS.md`](BACKENDS.md), "The
+    simulator's quantization"): it exists, and it covers every quantized layer, the MoE
+    included, on the G4 and the H100. Other batch dependence remains (MoE tile sizes, attention
+    splits, prefill chunks), and vLLM's batch-invariant mode refuses the GDN layers, so the
+    pin at 12 at once stays either way.
+  - If it is adopted, every phase uses it: `serve.sh`'s `SIM_QUANT=fp8_per_channel` for
+    episodes (`EAGER=1` too), and `quantization="fp8_per_channel"` for this backend and the
+    smoke test (`explore/interp/gpu_smoke.py` says `fp8` today).
 
 **vLLM backend** (`vllm_backend.py`), on vllm-lens 1.3.0 (UK AISI, MIT):
 
@@ -195,6 +204,9 @@ Sources:
   and [issue #52](https://github.com/UKGovernmentBEIS/vllm-lens/issues/52).
 - vLLM v0.32.0:
   - `layers/quantization/online/fp8.py`, `model_loader/weight_utils.py`, `config/quantization.py`
+  - for `fp8_per_channel` and the batch dependence: `fused_moe/oracle/fp8.py`, `fused_moe/fused_moe.py`,
+    `kernels/linear/__init__.py`, `v1/attention/selector.py`, `v1/core/sched/scheduler.py`
+    (all cited in [`BACKENDS.md`](BACKENDS.md))
   - `engine/arg_utils.py` (defaults by card), `sampling_params.py`
 - [EasySteer](https://github.com/ZJU-REAL/EasySteer) v0.29.0: `docs/getting-started/installation.md`,
   `model_hooks/components/discovery.py`.
@@ -587,7 +599,8 @@ colab --auth adc stop -s probe
 - If `served_equals_eager` fails, steering experiments run all their conditions on the
   eager engine (above).
 - The simulator's batch-dependent FP8 MoE ([GPU backends](#gpu-backends)): keep
-  `fp8_per_tensor`, or move every phase to `fp8_per_channel`. Victor's call.
+  `fp8_per_tensor`, or move every phase to `fp8_per_channel`. Victor's call, on the
+  measurement and DRAFT rule in [`BACKENDS.md`](BACKENDS.md) (the pilot session's first hour).
 - The SAE transfer check on FP8 activations of pilot transcripts. `sae_transfer.py` splices
   with `token_losses(replace=)`, which only the HF backend has. So either the agent on the
   HF backend, or a vllm-lens `Hook` that splices in the worker process.
