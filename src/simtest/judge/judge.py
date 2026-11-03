@@ -135,9 +135,10 @@ def fits(prompt_tokens: int, max_output: int, budget: int, margin: float = 1.25)
 _FENCE = re.compile(r"^\s*```(?:json)?\s*\n(.*)\n\s*```\s*$", re.S)
 
 
-def extract_json(raw: str) -> dict:
-    """The JSON object in an answer: the whole answer, or fenced as ```json, or the one
-    object between the first `{` and the last `}` when the judge added words around it."""
+def extract_json(raw: str, keys: tuple[str, ...] = ()) -> dict:
+    """The JSON object in an answer: the whole answer, or fenced as ```json, or, when the
+    judge added words around it, the first object that decodes from a `{` and holds one of
+    `keys` (any object when no keys are given, or none holds them)."""
     s = (raw or "").strip()
     if not s:
         raise AnswerError("empty answer")
@@ -146,13 +147,24 @@ def extract_json(raw: str) -> dict:
     try:
         obj = json.loads(s)
     except json.JSONDecodeError:
-        i, j = s.find("{"), s.rfind("}")
-        if i < 0 or j <= i:
+        dec, found, first_error = json.JSONDecoder(), [], None
+        i = s.find("{")
+        if i < 0:
             raise AnswerError("no JSON object in the answer") from None
-        try:
-            obj = json.loads(s[i:j + 1])
-        except json.JSONDecodeError as exc:
-            raise AnswerError(f"invalid JSON: {exc.msg} at char {exc.pos}") from None
+        while i >= 0:
+            try:
+                o, _ = dec.raw_decode(s, i)
+            except json.JSONDecodeError as exc:
+                first_error = first_error or exc
+            else:
+                if isinstance(o, dict):
+                    if not keys or any(k in o for k in keys):
+                        return o
+                    found.append(o)
+            i = s.find("{", i + 1)
+        if not found:
+            raise AnswerError(f"invalid JSON: {first_error.msg} at char {first_error.pos}") from None
+        obj = found[0]
     if not isinstance(obj, dict):
         raise AnswerError("the answer is JSON but not an object")
     return obj
@@ -174,7 +186,7 @@ def parse_answer(raw: str, label: str) -> dict:
     """The answer's fields, checked: {"verdict_raw", "value", "positive", "score", "quotes",
     "first_step", "rationale"}. Raises AnswerError when it can't be used."""
     spec = LABELS[label]
-    obj = extract_json(raw)
+    obj = extract_json(raw, ("verdict",) if spec["kind"] == "choice" else ("score",))
     out: dict = {"score": None}
     if spec["kind"] == "choice":
         v = obj.get("verdict")
