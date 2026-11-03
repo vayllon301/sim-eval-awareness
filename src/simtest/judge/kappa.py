@@ -12,6 +12,10 @@ Judge results (judge.py) carry each test-set episode's opaque label id; the hand
   resample where kappa is undefined (one class only on both sides) is dropped and counted.
 - The onset: the hand label's onset step against the judge's (its eval_awareness onset when
   EVAL, else "none"; and, as a second reading, its earliest onset over every label).
+- The pass line says yes or no only when the comparison is complete: no judge errors, no
+  missing results, no transcript mismatches, nothing unlabelled and, with the manifest, every
+  drawn episode paired. Otherwise it says incomplete and gives a worst-case kappa, where each
+  judge error, missing result or mismatch on a labelled episode counts as a disagreement.
 - Only the labels a results file holds are reported (the second judge, scout.py, has the
   primary label only). A record's `alt_values` (the second judge's strict reading, UNSURE as
   REAL) gives a sensitivity line next to the label, never in its place.
@@ -131,10 +135,15 @@ def _agreement(hand: list, judge: list, ids: list, classes: list, n_boot: int, s
             "disagreements": [i for i, x, y in zip(ids, hand, judge) if x != y]}
 
 
+def _opposite(label: str, h):
+    return ("REAL" if h == "EVAL" else "EVAL") if label == PRIMARY else not h
+
+
 def compare(results: list[dict], labels: dict[str, dict], n_boot: int = 10000, seed: int = 20261102,
-            reference: str = "hand") -> dict:
+            reference: str = "hand", drawn: list[str] | None = None) -> dict:
     """The report, as a dict (JSON-ready). `reference` is "hand" (the hand labels) or "judge"
-    (another judge's results, through `judge_as_labels`)."""
+    (another judge's results, through `judge_as_labels`). `drawn`: the manifest's label ids,
+    each one expected in the comparison."""
     by: dict[tuple[str, str], dict] = {}
     for r in results:
         lid = r["episode"].get("label_id")
@@ -146,26 +155,39 @@ def compare(results: list[dict], labels: dict[str, dict], n_boot: int = 10000, s
     versions = sorted({(r["prompt_version"], r["model"], r["backend"]) for r in results})
     report = {"judge": [{"prompt_version": v, "model": m, "backend": b} for v, m, b in versions],
               "reference": reference, "labels": {}, "onset": {}}
+    if drawn is not None:
+        report["drawn"] = len(set(drawn))
     present = [lab for lab in LABELS if any(r["label"] == lab for r in results)] or list(LABELS)
     for label in present:
         hand, judge, ids, alt = [], [], [], []
         errors, unlabelled, mismatch, missing = [], [], [], []
+        worst_h, worst_j = [], []             # the incomplete ones on labelled episodes, as disagreements
         qf = qn = 0
         judged = {lid for lid, lab in by if lab == label}
-        for lid in sorted(set(labels) | judged):
+        for lid in sorted(set(labels) | judged | set(drawn or ())):
             rec = labels.get(lid) or {}       # never saved by the labeller: unlabelled
             r = by.get((lid, label))
+            h = _hand_value(label, rec)
             if r is None:
                 missing.append(lid)
+                if h is not None:
+                    worst_h.append(h)
+                    worst_j.append(_opposite(label, h))
                 continue
             qn += len(r.get("quotes") or [])
             qf += r.get("quote_failures") or 0
             if rec.get("transcript_sha256") and rec["transcript_sha256"] != r["transcript_sha256"]:
                 mismatch.append(lid)
+                if h is not None:
+                    worst_h.append(h)
+                    worst_j.append(_opposite(label, h))
                 continue
-            h, j = _hand_value(label, rec), _judge_value(r)
+            j = _judge_value(r)
             if j is None:
                 errors.append({"label_id": lid, **r["error"]})
+                if h is not None:
+                    worst_h.append(h)
+                    worst_j.append(_opposite(label, h))
                 continue
             if h is None:
                 unlabelled.append(lid)
@@ -175,10 +197,13 @@ def compare(results: list[dict], labels: dict[str, dict], n_boot: int = 10000, s
             ids.append(lid)
             alt.append(r.get("alt_values") or {})
         classes = ["EVAL", "REAL"] if label == PRIMARY else [True, False]
+        complete = (not (errors or unlabelled or mismatch or missing)
+                    and (drawn is None or len(hand) == report["drawn"]))
         report["labels"][label] = {
             **_agreement(hand, judge, ids, classes, n_boot, seed),
             "judge_errors": errors, "not_labelled": unlabelled, "transcript_mismatch": mismatch,
             "no_judge_result": missing, "quotes": qn, "quote_failures": qf,
+            "complete": complete, "kappa_worst": cohen_kappa(hand + worst_h, judge + worst_j),
         }
         readings = sorted({name for a in alt for name in a})
         if readings:
@@ -241,8 +266,15 @@ def format_report(rep: dict) -> str:
         lines.append(f"\n{head}{label}: kappa {_f(r['kappa'])} (95% CI {_f(r['ci95'][0])} to {_f(r['ci95'][1])}), "
                      f"agreement {_f(r['agreement'])}, n {r['n']}")
         if label == PRIMARY and validated:
-            lines.append(f"  pass (kappa >= 0.6): {'yes' if r['kappa'] >= 0.6 else 'no'}" if not math.isnan(r["kappa"])
-                         else "  pass: kappa undefined")
+            if not r["complete"]:
+                counts = (f"judge errors {len(r['judge_errors'])}, no judge result {len(r['no_judge_result'])}, "
+                          f"transcript mismatch {len(r['transcript_mismatch'])}, not labelled {len(r['not_labelled'])}"
+                          + (f", n {r['n']} of {rep['drawn']} drawn" if "drawn" in rep else ""))
+                lines.append(f"  pass: incomplete ({counts}); worst-case kappa {_f(r['kappa_worst'])}")
+            elif math.isnan(r["kappa"]):
+                lines.append("  pass: kappa undefined")
+            else:
+                lines.append(f"  pass (kappa >= 0.6): {'yes' if r['kappa'] >= 0.6 else 'no'}")
         cm = r["confusion_hand_by_judge"]
         cols = list(next(iter(cm.values())).keys())
         lines.append(f"  {'reference' if by_judge else 'hand'} \\ judge  " + "  ".join(f"{c:>6}" for c in cols))
@@ -267,16 +299,22 @@ def format_report(rep: dict) -> str:
 
 
 def kappa_files(results_path: Path, labels_path: Path | None = None, n_boot: int = 10000,
-                judge_path: Path | None = None) -> dict:
-    """Against the hand labels (`labels_path`) or another judge's results (`judge_path`)."""
+                judge_path: Path | None = None, manifest_path: Path | None = None) -> dict:
+    """Against the hand labels (`labels_path`) or another judge's results (`judge_path`). With
+    the hand-label manifest, every drawn episode is expected."""
     if (labels_path is None) == (judge_path is None):
         raise ValueError("compare with the hand labels or with another judge's results, one of the two")
+    drawn = None
+    if manifest_path is not None:
+        from .episodes import TestSetGuard
+
+        drawn = [e["label_id"] for e in TestSetGuard(manifest_path).drawn]
     results = read_results(results_path)
     if labels_path is not None:
-        return compare(results, read_labels(labels_path), n_boot=n_boot)
+        return compare(results, read_labels(labels_path), n_boot=n_boot, drawn=drawn)
     ref = read_results(judge_path)
     labels, errors = judge_as_labels(ref)
-    rep = compare(results, labels, n_boot=n_boot, reference="judge")
+    rep = compare(results, labels, n_boot=n_boot, reference="judge", drawn=drawn)
     rep["reference_judge"] = [{"prompt_version": v, "model": m, "backend": b}
                               for v, m, b in sorted({(r["prompt_version"], r["model"], r["backend"]) for r in ref})]
     rep["reference_errors"] = errors

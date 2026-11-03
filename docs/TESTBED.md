@@ -1661,12 +1661,16 @@ once against the hand labels (kappa).
     in its directory) and no uncommitted change under `prompts/`.
   - Any paid call (`inspect` with a model other than `mockllm`) needs `--yes`. Without it
     the command prints the plan (calls, cached, prompt tokens) and stops.
-  - `simtest judge kappa <results.jsonl> <labels.jsonl> [--json]` (`kappa.py`): per label,
-    Cohen's kappa with a percentile bootstrap 95% CI over episodes (10,000 resamples, fixed
-    seed), the agreement, the confusion matrix (hand by judge), the disagreements, judge
-    errors, unlabelled episodes, transcript-hash mismatches and quote failures. The primary
-    passes at kappa ≥ 0.6. The onset is compared two ways: the eval-awareness onset, and the
-    earliest onset over all labels.
+  - `simtest judge kappa <results.jsonl> <labels.jsonl> [--manifest <manifest.json>] [--json]`
+    (`kappa.py`): per label, Cohen's kappa with a percentile bootstrap 95% CI over episodes
+    (10,000 resamples, fixed seed), the agreement, the confusion matrix (hand by judge), the
+    disagreements, judge errors, unlabelled episodes, transcript-hash mismatches and quote
+    failures. The primary passes at kappa ≥ 0.6, read only when the comparison is complete:
+    no judge errors, missing results, mismatches or unlabelled episodes, and, with
+    `--manifest`, every drawn episode paired. Otherwise the pass line says `incomplete`, with
+    a worst-case kappa that counts each of those on a labelled episode as a disagreement. The
+    onset is compared two ways: the eval-awareness onset, and the earliest onset over all
+    labels.
   - `simtest judge show <results.jsonl>`: verdict counts, errors and quote failures.
 
 ## The second judge: Scout's eval-awareness scanner

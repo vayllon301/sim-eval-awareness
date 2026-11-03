@@ -3,7 +3,7 @@ the hand labels. See docs/TESTBED.md, "The awareness judge".
 
     simtest judge tune <tuning.yaml> --backend codex --prompts v1 --out tune.jsonl
     simtest judge run <manifest.json> --backend inspect --model openrouter/... --prompts v3 --out kappa.jsonl --yes
-    simtest judge kappa <kappa.jsonl> <labels.jsonl>
+    simtest judge kappa <kappa.jsonl> <labels.jsonl> --manifest <manifest.json>
     simtest judge kappa <scout.jsonl> --judge <kappa.jsonl>          # two judges on the same episodes
     simtest judge scout <manifest.json> --model openrouter/... --out scout.jsonl --yes
     simtest judge sizes <manifest.json | tuning.yaml> --prompts v3
@@ -64,6 +64,8 @@ def add_parser(sub) -> None:
     k.add_argument("labels", type=Path, nargs="?", default=None, help="the hand labels (labels.jsonl)")
     k.add_argument("--judge", type=Path, default=None, dest="reference",
                    help="another judge's results on the same test set, as the reference instead of the hand labels")
+    k.add_argument("--manifest", type=Path, default=None,
+                   help="the hand-label manifest: every drawn episode is expected (the pass needs all of them)")
     k.add_argument("--boot", type=int, default=10000)
     k.add_argument("--json", action="store_true")
     sc = jsub.add_parser("scout", help="the second judge: Scout's published eval-awareness scanner on a manifest's "
@@ -251,7 +253,8 @@ def main(args: argparse.Namespace) -> None:
     elif args.judge_cmd == "kappa":
         if (args.labels is None) == (args.reference is None):
             raise SystemExit("give the hand labels (labels.jsonl) or --judge <results.jsonl>, one of the two")
-        rep = kappa_files(args.results, args.labels, n_boot=args.boot, judge_path=args.reference)
+        rep = kappa_files(args.results, args.labels, n_boot=args.boot, judge_path=args.reference,
+                          manifest_path=args.manifest)
         print(dumps(rep) if args.json else format_report(rep))
     elif args.judge_cmd == "scout":
         _scout(args)
