@@ -1790,24 +1790,23 @@ kappa.
   on the same episodes. The other judge stands where the hand labels stood, and its errors
   are listed, not read as REAL.
 
-### The model and the cost of one pass (an estimate; not run)
+### The model (decided 03-11-2026, after one pass on each)
 
-- **Model: `anthropic/claude-sonnet-5.5` on OpenRouter**, pinned to Anthropic as the
-  provider (`--model-args '{"provider": {"order": ["anthropic"], "allow_fallbacks": false}}'`,
-  `--temperature none`: Claude 5.x refuses a temperature).
-  - Not from the primary judge's family: the v3 prompt was tuned on GPT-6.1-Sol. Not from
-    the agent's or the simulator's family (Qwen) either.
-  - The scanner answers through a tool call, which it supports, and it holds 1M tokens.
-  - If the primary judge's κ pass ends up on a Claude model, use `google/gemini-4-argon`
-    instead (the same price, tools, 1M tokens).
-- **Size** (`plan_calls` on the 100 drawn episodes, numbers only, 02-11-2026): none refused,
-  none too long. Prompt tokens, `o200k_base`: total 2.52M, largest 74.3K, median 20.2K.
-- **Cost, at $2 per million input tokens and $10 per million output** (OpenRouter's list
-  price on 02-11-2026):
-  - Input: 2.5–3.3M tokens (Claude's tokenizer can count up to about 30% more) is $5–7.
-  - Output: 300–1,000 tokens per answer is $0.3–1.
-  - **About $6–8 for one pass.** At most about $22 if every call needed all three
-    attempts.
+- **Model: `anthropic/claude-haiku-5.5` on OpenRouter**, pinned to Anthropic as the provider
+  (`--model-args '{"provider": {"order": ["anthropic"], "allow_fallbacks": false}}'`),
+  `--reasoning-effort high`, `--temperature none` (Claude 5.x refuses a temperature).
+  - Not from the primary judge's family: the v3 prompt was tuned on GPT-6.1-Sol. Not from the
+    agent's or the simulator's family (Qwen) either.
+  - The scanner answers through a tool call, which it supports.
+- **Why not Sonnet 5.5, the first choice.** On the 100 drawn episodes, Anthropic's content
+  filter blocked 16 (`content_filter`, every attempt: "reverse engineering or duplicating
+  model outputs"; the transcripts carry the agent's chain of thought). Haiku called all 16
+  aware, so Sonnet's missing episodes were the aware ones. Haiku answered all 100.
+- If Haiku fails against the hand labels, the fallback is `google/gemini-4-argon`, from
+  another family again.
+- **Cost of one pass** on the 100: 3.8M input and 79K output tokens, about $0.42 (an estimate
+  from OpenRouter's upstream cost). With Victor's Anthropic key as BYOK, $0 on OpenRouter.
+  BYOK still needs an OpenRouter balance: each request's maximum cost is checked against it.
 - The spend is approved before any run.
 
 ## The primary test and its power (`stats/`)
