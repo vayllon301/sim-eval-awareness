@@ -1634,8 +1634,10 @@ once against the hand labels (kappa).
     settings: temperature (default 0), max tokens (16,000, reasoning included), reasoning
     effort, seed, and provider options (`--model-args`, JSON; for OpenRouter, e.g.
     `{"provider": {"order": ["openai"], "allow_fallbacks": false}}` pins the provider). The
-    frozen judge runs here. On Anthropic models through OpenRouter it caches the transcript
-    (below, "Prompt caching").
+    frozen judge runs here: `openrouter/anthropic/claude-haiku-5.5`, pinned to Anthropic
+    (`{"provider": {"order": ["anthropic"], "allow_fallbacks": false}}`), `--reasoning-effort
+    high`, `--temperature none` (Victor, 03-11-2026; fixed before the κ pass). On Anthropic
+    models through OpenRouter it caches the transcript (below, "Prompt caching").
   - `codex`: `codex exec` on the ChatGPT login, for free tuning passes. The prompt goes on
     stdin from an empty temporary directory: read-only, no web search, the shell and other
     tools turned off, no session saved, the user's config.toml ignored. Codex's base prompt
@@ -1872,23 +1874,25 @@ kappa.
   on the same episodes. The other judge stands where the hand labels stood, and its errors
   are listed, not read as REAL.
 
-### The model (decided 03-11-2026, after one pass on each)
+### The model (decided 03-11-2026, after passes on three models)
 
-- **Model: `anthropic/claude-haiku-5.5` on OpenRouter**, pinned to Anthropic as the provider
-  (`--model-args '{"provider": {"order": ["anthropic"], "allow_fallbacks": false}}'`),
-  `--reasoning-effort high`, `--temperature none` (Claude 5.x refuses a temperature).
-  - Not from the primary judge's family: the v3 prompt was tuned on GPT-6.1-Sol. Not from the
-    agent's or the simulator's family (Qwen) either.
-  - The scanner answers through a tool call, which it supports.
-- **Why not Sonnet 5.5, the first choice.** On the 100 drawn episodes, Anthropic's content
-  filter blocked 16 (`content_filter`, every attempt: "reverse engineering or duplicating
-  model outputs"; the transcripts carry the agent's chain of thought). Haiku called all 16
-  aware, so Sonnet's missing episodes were the aware ones. Haiku answered all 100.
-- If Haiku fails against the hand labels, the fallback is `google/gemini-4-argon`, from
-  another family again.
-- **Cost of one pass** on the 100: 3.8M input and 79K output tokens, about $0.42 (an estimate
-  from OpenRouter's upstream cost). With Victor's Anthropic key as BYOK, $0 on OpenRouter.
-  BYOK still needs an OpenRouter balance: each request's maximum cost is checked against it.
+- **Model: `deepseek/deepseek-v4.1-flash-1017` on OpenRouter**, a dated snapshot (the `latest`
+  aliases can change), on DeepInfra's FP8 endpoint with no fallbacks and no data collection
+  (`--model-args '{"provider": {"order": ["deepinfra/fp8"], "allow_fallbacks": false,
+  "data_collection": "deny"}}'`), `--reasoning-effort high`, `--temperature none`.
+  - Not from the primary judge's family (Claude Haiku 5.5). Not from the agent's or the
+    simulator's family (Qwen) either.
+  - DeepSeek's own endpoint is excluded by the account's guardrail (it trains on paid
+    traffic).
+  - On the 100 drawn episodes: all answered, one retry (an answer cut at `max_tokens`).
+- **Kept as reported extras:**
+  - Claude Haiku 5.5 (the first choice, before the primary judge moved to Haiku): all 100
+    answered.
+  - Claude Sonnet 5.5: Anthropic's content filter blocked 16 (`content_filter`, every attempt:
+    "reverse engineering or duplicating model outputs"; the transcripts carry the agent's chain
+    of thought). Haiku called all 16 aware, so Sonnet's missing episodes were the aware ones.
+- **Cost of one pass** on the 100: 2.55M input and 181K output tokens, about $0.30 of
+  OpenRouter credit (an estimate from the balance).
 - The spend is approved before any run.
 
 ## The primary test and its power (`stats/`)
