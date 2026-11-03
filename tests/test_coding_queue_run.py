@@ -319,3 +319,33 @@ def test_kept_attempts_get_their_own_grader_keys():
     assert one != two
     logged = {"uuid": "u1", "log_path": "x.eval", "sample_id": "a", "epoch": 1}
     assert item_key(logged, g, "r", "s") == item_key({**logged, "attempt": {"id": "9"}}, g, "r", "s")
+
+
+def test_two_kept_attempts_of_one_episode_get_distinct_grader_keys_through_load(machines, tmp_path, monkeypatch):
+    """S10 (sol-loop round 6): load() must keep each kept attempt's id, or two attempts with the same
+    outputs share one stored judgement."""
+    from inspect_ai.model import get_model
+
+    from simtest import preflight as P
+    from simtest.post.fidelity import _texts, item_key, load
+
+    target = ("C3", "pricing_cap", 1)
+
+    async def probe(machine, scenario, base):
+        state = sample_state()
+        if this_episode() == target and state.store.get("CodingEpisode:attempt")["attempt"] <= 2:
+            raise RuntimeError("machine error after the loop")
+        return dict(RAW)
+
+    monkeypatch.setattr(episode, "probe", probe)
+
+    def models(spec):
+        sim = "sim" in spec["model"]
+        return get_model("mockllm/" + ("sim" if sim else "agent"), custom_outputs=P._simulator if sim else P._agent,
+                         memoize=False)
+
+    _, _, log_dir = run(config(tmp_path), tmp_path, models=models)
+    kept = [g for g in load([log_dir]) if g["log_path"] is None]
+    assert len(kept) == 2 and all(k.get("attempt", {}).get("id") for k in kept)
+    keys = [item_key(k, s, *_texts(k, s)) for k in kept for s in k["fidelity"]["steps"][:1]]
+    assert len(keys) == 2 and keys[0] != keys[1]

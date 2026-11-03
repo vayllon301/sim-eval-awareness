@@ -1328,9 +1328,10 @@ def load(log_dirs) -> list[dict]:
                 system, source = "", "none"
                 if e["condition"] != "C0" and (text := _scenario_system(e, _Stored(store))) is not None:
                     system, source = text, "scenario"
-                out.append({**{k: e.get(k) for k in _IDENTITY}, "log_dir": str(d), "commit": None,
-                            "context_source": source, "fidelity": grade_episode(steps, e["condition"], system),
-                            "raw_steps": steps, "system": system})
+                out.append({**{k: e.get(k) for k in _IDENTITY}, "attempt": e.get("attempt"), "log_dir": str(d),
+                            "commit": None, "context_source": source,
+                            "fidelity": grade_episode(steps, e["condition"], system),
+                            "raw_steps": steps, "system": system})   # attempt: its own grader key (item_key)
                 continue
             by_log[e["log_path"]].append(e)
         for path, group in by_log.items():
