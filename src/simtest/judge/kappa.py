@@ -14,8 +14,9 @@ Judge results (judge.py) carry each test-set episode's opaque label id; the hand
   EVAL, else "none"; and, as a second reading, its earliest onset over every label).
 - The pass line says yes or no only when the comparison is complete: no judge errors, no
   missing results, no transcript mismatches, nothing unlabelled and, with the manifest, every
-  drawn episode paired. Otherwise it says incomplete and gives a worst-case kappa, where each
-  judge error, missing result or mismatch on a labelled episode counts as a disagreement.
+  drawn episode paired. Otherwise it says incomplete and gives a worst-case kappa, where every
+  episode that isn't a pair counts as a disagreement: against the hand label when there is
+  one, else against the judge's value, else (neither side has one) whichever way lowers kappa.
 - Only the labels a results file holds are reported (the second judge, scout.py, has the
   primary label only). A record's `alt_values` (the second judge's strict reading, UNSURE as
   REAL) gives a sensitivity line next to the label, never in its place.
@@ -139,6 +140,16 @@ def _opposite(label: str, h):
     return ("REAL" if h == "EVAL" else "EVAL") if label == PRIMARY else not h
 
 
+def _kappa_worst(hand: list, judge: list, blind: int, classes: list) -> float:
+    """The lowest kappa over the ways to split `blind` episodes (no value on either side)
+    between the two disagreements."""
+    a, b = classes
+    ks = [cohen_kappa(hand + [a] * m + [b] * (blind - m), judge + [b] * m + [a] * (blind - m))
+          for m in range(blind + 1)]
+    ks = [k for k in ks if not math.isnan(k)]
+    return min(ks) if ks else math.nan
+
+
 def compare(results: list[dict], labels: dict[str, dict], n_boot: int = 10000, seed: int = 20261102,
             reference: str = "hand", drawn: list[str] | None = None) -> dict:
     """The report, as a dict (JSON-ready). `reference` is "hand" (the hand labels) or "judge"
@@ -161,8 +172,19 @@ def compare(results: list[dict], labels: dict[str, dict], n_boot: int = 10000, s
     for label in present:
         hand, judge, ids, alt = [], [], [], []
         errors, unlabelled, mismatch, missing = [], [], [], []
-        worst_h, worst_j = [], []             # the incomplete ones on labelled episodes, as disagreements
+        worst_h, worst_j, blind = [], [], []  # the episodes that aren't pairs, as disagreements
         qf = qn = 0
+
+        def disagree(lid, h, j):
+            if h is not None:
+                worst_h.append(h)
+                worst_j.append(_opposite(label, h))
+            elif j is not None:
+                worst_h.append(_opposite(label, j))
+                worst_j.append(j)
+            else:
+                blind.append(lid)
+
         judged = {lid for lid, lab in by if lab == label}
         for lid in sorted(set(labels) | judged | set(drawn or ())):
             rec = labels.get(lid) or {}       # never saved by the labeller: unlabelled
@@ -170,27 +192,22 @@ def compare(results: list[dict], labels: dict[str, dict], n_boot: int = 10000, s
             h = _hand_value(label, rec)
             if r is None:
                 missing.append(lid)
-                if h is not None:
-                    worst_h.append(h)
-                    worst_j.append(_opposite(label, h))
+                disagree(lid, h, None)
                 continue
             qn += len(r.get("quotes") or [])
             qf += r.get("quote_failures") or 0
             if rec.get("transcript_sha256") and rec["transcript_sha256"] != r["transcript_sha256"]:
                 mismatch.append(lid)
-                if h is not None:
-                    worst_h.append(h)
-                    worst_j.append(_opposite(label, h))
+                disagree(lid, h, _judge_value(r))
                 continue
             j = _judge_value(r)
             if j is None:
                 errors.append({"label_id": lid, **r["error"]})
-                if h is not None:
-                    worst_h.append(h)
-                    worst_j.append(_opposite(label, h))
+                disagree(lid, h, None)
                 continue
             if h is None:
                 unlabelled.append(lid)
+                disagree(lid, None, j)
                 continue
             hand.append(h)
             judge.append(j)
@@ -203,7 +220,7 @@ def compare(results: list[dict], labels: dict[str, dict], n_boot: int = 10000, s
             **_agreement(hand, judge, ids, classes, n_boot, seed),
             "judge_errors": errors, "not_labelled": unlabelled, "transcript_mismatch": mismatch,
             "no_judge_result": missing, "quotes": qn, "quote_failures": qf,
-            "complete": complete, "kappa_worst": cohen_kappa(hand + worst_h, judge + worst_j),
+            "complete": complete, "kappa_worst": _kappa_worst(hand + worst_h, judge + worst_j, len(blind), classes),
         }
         readings = sorted({name for a in alt for name in a})
         if readings:

@@ -65,7 +65,8 @@ def add_parser(sub) -> None:
     k.add_argument("--judge", type=Path, default=None, dest="reference",
                    help="another judge's results on the same test set, as the reference instead of the hand labels")
     k.add_argument("--manifest", type=Path, default=None,
-                   help="the hand-label manifest: every drawn episode is expected (the pass needs all of them)")
+                   help="the hand-label manifest: every drawn episode is expected (the pass needs all of "
+                        "them); required with the hand labels")
     k.add_argument("--boot", type=int, default=10000)
     k.add_argument("--json", action="store_true")
     sc = jsub.add_parser("scout", help="the second judge: Scout's published eval-awareness scanner on a manifest's "
@@ -260,6 +261,9 @@ def main(args: argparse.Namespace) -> None:
     elif args.judge_cmd == "kappa":
         if (args.labels is None) == (args.reference is None):
             raise SystemExit("give the hand labels (labels.jsonl) or --judge <results.jsonl>, one of the two")
+        if args.labels is not None and args.manifest is None:
+            raise SystemExit("against the hand labels, give --manifest <manifest.json>: the pass needs every "
+                             "drawn episode")
         rep = kappa_files(args.results, args.labels, n_boot=args.boot, judge_path=args.reference,
                           manifest_path=args.manifest)
         print(dumps(rep) if args.json else format_report(rep))

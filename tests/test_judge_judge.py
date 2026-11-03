@@ -668,3 +668,38 @@ def test_a_complete_last_line_without_its_newline_is_not_glued_to_the_next(tmp_p
     assert list(store.latest) == ["k1"]
     store.append({**rec, "key": "k2"})
     assert list(J.ResultStore(p).latest) == ["k1", "k2"]
+
+
+def test_kappa_against_the_hand_labels_needs_the_manifest(tmp_path):
+    import argparse
+
+    p = argparse.ArgumentParser()
+    C.add_parser(p.add_subparsers(dest="cmd"))
+    with pytest.raises(SystemExit, match="--manifest"):
+        C.main(p.parse_args(["judge", "kappa", str(tmp_path / "r.jsonl"), str(tmp_path / "labels.jsonl")]))
+    (tmp_path / "r.jsonl").write_text(_lines(_result("L1", "eval_awareness", "EVAL")))
+    (tmp_path / "s.jsonl").write_text(_lines(_result("L1", "eval_awareness", "EVAL")))
+    C.main(p.parse_args(["judge", "kappa", str(tmp_path / "r.jsonl"), "--judge", str(tmp_path / "s.jsonl"),
+                         "--boot", "10"]))                               # judge against judge: optional
+
+
+def test_the_worst_case_kappa_counts_every_episode_that_is_not_a_pair():
+    hand = {"L1": {"verdict": "EVAL", "transcript_sha256": "h"}, "L2": {"verdict": "REAL", "transcript_sha256": "h"},
+            "L3": {"verdict": "REAL", "transcript_sha256": "h"}, "L4": {"verdict": None, "transcript_sha256": "h"}}
+    rs = [_result("L1", "eval_awareness", "EVAL"), _result("L2", "eval_awareness", "REAL"),
+          _result("L3", "eval_awareness", "REAL"), _result("L4", "eval_awareness", "EVAL")]
+    e = K.compare(rs, hand, n_boot=10)["labels"]["eval_awareness"]
+    assert e["not_labelled"] == ["L4"] and e["complete"] is False
+    assert e["kappa_worst"] == pytest.approx(K.cohen_kappa(["EVAL", "REAL", "REAL", "REAL"],
+                                                           ["EVAL", "REAL", "REAL", "EVAL"]))
+    # L5 drawn, with neither a label nor a result: whichever disagreement lowers kappa more.
+    e = K.compare(rs, hand, n_boot=10, drawn=["L1", "L2", "L3", "L4", "L5"])["labels"]["eval_awareness"]
+    h, j = ["EVAL", "REAL", "REAL", "REAL"], ["EVAL", "REAL", "REAL", "EVAL"]
+    worst = min(K.cohen_kappa(h + ["EVAL"], j + ["REAL"]), K.cohen_kappa(h + ["REAL"], j + ["EVAL"]))
+    assert e["no_judge_result"] == ["L5"] and e["kappa_worst"] == pytest.approx(worst)
+    # A judge error on an unlabelled episode has neither value either.
+    rs[3] = _result("L4", "eval_awareness", None, error={"kind": "malformed", "message": "x"})
+    e = K.compare(rs, hand, n_boot=10)["labels"]["eval_awareness"]
+    h, j = ["EVAL", "REAL", "REAL"], ["EVAL", "REAL", "REAL"]
+    assert e["kappa_worst"] == pytest.approx(min(K.cohen_kappa(h + ["EVAL"], j + ["REAL"]),
+                                                 K.cohen_kappa(h + ["REAL"], j + ["EVAL"])))
