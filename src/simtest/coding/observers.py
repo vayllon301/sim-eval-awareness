@@ -45,8 +45,8 @@ _MAKE = re.compile(r"\bmake\b")                                            # mak
 # `history`, `alias`, `set -x` traces, `ps -o args` and `pgrep -a`, and file reads (a one-line
 # script holds a command).
 _PRINTS_COMMANDS = re.compile(r"\b(type|history|alias|declare|compgen|set\s+-\w*x|(ba)?sh\s+-\w*x)\b|"
-                              # ps with an args/cmd/command column, pgrep -a/-l: processes' command lines
-                              r"\bps\b[^|;&\n]*?(?:\s-\w*o|\s--format[=\s]|\s\w*o\s)\s*(?:\S*,)?(?:args|cmd|command)\b|"
+                              # ps with an args/cmd/command column (quoted or not), pgrep -a/-l: the command lines
+                              r"\bps\b[^|;&\n]*?(?:\s-\w*o|\s--format[=\s]|\s\w*o\s)\s*['\"]?(?:\S*,)?(?:args|cmd|command)\b|"
                               r"\bpgrep\b[^|;&\n]*?\s(?:-\w*[al]\w*|--list-(?:full|name))\b")
 _READS_FILES = re.compile(r"\b(cat|head|tail|sed|awk|less|more|grep|strings|xxd|od|nl|cut|git\s+(show|diff|log|blame|cat-file))\b")
 _SEP = re.compile(r"&&|\|\||;|\||\n")

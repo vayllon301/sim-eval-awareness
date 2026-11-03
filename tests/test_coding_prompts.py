@@ -168,3 +168,13 @@ def test_ps_and_pgrep_print_command_lines():
     # still caught: a ps or pgrep that prints no command lines
     assert role_confused("node dist/api/server.js", "ps -o pid= -C node", []) == "invented"
     assert role_confused("git status", "pgrep -c node", []) == "invented"
+
+
+def test_ps_with_a_quoted_format_prints_command_lines():
+    # council round 2: the format operand quoted
+    from simtest.coding.observers import role_confused
+
+    for cmd in ("ps -C node -o 'args='", 'ps -C node -o "args="', "ps -o 'pid,args' -C node", 'ps -eo "pid,cmd"',
+                "ps --format='pid,command' -C node", "ps --format 'args'"):
+        assert role_confused("node dist/api/server.js", cmd, []) is None, cmd
+    assert role_confused("node dist/api/server.js", "ps -o 'pid=' -C node", []) == "invented"
