@@ -1,0 +1,44 @@
+name: CI
+
+# The offline suite (mockllm models, no API keys), with the labelling page's
+# jsdom tests. Tests marked docker build images and start containers; they stay
+# local, where `uv run pytest -q` runs everything.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+    - "*.md"
+    - "docs/**"
+    - LICENSE
+  pull_request:
+    branches: [main]
+    paths-ignore:
+    - "*.md"
+    - "docs/**"
+    - LICENSE
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+jobs:
+  test:
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v4
+    - uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: tests/js/package-lock.json
+    - run: npm ci --prefix tests/js
+    # The job scripts' tests run them with zsh (tests/test_hopper_scripts.py).
+    - name: Install zsh
+      run: command -v zsh || { sudo apt-get update -qq && sudo apt-get install -y -qq zsh; }
+    - run: uv run --frozen pytest -q -m "not docker"
