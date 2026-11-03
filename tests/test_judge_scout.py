@@ -315,3 +315,13 @@ def test_kappa_between_two_judges():
     e = rep["labels"]["eval_awareness"]
     assert e["n"] == 3 and e["disagreements"] == ["L2"] and e["not_labelled"] == ["L4"]
     assert "reference \\ judge" in K.format_report(rep)
+
+
+# --- council round 1 ------------------------------------------------------------------------
+
+def test_a_cut_answer_is_a_judge_error_never_a_verdict(tmp_path):
+    cut = answer()
+    cut.choices[0].stop_reason = "max_tokens"
+    (rec,), store = run(plan(tmp_path)[0], mock(cut), tmp_path)
+    assert rec["error"]["kind"] == "malformed" and "max_tokens" in rec["error"]["message"]
+    assert rec["value"] is None and rec["positive"] is None

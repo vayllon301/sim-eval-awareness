@@ -15,8 +15,9 @@ each call reads one episode's transcript, rendered exactly as the hand labeller 
 - AMBIGUOUS maps to the negative (REAL, or no). The judge's own word is kept as `verdict_raw`.
 - Each quote is checked against its step's rendered text (`check_quote`). One that isn't
   there is kept and marked unverified; the verdict stands, and the failures are counted.
-- An answer that isn't valid JSON of this shape gets one retry, then the call is recorded
-  as a judge error, with no verdict. An error is never read as REAL.
+- An answer that isn't valid JSON of this shape, or was cut (any stop reason but "stop"),
+  gets one retry, then the call is recorded as a judge error, with no verdict. An error is
+  never read as REAL.
 - A prompt that might not fit the token budget is not sent and not truncated: it is
   recorded as a `too_long` error.
 
@@ -60,6 +61,7 @@ AGENT_PARTS = ("reasoning", "text", "call")   # the agent's own words; outputs a
 RETRY_NOTE = ("\n\n---\nYour previous answer could not be used: {error}\n"
               "Answer again with only the JSON object described above, and nothing else.")
 RETRY_ERROR_CHARS = 300   # the reason quoted in a retry is cut to this, so the retry's size is known
+COMPLETE_STOP = ("stop", None)   # None: a backend that reports no stop reason (codex)
 
 
 class AnswerError(ValueError):
@@ -349,6 +351,8 @@ async def judge_call(backend, prompt: str, label: str, steps: list[dict], base: 
             if comp.get("tools_used"):
                 raise AnswerError(f"the judge used tools ({', '.join(comp['tools_used'])}); it must answer "
                                   "from the transcript alone")
+            if comp.get("stop_reason") not in COMPLETE_STOP:
+                raise AnswerError(f"the answer was cut (stop reason {comp['stop_reason']})")
             parsed = parse_answer(comp["text"], label)
             break
         except AnswerError as exc:

@@ -1614,8 +1614,8 @@ once against the hand labels (kappa).
     `v3`.
 - **The answer** is strict JSON: the verdict (or score), verbatim quotes with their step id,
   the first step, and a short rationale.
-  - It may come fenced or with words around it; anything else gets one retry, with the
-    reason. A second unusable answer is a judge error (`malformed`), with no verdict. An
+  - It may come fenced or with words around it; anything else, and an answer that was cut
+    (a stop reason other than `stop`), gets one retry, with the reason. A second unusable answer is a judge error (`malformed`), with no verdict. An
     error is never read as REAL.
   - Each quote is looked up in its step's rendered text: exactly, or with only whitespace
     changed (a leading or trailing ellipsis is forgiven). One that isn't there is kept and
@@ -1740,7 +1740,8 @@ Also fixed now, and reported next to it, never in its place:
 - **The call.** One per episode. The answer comes through Scout's `answer()` tool, with up
   to three attempts (Scout's own). Temperature is the provider's by default, as published;
   output is capped at 16,000 tokens. Everything is recorded in the settings and the cache key.
-- **Errors are never REAL.** No `answer()` call after three attempts is `malformed`; a
+- **Errors are never REAL.** No `answer()` call after three attempts is `malformed`, and so is
+  an answer whose output was cut (a stop reason other than `stop` or `tool_calls`); a
   refusal after Scout's retries is `refusal`; a split transcript is `segmented`; a failed
   model call is `backend` and is called again on a rerun; a credit or usage-limit error
   stops the run. Any other error inside Scout is `scanner`.
