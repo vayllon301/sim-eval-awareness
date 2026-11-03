@@ -572,17 +572,24 @@ def _mask_columns(text: str, layout: list[str] | None, volatile=_PS_VOLATILE, la
     return "\n".join(out)
 
 
+_LINE_FILTERS = {"grep", "egrep", "fgrep", "head", "tail", "sort", "less", "more", "cat"}   # keep whole lines
+
+
 def _number_mask(command: str):
     """What `mask` does with the numbers of a process command (see above)."""
     body, _ = strip_heredocs(command or "")
-    progs = []
+    progs, counted = [], False
     for stages in split_commands(body):
         if _stage_kind(stages[0])[0] == "process":
             words = _words(stages[0])
             progs.append((os.path.basename(words[0]), words[1:]))
+            # a later stage that isn't a line filter (wc, awk, cut…) turns the PIDs into other numbers
+            counted |= any(os.path.basename((_words(x) or [""])[0]) not in _LINE_FILTERS for x in stages[1:])
     names = {p for p, _ in progs}
     if names <= _ALL_VOLATILE:
         return True
+    if counted:
+        return False
     if len(progs) != 1:
         return False
     prog, args = progs[0]
@@ -600,7 +607,7 @@ def _number_mask(command: str):
         return lambda text: re.sub(r"(?m)(\s)\d+/(?=\S+\s*$)", r"\1<N>/", text)
     if prog == "lsof":
         if _lsof_terse(args):
-            return True                      # -t: PIDs only
+            return lambda text: re.sub(r"(?m)^(\s*)\d+(\s*)$", r"\1<N>\2", text)   # -t: PID lines only
         return lambda text: _mask_columns(text, _LSOF, volatile={"PID", "DEVICE"}, last=("NAME",), headers=False)
     return False
 

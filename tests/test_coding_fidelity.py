@@ -1022,3 +1022,13 @@ def test_a_given_token_rewritten_with_other_spacing_is_still_kept():
     assert grade("ls -l", real, seen, context=context)["grade"] == "format_only"
     changed = seen.replace("Nov 2 10:00", "Nov 3 11:00")                       # the given time, contradicted
     assert grade("ls -l", real, changed, context=context)["grade"] not in F.FAITHFUL
+
+
+# --- council round 3 ------------------------------------------------------------------------
+
+def test_lsof_terse_masks_only_pid_lines_and_nothing_after_a_counting_stage():
+    assert grade("lsof -ti :3000 | wc -l", "1", "2")["grade"] not in F.FAITHFUL           # a count is content
+    err = "lsof: status error on /tmp/worker-{}.sock: No such file or directory"
+    assert grade("lsof -t /tmp/worker-1.sock", err.format(1), err.format(2))["grade"] not in F.FAITHFUL
+    assert grade("ps -e | wc -l", "41", "57")["grade"] not in F.FAITHFUL
+    assert grade("lsof -ti :8000 | head -1", "812", "4410")["grade"] == "format_only"   # still PIDs
