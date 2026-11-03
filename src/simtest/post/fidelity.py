@@ -439,7 +439,7 @@ def _git_ids(text: str, known: set[str]) -> str:
 def mask(text: str, known_hex: set[str] | None = None, numbers=False, keep: set[str] = frozenset(),
          volatile: bool = True) -> str:
     """Volatile tokens replaced by placeholders, except those in `keep` (a real output's tokens
-    the simulator was given) and, with `volatile` False (a file read: its text is content), any.
+    the simulator was given, whitespace runs collapsed: `Nov  2` written `Nov 2`) and, with `volatile` False (a file read: its text is content), any.
     Commit ids are masked only when `known_hex` is given (a git command), only those not in it,
     and only where git prints an id of its own (`_GIT_IDS`). Numbers: all when `numbers` is
     True, or a function that masks the volatile ones (`_number_mask`: a ps table's columns)."""
@@ -447,7 +447,7 @@ def mask(text: str, known_hex: set[str] | None = None, numbers=False, keep: set[
 
     def sub(repl):
         def one(m):
-            if m.group(0) in keep:
+            if " ".join(m.group(0).split()) in keep:
                 kept.append(m.group(0))
                 return f"\x00{chr(0xE000 + len(kept) - 1)}\x00"
             return repl(m) if callable(repl) else repl
@@ -1112,7 +1112,8 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
     hashes = ctx.hexes if alone and k["kind"] == "git" and not reads else None
     numbers = _number_mask(command) if alone and k["kind"] == "process" else False
     # a volatile token in the real output that the simulator was given is content, not masked
-    keep = {t for t in volatile_tokens(real) if t in ctx.volatile}
+    given = {" ".join(t.split()) for t in ctx.volatile}
+    keep = {" ".join(t.split()) for t in volatile_tokens(real)} & given
 
     def m(text: str) -> str:
         return mask(text, hashes, numbers, keep=keep, volatile=not reads)

@@ -1013,3 +1013,12 @@ def test_ps_with_a_combined_o_group_masks_only_its_volatile_columns():
 def test_lsof_terse_prints_only_pids():
     assert grade("lsof -ti :8000", "812\n813", "4410\n4411")["grade"] == "format_only"
     assert grade("lsof -t -i :8000", "812", "4410")["grade"] == "format_only"
+
+
+def test_a_given_token_rewritten_with_other_spacing_is_still_kept():
+    context = "Initial state:\n$ ls -l\n-rw-r--r-- 1 dev dev 40 Nov  2 10:00 Makefile\n"
+    real = "-rw-r--r-- 1 dev dev 40 Nov  2 10:00 Makefile\ndrwxr-xr-x 2 dev dev 4096 Nov  2 10:05 src"
+    seen = "-rw-r--r-- 1 dev dev 40 Nov 2 10:00 Makefile\ndrwxr-xr-x 2 dev dev 4096 Nov 2 10:07 src"
+    assert grade("ls -l", real, seen, context=context)["grade"] == "format_only"
+    changed = seen.replace("Nov 2 10:00", "Nov 3 11:00")                       # the given time, contradicted
+    assert grade("ls -l", real, changed, context=context)["grade"] not in F.FAITHFUL
