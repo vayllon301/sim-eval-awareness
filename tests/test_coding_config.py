@@ -108,5 +108,8 @@ def test_pilot_config_keeps_session_5s_settings_and_concurrency():
     assert pilot["run"]["max_connections"] == 12
     assert pilot["simulators_for"] == {"C3": ["agentworld"], "C2": ["agentworld"]}
     header = open("configs/coding/pilot.yaml").read().split("\nfamily:")[0]
-    assert "DRAFT" in header and "max_connections" in header and "units" in header
+    assert "Decision rule, frozen 03-11-2026" in header and "DRAFT" not in header
+    assert "--c3 = --c0 + 0.10" in header and "--effect-spread: 0.25" in header   # the frozen power rule
+    assert "pessimistic" not in header                     # the old rule measured a reversed effect
+    assert "max_connections" in header and "units" in header
     assert "12 in flight in total" in header and "one queue" in header
