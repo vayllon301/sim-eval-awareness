@@ -1634,7 +1634,8 @@ once against the hand labels (kappa).
     settings: temperature (default 0), max tokens (16,000, reasoning included), reasoning
     effort, seed, and provider options (`--model-args`, JSON; for OpenRouter, e.g.
     `{"provider": {"order": ["openai"], "allow_fallbacks": false}}` pins the provider). The
-    frozen judge runs here.
+    frozen judge runs here. On Anthropic models through OpenRouter it caches the transcript
+    (below, "Prompt caching").
   - `codex`: `codex exec` on the ChatGPT login, for free tuning passes. The prompt goes on
     stdin from an empty temporary directory: read-only, no web search, the shell and other
     tools turned off, no session saved, the user's config.toml ignored. Codex's base prompt
@@ -1661,6 +1662,8 @@ once against the hand labels (kappa).
     in its directory) and no uncommitted change under `prompts/`.
   - Any paid call (`inspect` with a model other than `mockllm`) needs `--yes`. Without it
     the command prints the plan (calls, cached, prompt tokens) and stops.
+  - `--no-prompt-cache` (`tune` and `run`, `inspect` only): each prompt goes as one string,
+    uncached, as before. The plan says when caching is on.
   - `simtest judge kappa <results.jsonl> <labels.jsonl> --manifest <manifest.json> [--json]`
     (`kappa.py`): per label, Cohen's kappa with a percentile bootstrap 95% CI over episodes
     (10,000 resamples, fixed seed), the agreement, the confusion matrix (hand by judge), the
@@ -1674,6 +1677,83 @@ once against the hand labels (kappa).
     onset is compared two ways: the eval-awareness onset, and the earliest onset over all
     labels.
   - `simtest judge show <results.jsonl>`: verdict counts, errors and quote failures.
+
+### Prompt caching (added 03-11-2026)
+
+The primary judge runs on `openrouter/anthropic/claude-haiku-5.5`, pinned to Anthropic, with
+Victor's Anthropic key as BYOK. It asks five questions per episode, one call each. The five v3
+prompts start the same way: the same 766-character header, then the transcript, then
+`</transcript>`. Only the question after it differs. So the transcript, about 20K tokens at the
+median, would be paid for five times. Anthropic can cache it: a cache write costs 1.25 times the
+input price (5-minute cache), a cache read 0.1 times.
+
+- **What is sent** (`backends.InspectBackend`). The prompt goes as two text blocks in one user
+  message: the shared prefix, then the rest. The two blocks joined are the prompt, byte for
+  byte; no prompt file changes, and `prompt_sha256` still hashes the prompt file.
+  - The prefix (`judge.cache_prefix_chars`) is the header, the transcript, and the template's
+    text after the transcript up to the end of its first blank line: in v3, through
+    `</transcript>` and the blank line. The second block starts with `## The question`. The cut
+    falls after a blank line and before text, where tokenizers break anyway.
+  - Inspect 0.3.281's OpenRouter provider marks the second-to-last block of the last message
+    with `cache_control: {"type": "ephemeral"}` for `anthropic/` models
+    (`openrouter.py`, `_add_anthropic_cache_markers`). With two blocks that is the prefix. A
+    single string gets no marker, which is why nothing was cached before. OpenRouter passes the
+    marker on to Anthropic.
+  - Not OpenRouter's top-level `cache_control` (automatic caching): it would place the
+    breakpoint at the end of the prompt, after the question, so every call would write and
+    none would read.
+  - A retry adds its note to the second block, so it reads the same prefix.
+  - Anthropic caches only prefixes of 512 tokens or more on Haiku 5.5. A shorter one is sent
+    the same way and just isn't cached; nothing fails. Every judge prefix so far is far longer.
+- **The order of the calls** (`judge.run_calls`). Calls that start together all write the
+  cache and read none of it. With caching, each episode's first call to be made runs alone.
+  When it ends, whatever its outcome, the episode's other calls run and read what it wrote.
+  - The calls it releases go before any new episode's first call. At most `concurrency // 4 +
+    1` first calls run at once. Up to `--concurrency` calls still run at a time, across
+    episodes. In a simulation with uneven call times, 93-97% of the slots stay busy and the
+    released calls start within one to three calls' time: well inside the 5-minute cache.
+  - A call that might not fit the budget is recorded as `too_long` at once; the next label
+    leads its episode. On a rerun the first call left leads. Retries, the usage-limit stop,
+    error records and the results cache work as before.
+- **The settings.** Caching is on by default for `openrouter/anthropic/...` models only, and
+  then `settings` holds `"prompt_cache": "prefix"`, so results with and without caching never
+  share a cache key. Every other model, `mockllm`, and `--no-prompt-cache` keep the settings,
+  the single string and the scheduling exactly as before. `codex` and the second judge (one
+  call per episode) are unchanged.
+  - Only OpenRouter: Inspect's direct `anthropic/` provider could not build a request in this
+    environment (Inspect 0.3.281 with `anthropic` 2.4.0 fails in `message_param`), so it was
+    not checked.
+  - Each attempt records `cache_prefix_chars`, and its usage has `input_tokens_cache_write`
+    and `input_tokens_cache_read`.
+- **The live check** (03-11-2026, two tuning episodes, `simtest judge tune ... --limit 3`, one
+  of the three refused by the test-set guard; scratch results, not kept):
+  - The first call of each episode wrote 28,749 and 21,932 tokens. Each of the four other
+    calls read exactly those and wrote none. Only the question (931 to 1,628 tokens) was
+    uncached.
+  - The same two episodes sent as one string (`--no-prompt-cache`, `eval_awareness`): the same
+    total input tokens (30,377 and 23,560) and the same verdicts. So the split doesn't change
+    how the model counts the prompt.
+  - About $0.02 on Anthropic in all (an estimate from the tokens at list price); OpenRouter's
+    `total_usage` did not change.
+  - Claude Haiku 5.5 counts about 1.57 tokens for each `o200k_base` token on these
+    transcripts, more than the budget check's 25% margin assumes.
+- **Cost, estimated** at Haiku 5.5's list price ($0.10/M input, $0.50/M output; $0.50 and $2.50
+  for prompts over 100K tokens), a 1.25 write and 0.1 read. Inputs: the 100 drawn episodes'
+  sizes (`simtest judge sizes`, `o200k_base`) times 1.57, the five questions (6,495 tokens per
+  episode, never cached), and the live check's 1,028 output tokens per call. N3 assumes ~1,900
+  episodes of the same sizes. Estimates, not results.
+
+  | | Input, uncached | Input, cached | Output | Total, uncached | Total, cached |
+  | --- | --- | --- | --- | --- | --- |
+  | Kappa pass (100 x 5) | $1.99 | $0.70 | $0.26 | $2.24 | $0.96 |
+  | N3 (~1,900 x 5) | $37.74 | $13.28 | $4.88 | $42.63 | $18.17 |
+
+  - Caching cuts the input by about 65%. Output, reasoning included, is not cached.
+  - About 2% of the drawn episodes (2 of 100) pass 100K Claude tokens. If the higher price
+    applies to their whole prompts, add about $0.46 (uncached) or $0.17 (cached) to the kappa
+    pass, and $8.75 or $3.22 to N3.
+  - A released call that starts after the cache has expired writes it again: that episode
+    then costs a little more than without caching.
 
 ## The second judge: Scout's eval-awareness scanner
 
@@ -2035,7 +2115,12 @@ labels: the transcript strips the bookkeeping and shows C3's simulated output
 saving and resuming labels through the server (`test_judge_labels`). The judge: strict JSON and one
 retry, quotes checked against the rendering, ambiguous read as the negative, the test set
 refused for tuning, cache keys, the budget, the codex command and events, and kappa on known
-examples (`test_judge_judge`). The primary test: the exact null distribution on small cases, p-values
+examples (`test_judge_judge`). Prompt caching (`test_judge_cache`): the request Inspect's
+OpenRouter provider would send, captured offline, holds two blocks that join to the exact
+prompt with `cache_control` on the prefix only; other models and `--no-prompt-cache` send one
+string; the settings and the cache key; the CLI flag; and the order of the calls (each
+episode's first call ends before its others start, released calls first, the slots full, a
+`too_long` lead, a rerun, the usage-limit stop). The primary test: the exact null distribution on small cases, p-values
 by hand (6 scenarios with one tie give 0.0625), ties never changing p, and the brute force
 agreeing (`test_stats_signflip`); power at or below alpha under the null, growing with the
 effect, the repeats and the scenarios, and never rejecting with 5 scenarios
