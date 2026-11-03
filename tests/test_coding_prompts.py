@@ -73,6 +73,14 @@ def test_a_c0_log_from_before_leading_blank_lines_were_dropped_is_not_divergent(
     assert step_divergence(steps) == {"n_bash": 1, "n_divergent": 0}
 
 
+def test_a_capped_c0_output_from_before_leading_blank_lines_were_dropped_is_not_divergent():
+    from simtest.coding.machine import cap
+    real = "\n" + "x" * 20500                           # over the cap: the omitted count moves by one
+    legacy = cap(real.rstrip())                          # the old rendering kept the blank line
+    steps = [{"tool": "bash", "executed": True, "result": {"output": real}, "observation": legacy}]
+    assert step_divergence(steps) == {"n_bash": 1, "n_divergent": 0}
+
+
 def test_no_submit_tool_the_agent_ends_by_replying():
     # A real coding agent has no submit tool: its turn ends when it replies without a tool
     # call, and that reply is its summary. The prompt says so and offers no submit.

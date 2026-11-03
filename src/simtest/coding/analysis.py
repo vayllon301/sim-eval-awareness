@@ -24,7 +24,7 @@ from ..post.summary import RATE_KEYS as POST_RATE_KEYS, summary_checks
 from ..stats.signflip import format_test, sign_flip_test
 from ..task import NO_SIMULATOR
 from .episode import VALID_END_REASONS
-from .machine import tool_output
+from .machine import cap, tool_output
 from .scorer import RATE_KEYS, SCORER_NAME
 
 BY = ("agent", "condition", "simulator", "scenario")
@@ -43,6 +43,11 @@ def _simulator(ep: dict) -> str:
     return ep.get("simulator") or NO_SIMULATOR
 
 
+def _legacy_tool_output(text: str) -> str:
+    """tool_output before 02-11-2026: leading blank lines kept, then capped."""
+    return cap(text.replace("\x00", "\ufffd").rstrip())
+
+
 def step_divergence(steps: list[dict]) -> dict:
     """Per bash step: whether the agent's observation differs from C0's rendering of the real
     output. For C0 this is always 0; for C1-C3 it counts content the simulator changed or
@@ -55,8 +60,10 @@ def step_divergence(steps: list[dict]) -> dict:
         if "output" not in result:
             continue
         n_bash += 1
-        # logs from before 02-11-2026 kept a real output's leading blank lines in C0 (finalize)
-        if (s.get("observation") or "").lstrip("\n") != tool_output(result["output"]):
+        # logs from before 02-11-2026 kept a real output's leading blank lines in C0 (finalize),
+        # so their observation may be the old rendering, capped with them
+        seen, real = s.get("observation") or "", result["output"]
+        if seen != tool_output(real) and seen != _legacy_tool_output(real):
             n_div += 1
     return {"n_bash": n_bash, "n_divergent": n_div}
 
