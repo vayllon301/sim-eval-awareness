@@ -1,10 +1,19 @@
 """Where the judge's calls go. Each backend has a `name`, a `model`, the `settings` that go
-into the cache key, `max_output`, and `async complete(prompt) -> {"text", ...}`.
+into the cache key, `max_output`, and `async complete(prompt) -> {"text", ...}`. A backend
+with `prompt_cache` true also takes `complete(prompt, cache_prefix=n)`.
 
 - `InspectBackend`: Inspect's model API, so any provider works ("openrouter/<org>/<model>",
   "mockllm/model" in tests). Fixed, recorded settings: temperature, max tokens, reasoning
   effort, seed, and any provider options (`model_args`, e.g. OpenRouter's provider order with
   no fallbacks). The frozen judge runs here, through OpenRouter.
+  - Prompt caching, on by default for Anthropic models on OpenRouter (`openrouter/anthropic/`,
+    `prompt_cache`): the prompt goes as two text blocks, the shared prefix (the header and the
+    transcript) and the rest. Their concatenation is the prompt, byte for byte. Inspect's
+    OpenRouter provider marks the first of the two with `cache_control: {"type": "ephemeral"}`
+    (its `_add_anthropic_cache_markers`: the second-to-last block of the last message), so an
+    episode's later calls read the transcript from Anthropic's cache. A single string gets no
+    marker, so every other model, and caching turned off, is called exactly as before.
+    `settings["prompt_cache"]` records it, so the cache key differs.
 - `CodexBackend`: `codex exec` with the ChatGPT login, for free tuning passes. The prompt
   goes on stdin, from an empty temporary directory, read-only, with web search, the shell
   and the other optional tools turned off, no session saved, and the user's config.toml
@@ -36,37 +45,73 @@ JUDGE_INSTRUCTIONS = ("You are a careful annotator. You answer one labelling que
                       "run commands or use tools.\n")
 
 
+PROMPT_CACHE_MODELS = ("openrouter/anthropic/",)
+PROMPT_CACHE = "prefix"     # settings["prompt_cache"]: the shared prefix is one cached block (judge.cache_prefix_chars)
+
+
+def prompt_cache_default(model: str) -> bool:
+    """Whether prompt caching is on by default: Anthropic models on OpenRouter, the route where
+    Inspect 0.3.281 marks the block we split off (`openrouter.py`, `_add_anthropic_cache_markers`)."""
+    return model.startswith(PROMPT_CACHE_MODELS)
+
+
 class InspectBackend:
     name = "inspect"
 
     def __init__(self, model, temperature: float | None = 0.0, max_tokens: int = 16000,
                  reasoning_effort: str | None = None, seed: int | None = None, timeout: int = 900,
-                 max_retries: int = 5, model_args: dict | None = None):
+                 max_retries: int = 5, model_args: dict | None = None, prompt_cache: bool | None = None):
         from inspect_ai.model import GenerateConfig, get_model
 
         self.settings = {"temperature": temperature, "max_tokens": max_tokens, "reasoning_effort": reasoning_effort,
                          "seed": seed}
         if model_args:      # provider options, e.g. OpenRouter's {"provider": {"order": [...], "allow_fallbacks": false}}
             self.settings["model_args"] = model_args
+        name = model if isinstance(model, str) else str(model)
+        # None: on for Anthropic models on OpenRouter only. Recorded only when on, so the settings, and the
+        # cache key, of every run without it stay what they were.
+        self.prompt_cache = prompt_cache_default(name) if prompt_cache is None else bool(prompt_cache)
+        if self.prompt_cache:
+            self.settings["prompt_cache"] = PROMPT_CACHE
         self.max_output = max_tokens
-        cfg = {k: v for k, v in self.settings.items() if v is not None and k != "model_args"}
+        cfg = {k: v for k, v in self.settings.items() if v is not None and k not in ("model_args", "prompt_cache")}
+        if self.prompt_cache:
+            cfg["cache_prompt"] = True      # Inspect's default (None) is on too; explicit, so it can't drift
         self.config = GenerateConfig(**cfg, timeout=timeout, max_retries=max_retries)
         self._model = model if not isinstance(model, str) else get_model(model, config=self.config,
                                                                           **(model_args or {}))
-        self.model = model if isinstance(model, str) else str(self._model)
+        self.model = name
 
-    async def complete(self, prompt: str) -> dict:
+    def content(self, prompt: str, cache_prefix: int | None = None):
+        """What the user message holds: the prompt as one string, or, with prompt caching, as two text
+        blocks split after the shared prefix (both must hold text; Anthropic refuses an empty block)."""
+        from inspect_ai.model import ContentText
+
+        if not (self.prompt_cache and cache_prefix):
+            return prompt
+        head, tail = prompt[:cache_prefix], prompt[cache_prefix:]
+        if not (head.strip() and tail.strip()):
+            return prompt
+        blocks = [ContentText(text=head), ContentText(text=tail)]
+        assert "".join(b.text for b in blocks) == prompt
+        return blocks
+
+    async def complete(self, prompt: str, cache_prefix: int | None = None) -> dict:
         from inspect_ai.model import ChatMessageUser
 
+        content = self.content(prompt, cache_prefix)
         try:
-            out = await self._model.generate([ChatMessageUser(content=prompt)], config=self.config)
+            out = await self._model.generate([ChatMessageUser(content=content)], config=self.config)
         except Exception as exc:   # provider and network errors: a rerun retries them
             msg = f"{type(exc).__name__}: {exc}"
             raise (QuotaError if is_quota(msg) else BackendError)(msg) from exc
         if out.error:
             raise BackendError(f"model error: {out.error}")
         usage = out.usage.model_dump(exclude_none=True) if out.usage else None
-        return {"text": out.completion, "stop_reason": out.stop_reason, "served_by": out.model, "usage": usage}
+        rec = {"text": out.completion, "stop_reason": out.stop_reason, "served_by": out.model, "usage": usage}
+        if not isinstance(content, str):
+            rec["cache_prefix_chars"] = len(content[0].text)
+        return rec
 
 
 QUOTA_WORDS = ("usage limit", "insufficient credit", "insufficient_quota", "quota exceeded", "payment required")

@@ -20,6 +20,9 @@ each call reads one episode's transcript, rendered exactly as the hand labeller 
   never read as REAL.
 - A prompt that might not fit the token budget is not sent and not truncated: it is
   recorded as a `too_long` error.
+- Prompt caching (Anthropic models on OpenRouter, `backends.InspectBackend.prompt_cache`): the
+  part of an episode's prompts that its labels share (`cache_prefix_chars`) is sent as its own,
+  cached block. The text the judge reads is the same.
 
 Every record carries the prompt version and the hash of the prompt file, the backend, model
 and settings, the episode key and the transcript hash, under a cache key built from them
@@ -105,6 +108,23 @@ def is_frozen(version: str) -> bool:
 
 def build_prompt(template: str, transcript_text: str) -> str:
     return template.replace(PLACEHOLDER, transcript_text.rstrip("\n"))
+
+
+def cache_prefix_chars(template: str, transcript_text: str) -> int:
+    """The length of the start of an episode's prompt that its labels share, for prompt caching: the
+    template's text before the transcript, the transcript, and the template's text after it up to
+    the end of its first blank line. In v3: the header, the transcript and `</transcript>`; the
+    question follows. The cut falls after a blank line and before text, where tokenizers break
+    anyway. 0 when there is no blank line after the transcript: the prompt then goes whole."""
+    i = template.index(PLACEHOLDER)
+    after = template[i + len(PLACEHOLDER):]
+    j = after.find("\n\n")
+    if j < 0:
+        return 0
+    j += 2
+    while after[j:j + 1] == "\n":
+        j += 1
+    return i + len(transcript_text.rstrip("\n")) + j
 
 
 # --- tokens ----------------------------------------------------------------------------
@@ -347,16 +367,20 @@ def finish_record(base: dict, parsed: dict | None, index: QuoteIndex | None, err
     return rec
 
 
-async def judge_call(backend, prompt: str, label: str, steps: list[dict], base: dict) -> dict:
-    """One label for one episode: the call, one retry on an unusable answer, the record."""
+async def judge_call(backend, prompt: str, label: str, steps: list[dict], base: dict,
+                     cache_prefix: int | None = None) -> dict:
+    """One label for one episode: the call, one retry on an unusable answer, the record. A backend
+    with prompt caching gets `cache_prefix`, the length of the prompt's shared prefix (the retry adds
+    its note after it, so it reads the same prefix); any other backend gets the prompt alone."""
     index = QuoteIndex(steps)
     turn_ids = T.turn_ids(steps)
     attempts, error, parsed = [], None, None
+    cached = bool(cache_prefix) and getattr(backend, "prompt_cache", False)
     for attempt in (1, 2):
         p = prompt if attempt == 1 else prompt + RETRY_NOTE.format(error=error[:RETRY_ERROR_CHARS])
         t0 = time.monotonic()
         try:
-            comp = await backend.complete(p)
+            comp = await (backend.complete(p, cache_prefix=cache_prefix) if cached else backend.complete(p))
         except BackendError as exc:
             attempts.append({"attempt": attempt, "seconds": round(time.monotonic() - t0, 1), "error": str(exc)[:2000]})
             err = {"kind": "backend", "message": str(exc)[:2000]}
@@ -520,7 +544,8 @@ def plan_calls(episodes: list[dict], read, prompts: dict[str, dict], prompt_vers
                     "prompt_tokens": tokens, "token_count": method, "n_turns": len(T.turn_ids(steps)),
                     **code_state()}
             calls.append({"key": base["key"], "label": label, "prompt": prompt, "steps": steps, "base": base,
-                          "fits": fits(retry_tokens, backend.max_output, budget)})   # a retry must fit too
+                          "fits": fits(retry_tokens, backend.max_output, budget),    # a retry must fit too
+                          "cache_prefix": cache_prefix_chars(pr["text"], text)})
     return calls, refused
 
 
@@ -533,7 +558,8 @@ async def run_calls(calls: list[dict], backend, store: ResultStore, concurrency:
     """Every planned call not already in the store; results are appended as they finish.
     `call(c)` makes one call's record (default: `judge_call` on the backend); the second
     judge (scout.py) passes its own."""
-    call = call or (lambda c: judge_call(backend, c["prompt"], c["label"], c["steps"], c["base"]))
+    call = call or (lambda c: judge_call(backend, c["prompt"], c["label"], c["steps"], c["base"],
+                                         cache_prefix=c.get("cache_prefix")))
     todo = [c for c in calls if store.done(c["key"]) is None]
     sem = asyncio.Semaphore(max(1, concurrency))
     done = 0

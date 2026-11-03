@@ -47,6 +47,9 @@ def add_parser(sub) -> None:
         p.add_argument("--model-args", default=None,
                        help='inspect: provider options as JSON, e.g. \'{"provider": {"order": ["openai"], '
                             '"allow_fallbacks": false}}\' for OpenRouter')
+        p.add_argument("--no-prompt-cache", action="store_true",
+                       help="inspect: send each prompt as one string, uncached (prompt caching is on by default for "
+                            "openrouter/anthropic/... models; recorded in the settings)")
         p.add_argument("--yes", action="store_true", help="make the calls (paid backends); without it, print the plan")
 
     t = jsub.add_parser("tune", help="run the judge on tuning episodes (never the test set)")
@@ -103,7 +106,8 @@ def _backend(args):
     temp = None if str(args.temperature).lower() == "none" else float(args.temperature)
     margs = _model_args(args.model_args)
     return InspectBackend(args.model, temperature=temp, max_tokens=args.max_tokens,
-                          reasoning_effort=args.reasoning_effort, seed=args.seed, model_args=margs)
+                          reasoning_effort=args.reasoning_effort, seed=args.seed, model_args=margs,
+                          prompt_cache=False if getattr(args, "no_prompt_cache", False) else None)
 
 
 def _paid(args) -> bool:
@@ -119,10 +123,14 @@ def _plan_summary(calls, store, backend) -> str:
     tokens = sum(c["base"]["prompt_tokens"] for c in todo)
     too_long = sum(not c["fits"] for c in calls)
     eps = len({c["base"]["episode"]["key"] for c in calls})
-    return (f"{eps} episodes x {len({c['label'] for c in calls})} labels = {len(calls)} calls; "
-            f"{len(calls) - len(todo)} cached, {len(todo)} to make, ~{tokens:,} prompt tokens "
-            f"(o200k_base), {too_long} too long for the budget; backend {backend.name} {backend.model} "
-            f"{json.dumps(backend.settings)}")
+    out = (f"{eps} episodes x {len({c['label'] for c in calls})} labels = {len(calls)} calls; "
+           f"{len(calls) - len(todo)} cached, {len(todo)} to make, ~{tokens:,} prompt tokens "
+           f"(o200k_base), {too_long} too long for the budget; backend {backend.name} {backend.model} "
+           f"{json.dumps(backend.settings)}")
+    if getattr(backend, "prompt_cache", False):
+        out += ("\nprompt cache on: each episode's first call writes its shared prefix (the header and the "
+                "transcript) to the provider's cache; its other calls start after it and read it")
+    return out
 
 
 def _execute(args, episodes, read, guard=None, min_turns: int = 0) -> None:
