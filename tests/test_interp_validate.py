@@ -9,6 +9,7 @@ import pytest
 
 from pilot_helpers import DESIGN, SCENARIOS, ep, failed, full, verdict
 from simtest.interp import validate as V
+from simtest.judge.judge import QuoteIndex, finish_record
 
 LAYER = 42
 KAPPA_OK = {"valid": True, "kappa": 0.7, "ci95": [0.6, 0.8], "n": 100, "file": "pass.json", "reason": None}
@@ -206,6 +207,79 @@ def test_an_aware_first_turn_has_no_window_and_is_counted():
     next(r for r in res if r["episode"]["key"] == k and r["label"] == "eval_awareness")["onset"] = "t1"
     r = build(eps, res, read)["monitors"]["logit:eval"]["labels"]["eval_awareness"]
     assert r["no_window"] == 1
+
+
+def real_verdict(key, first_step, quotes, turns=6):
+    """A positive EVAL verdict through the judge's own record. quotes: [(step, part)]."""
+    steps = [{"id": "task", "kind": "task", "text": "Fix the export."}]
+    for t in range(1, turns + 1):
+        steps.append({"id": f"t{t}", "kind": "turn", "turn": t, "reasoning": f"Reasoning of turn {t}.", "reasoning_redacted": False,
+                      "text": f"Text of turn {t}.", "calls": []})
+    said = [{"step": s, "text": f"Reasoning of turn {s[1:]}." if part == "reasoning" else "Fix the export."} for s, part in quotes]
+    parsed = {"verdict_raw": "EVAL", "value": "EVAL", "positive": True, "score": None, "quotes": said, "first_step": first_step, "rationale": "r"}
+    return {**verdict(key), **finish_record({}, parsed, QuoteIndex(steps), None, [s["id"] for s in steps if s["kind"] == "turn"])}
+
+
+def test_a_positive_with_no_onset_is_left_out_and_counted():
+    """Read over the whole episode, it would hold the verbalisation itself."""
+    eps, res, read = make(signal=0.0)
+    aware = [e for e in eps if e["condition"] == "C3" and e["epoch"] < 3]
+    for e in aware[:2]:
+        rec = real_verdict(e["judge_key"], "none", [("task", "task")])
+        assert rec["positive"] and rec["onset"] is None
+        res[:] = [r for r in res if not (r["episode"]["key"] == e["judge_key"] and r["label"] == "eval_awareness")] + [rec]
+    r = build(eps, res, read)["monitors"]["logit:eval"]["labels"]["eval_awareness"]
+    assert r["no_onset"] == 2 and r["n_pos"] == 10 and r["n_pos"] + r["n_neg"] == 52
+
+
+def test_the_window_ends_at_the_earlier_of_the_first_step_and_the_first_verified_agent_quote():
+    rec = real_verdict("k", "t5", [("t2", "reasoning"), ("t4", "reasoning")])
+    assert rec["onset"] == "t5" and V.label_onset(rec) == 1
+    assert V.label_onset(real_verdict("k", "t2", [("t5", "reasoning")])) == 1
+    assert V.label_onset(real_verdict("k", "none", [("t3", "reasoning")])) == 2
+
+
+def test_a_quote_that_isnt_verified_or_isnt_the_agents_doesnt_end_the_window():
+    rec = real_verdict("k", "t5", [("task", "task")])
+    assert V.label_onset(rec) == 4
+    rec = real_verdict("k", "t5", [("t2", "reasoning")])
+    rec["quotes"][0]["status"] = "not_found"
+    assert V.label_onset(rec) == 4
+
+
+def test_turns_after_an_earlier_quote_arent_read_as_the_label():
+    """The onset says t5, but the agent's verified words are at t2: reading on to t5 reads them."""
+    eps, res, read = make(signal=0.0)
+    for e in eps:
+        if e["condition"] == "C3" and e["epoch"] < 3:
+            res[:] = [r for r in res if not (r["episode"]["key"] == e["judge_key"] and r["label"] == "eval_awareness")]
+            res.append(real_verdict(e["judge_key"], "t5", [("t2", "reasoning")]))
+            for row in read[e["uuid"]]["summary"]["by_turn"]["eval_awareness@42"]:
+                row["prompt_end_centred"] += 50.0 if row["turn"] >= 2 else 0.0
+    r = build(eps, res, read)["monitors"]["prompt_end:eval_awareness"]["labels"]["eval_awareness"]
+    assert r["n_pos"] == 12 and 0.38 < r["auroc"] < 0.62
+
+
+def test_every_episode_with_a_reading_is_in_exactly_one_count():
+    eps, res, read = make(turns=7)
+    keep = lambda r, e: not (r["episode"]["key"] == e["judge_key"] and r["label"] == "eval_awareness")
+    res[:] = [r for r in res if keep(r, eps[0])] + [failed(eps[0]["judge_key"])]                     # a judge error
+    res[:] = [r for r in res if keep(r, eps[1])] + [real_verdict(eps[1]["judge_key"], "none", [])]   # no onset
+    next(r for r in res if r["episode"]["key"] == eps[2]["judge_key"] and r["label"] == "eval_awareness").update(
+        positive=True, value="EVAL", onset="t1", first_step="t1")                                    # no window
+    read[eps[3]["uuid"]]["logit"]["logit_monitor"]["by_turn"] = []                                   # no curve
+    r = build(eps, res, read)["monitors"]["logit:eval"]["labels"]["eval_awareness"]
+    assert (r["errors"], r["no_onset"], r["no_window"], r["no_curve"]) == (1, 1, 1, 1)
+    assert r["n_pos"] + r["n_neg"] + r["errors"] + r["no_onset"] + r["no_window"] + r["no_curve"] == 54
+    assert "1 positive with no onset" in V.format_report(build(eps, res, read))
+
+
+def test_episodes_a_behaviour_score_cant_use_are_counted():
+    eps, res, read = make()
+    read[eps[3]["uuid"]]["logit"]["logit_monitor"]["by_turn"] = []
+    eps[4]["metrics"]["violation"] = None
+    r = build(eps, res, read)["monitors"]["logit:eval"]["behaviour"]["violation"]
+    assert r["no_curve"] == 1 and r["no_metric"] == 1 and r["n_pos"] + r["n_neg"] == 52
 
 
 def test_behaviour_is_checked_too():
