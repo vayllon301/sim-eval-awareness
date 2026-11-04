@@ -23,9 +23,10 @@
 # scaling, not measured on a GPU: proj about 15, logit about 25, transfer about 15, plus about 1 per
 # engine load. Setup: 3 install, 5 download when the VM has neither.
 #
-# Colab's SSH allows one session, so a read step can't copy results out while it runs. CHUNK_MIN
-# ends proj and logit between episodes, and session.sh calls this again after fetching what is done;
-# a VM lost mid-run loses one chunk at most.
+# Colab's SSH allows one session, so a read step can't copy results out while it runs. CHUNK_MIN is
+# the minutes proj and logit share, in equal parts, and each ends between episodes; session.sh calls
+# this again after fetching what is done, so a VM lost mid-run loses one chunk at most. check and
+# transfer have no budget: session.sh's deadline and submit_read.sh's job keep room for them.
 #
 # Settings (environment): WORK (/content), CODE ($WORK/sim), IN ($WORK/read: episodes/, readings/ on a
 # resume), OUT ($IN/readings), VENV ($WORK/interp-venv), MODELS ($WORK/models), PARTS, PROJ_ENGINE,
@@ -93,6 +94,7 @@ note() {   # an exit code of read_run.py: 3 (some left) must not hide an error
 no_ids=()
 [ "${NO_SERVER_IDS:-}" != 1 ] || no_ids=(--no-server-ids)
 reader() { "$PY" -I "$CODE/explore/interp/read_run.py" "$MODELS/agent" --episodes "$IN/episodes" ${no_ids[@]+"${no_ids[@]}"} "$@"; }
+budget=$(printf '%s\n' $PARTS | awk -v chunk="$CHUNK_MIN" '/^(proj|logit)$/ { n++ } END { print chunk / (n ? n : 1) }')
 for p in $PARTS; do
   stamp "$p start"
   case $p in
@@ -105,13 +107,13 @@ for p in $PARTS; do
       check run "$MODELS/agent" --engine hf --chunk 2048 --label hf-2048 "${common[@]}"
       check compare --out "$OUT" ;;
     proj)
-      args=(--engine "$PROJ_ENGINE" --out "$OUT" --parts proj --vectors "$VECTORS" --budget-min "$CHUNK_MIN")
+      args=(--engine "$PROJ_ENGINE" --out "$OUT" --parts proj --vectors "$VECTORS" --budget-min "$budget")
       [ -z "$LAYERS" ] || args+=(--layers "$LAYERS")
       [ -z "$SAE_LAYERS" ] || args+=(--sae-dir "$SAE" --sae-layers "$SAE_LAYERS" --sae-device cuda)
       reader "${args[@]}" 2>&1 | tee -a "$OUT/proj.log"
       note "${PIPESTATUS[0]}" ;;
     logit)
-      reader --engine hf --out "$OUT/logit" --parts logit --phrases "$PHRASES" --budget-min "$CHUNK_MIN" 2>&1 | tee -a "$OUT/logit.log"
+      reader --engine hf --out "$OUT/logit" --parts logit --phrases "$PHRASES" --budget-min "$budget" 2>&1 | tee -a "$OUT/logit.log"
       note "${PIPESTATUS[0]}" ;;
     transfer)
       for engine in hf vllm; do

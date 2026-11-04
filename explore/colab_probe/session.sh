@@ -14,7 +14,7 @@
 #   3. If setup, run, equiv or ids is selected: serve.sh once, as it is (MIX given, the scheme named),
 #      then the tunnel, then waits until both /v1/models answer. On an attached VM, old servers are
 #      stopped first, so the servers run what serve.sh says.
-#   4. The steps in STEPS (default "setup run"; add ids, readings and read to run them), always in
+#   4. The steps in STEPS (default "setup run ids"; add readings and read to run them), always in
 #      this order:
 #        setup     the simulator's setup check, before any episode (explore/sim_quant.py,
 #                  docs/BACKENDS.md): the server's scheme lines, the noise floors of both models (1
@@ -39,8 +39,8 @@
 #                  are its STEPS and BUDGET_MIN.
 #        read      explore/interp/read_run.sh: reads the run's episodes (docs/INTERP.md, "Reading a
 #                  run"). The GPU alone, as readings. READ_PARTS picks check, proj, logit and transfer
-#                  (default proj). It runs in chunks of READ_CHUNK_MIN minutes, and each chunk's
-#                  readings come back to READ_DIR at once, so a VM lost mid-run loses one chunk. A
+#                  (default proj). It runs in chunks of READ_CHUNK_MIN minutes, shared by proj and
+#                  logit, and each chunk's readings come back to READ_DIR at once, so a VM lost mid-run loses one chunk. A
 #                  second session resumes: the readings go over first. Stops when a chunk finishes
 #                  nothing more. READ_NO_SERVER_IDS=1 reads episodes with no server IDs, and each
 #                  reading says so: for logs whose servers are gone, never for evidence.
@@ -66,7 +66,9 @@
 # (logs/read/<name>), READ_PARTS (proj), READ_VECTORS (default: the one the readings step builds),
 # READ_PHRASES, READ_LAYERS, READ_SAE_LAYERS, READ_ENGINE (vllm), READ_CHUNK_MIN (20),
 # READ_NO_SERVER_IDS. Deadlines in
-# minutes: NEW_MIN (20), SERVE_MIN (45), READY_MIN (5), READINGS_MIN (100), READ_MIN (40, a chunk).
+# minutes: NEW_MIN (20), SERVE_MIN (45), READY_MIN (5), READINGS_MIN (100), READ_MIN (a chunk:
+# READ_CHUNK_MIN + 20 for setup, engine loads and an episode a budget can't cut, + 15 per check or
+# transfer part, which have no budget).
 #
 # Exit: 0 when every step passed, 3 when the run is incomplete and nothing failed, 1 otherwise.
 set -u
@@ -82,7 +84,7 @@ fi
 DRY=${DRY_RUN:-}
 SESSION=${SESSION:-probe}
 GPU=${GPU:-G4}
-STEPS=${STEPS:-setup run}
+STEPS=${STEPS:-setup run ids}
 LOGS=${LOGS:-logs}
 ENV_FILE=${ENV_FILE:-../.env}
 EQUIV_CONTEXTS=${EQUIV_CONTEXTS:-$LOGS/equiv/contexts.jsonl}
@@ -103,6 +105,11 @@ FREE_GPU='pkill -f "[v]llm serve" || true; for i in $(seq 120); do
   [ "$used" -lt 2000 ] && exit 0; sleep 5; done; echo "the GPU still has $used MiB in use" >&2; exit 1'
 
 want() { [[ " ${=STEPS} " == *" $1 "* ]]; }
+read_deadline() {   # a chunk's minutes (the header's READ_MIN)
+  local mins=$(( ${READ_CHUNK_MIN:-20} + 20 )) p
+  for p in ${=READ_PARTS}; do case $p in check|transfer) mins=$(( mins + 15 )) ;; esac; done
+  print -r -- ${READ_MIN:-$mins}
+}
 need_servers=0
 if want setup || want run || want equiv || want ids; then need_servers=1; fi
 
@@ -378,7 +385,7 @@ if want read; then
   while :; do
     round=$((round + 1))
     guard
-    vm -o $OUTDIR/read-$round.log -t $(( ${READ_MIN:-40} * 60 )) \
+    vm -o $OUTDIR/read-$round.log -t $(( $(read_deadline) * 60 )) \
       ": sim-session-step read; ${r_env}bash $VM_WORK/sim/explore/interp/read_run.sh"
     rc=$?
     [[ $DRY == 1 ]] && { note "read: chunks of ${READ_CHUNK_MIN:-20} minutes, until nothing is left"; break; }

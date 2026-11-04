@@ -507,6 +507,15 @@ def test_the_commands_the_session_prints_are_the_ones_sim_quant_takes(tmp_path):
         sq.parser().parse_args(t)        # a bad option ends the test here
 
 
+def test_the_default_session_takes_the_token_ids_before_the_servers_stop(tmp_path):
+    """The documented pilot command. The VM stops at the end, and the reader refuses an episode without
+    the server's IDs, so a default without them means a new VM just for /tokenize."""
+    proc, calls, out, state = run(tmp_path, before=verdict(tmp_path))
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "steps: setup run ids" in proc.stdout
+    assert index(calls, "simtest run") < index(calls, "simtest interp server-ids") < index(calls, "stop -s")
+
+
 def test_the_session_says_which_scheme_it_serves(tmp_path):
     proc, *_ = run(tmp_path, {"DRY_RUN": "1"})
     assert "SIM_QUANT=fp8_per_channel" in proc.stdout.splitlines()[0] + proc.stdout
@@ -559,6 +568,36 @@ def test_a_failed_export_stops_the_session_and_the_vm(tmp_path):
     proc, calls, out, state = run(tmp_path, {"STEPS": "ids", "EXPORT_RC": "1"})
     assert proc.returncode == 1 and "ids:" in proc.stdout
     assert not (state / "alive").exists()
+
+
+def deadline(proc):
+    line = next(x for x in proc.stdout.splitlines() if "sim-session-step read;" in x)
+    return int(line.rsplit("at most ", 1)[1].removesuffix("s"))
+
+
+@pytest.mark.parametrize("parts, minutes", [("proj", 40), ("logit transfer", 55), ("check proj", 55), ("proj logit", 40),
+                                            ("check proj logit transfer", 70)])
+def test_a_chunks_deadline_grows_with_the_parts_that_have_no_budget(tmp_path, parts, minutes):
+    """The documented second session is 8 setup, 2 loads, 20 logit and 15 transfer: at a flat 40 minutes
+    the kill comes first, and that ends the read as a failure."""
+    (tmp_path / "p.json").write_text("{}")
+    proc, *_ = read_run(tmp_path, {"DRY_RUN": "1", "READ_PARTS": parts, "READ_PHRASES": str(tmp_path / "p.json")})
+    assert deadline(proc) == minutes * 60
+
+
+def test_the_second_session_fits_its_deadline(tmp_path):
+    (tmp_path / "p.json").write_text("{}")
+    proc, *_ = read_run(tmp_path, {"DRY_RUN": "1", "READ_PARTS": "logit transfer", "READ_PHRASES": str(tmp_path / "p.json")})
+    assert deadline(proc) >= (8 + 2 + 20 + 15) * 60
+
+
+def test_a_longer_chunk_moves_the_deadline_and_read_min_still_wins(tmp_path):
+    proc, *_ = read_run(tmp_path, {"DRY_RUN": "1", "READ_CHUNK_MIN": "30"})
+    assert deadline(proc) == 50 * 60
+    proc, *_ = run(tmp_path / "second" if (tmp_path / "second").mkdir() is None else None,
+                   {"DRY_RUN": "1", "STEPS": "read", "READ_MIN": "33", "READ_VECTORS": str(tmp_path / "v.safetensors")},
+                   before=lambda state: episodes(tmp_path / "second" / "logs"))
+    assert deadline(proc) == 33 * 60
 
 
 def test_read_runs_alone_on_the_gpu_and_brings_the_readings_back(tmp_path):

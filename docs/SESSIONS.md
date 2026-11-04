@@ -36,8 +36,8 @@ One VM session does all of a config's GPU work, so the setup is paid once (741 s
    cap (the second argument, in units).
 3. Runs `serve.sh` once with the given `MIX` (required: `c3` or `default`) and the simulator's scheme
    by name, opens the tunnel and waits for both `/v1/models`.
-4. Runs the steps in `STEPS`, always in this order (default: `setup run`; `equiv`, `ids`, `readings`
-   and `read` run when named):
+4. Runs the steps in `STEPS`, always in this order (default: `setup run ids`, since the VM stops at the
+   end and the reader needs the server's IDs; `equiv`, `readings` and `read` run when named):
    - `setup`: the simulator's setup check (BACKENDS.md, "The setup check"), before any episode: the
      server's scheme lines, the `simtest equiv` noise floors of both models, one forced bake-off
      pass at 12 at once with its speed. Anything but PASS stops the session here. A PASS on this
@@ -160,8 +160,11 @@ LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." V
 - **Vectors.** `READ_VECTORS` is a file on the laptop. Without it, `proj` uses the file the `readings`
   step builds on that VM, so name `readings` in `STEPS`.
 - **Chunks and resuming.** Colab allows one SSH session, so a read can't copy results out while it
-  runs. `session.sh` runs `read_run.sh` for `READ_CHUNK_MIN` minutes (20), copies the readings back to
-  `logs/read/<name>/readings/`, and goes on until nothing is left. A VM lost mid-run loses one chunk.
+  runs. `session.sh` runs `read_run.sh` for `READ_CHUNK_MIN` minutes (20), which `proj` and `logit`
+  share in equal parts, copies the readings back to `logs/read/<name>/readings/`, and goes on until
+  nothing is left. `check` and `transfer` have no budget, so each adds 15 minutes to a chunk's deadline
+  (`READ_MIN`: the chunk, plus 20 for setup, loads and an episode a budget can't cut). A VM lost mid-run
+  loses one chunk.
   A second session sends the readings first and goes on from them. A chunk that finishes nothing more
   stops the read, so it can't loop on a billing VM. Each engine load costs about a minute per chunk.
 - **Order of a session.** `ids` runs while the servers are up. `readings` and `read` share one stop of
@@ -173,7 +176,8 @@ LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." V
   `submit_read.sh` reads them anyway, and each reading says so. It is never for evidence.
 - **Hopper.** `submit_read.sh` sends the code, the episodes, the readings so far, the vectors and the
   sentences to `WORK`, and submits `read.slurm` (one GPU). The login host must see `WORK`. The time
-  limit is a parameter; `CHUNK_MIN` ends 10 minutes before it. The job's exit code is the reader's: 3
+  limit is a parameter; `CHUNK_MIN`, which `proj` and `logit` share, is that limit less 10 minutes, and
+  less 15 for each `check` or `transfer`. The job's exit code is the reader's: 3
   means episodes are left, and submitting again resumes. It prints the command that brings the
   readings back.
 

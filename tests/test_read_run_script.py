@@ -94,6 +94,15 @@ def test_the_saes_download_at_their_pinned_commit_and_the_readings_record_it(tmp
     assert f"Qwen/SAE-Res-Qwen3.5-27B-W80K-L0_50 {SAE_REV}\n" in (work / "read" / "readings" / "versions.txt").read_text()
 
 
+@pytest.mark.parametrize("parts, minutes", [("proj", [20]), ("logit", [20]), ("logit+transfer", [20]), ("proj+logit", [10, 10]),
+                                            ("check+proj+logit+transfer", [10, 10])])
+def test_chunk_min_is_split_across_the_parts_that_have_a_budget(tmp_path, parts, minutes):
+    proc, calls, _ = run(tmp_path, {"PARTS": parts})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    got = [c.split("--budget-min ")[1].split()[0] for c in calls if "read_run.py" in c]
+    assert got == [str(m) for m in minutes]
+
+
 def test_the_transfer_check_splices_on_hf_and_reads_fvu_on_vllm(tmp_path):
     proc, calls, work = run(tmp_path, {"PARTS": "transfer"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -268,6 +277,24 @@ def test_submit_sends_everything_and_submits_one_job(tmp_path):
     job = text[text.index("sbatch --parsable"):]
     assert "sbatch --parsable --time=120" in job and "--partition=gpu" in job and "CHUNK_MIN=110" in job and "PARTS=proj" in job
     assert "tar czf - -C /scratch/v/sim/read readings" in proc.stdout     # how to bring them back
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+@pytest.mark.parametrize("parts, minutes", [("proj", 110), ("proj logit", 110), ("proj transfer", 95), ("check proj logit transfer", 80)])
+def test_the_job_keeps_room_for_the_parts_that_have_no_budget(tmp_path, parts, minutes):
+    """A budgeted part stops on time; check and transfer run to their end whatever is left."""
+    (tmp_path / "p.json").write_text("{}")
+    proc, calls, _ = submit(tmp_path, {"PARTS": parts, "PHRASES": str(tmp_path / "p.json"), "NO_SERVER_IDS": "1"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"CHUNK_MIN={minutes}," in "\n".join(calls) + "," or f"CHUNK_MIN={minutes} " in "\n".join(calls)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_job_too_short_for_its_parts_is_refused(tmp_path):
+    (tmp_path / "p.json").write_text("{}")
+    proc, calls, _ = submit(tmp_path, {"PARTS": "check proj logit transfer", "PHRASES": str(tmp_path / "p.json"), "NO_SERVER_IDS": "1",
+                                       "TIME_LIMIT": "0.5"})
+    assert proc.returncode == 1 and "room" in proc.stderr and not any(c.startswith("ssh") for c in calls)
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")

@@ -13,7 +13,8 @@
 #    account and scratch are unknown here: they are parameters, never defaults.
 # 2. Sends the code at HEAD (a git bundle, so it records the commit), the episodes and the readings so
 #    far (a second job resumes), the vectors and the sentences to WORK. The login host must see WORK.
-# 3. Submits read.slurm by stdin, with CHUNK_MIN set to end 10 minutes before the time limit.
+# 3. Submits read.slurm by stdin. CHUNK_MIN is the minutes proj and logit share: the time limit less
+#    10, less 15 for each check or transfer part, which have no budget.
 # 4. Prints the commands to follow the job and to bring the readings back.
 #
 # DRY_RUN=1 prints every command and runs none of them.
@@ -50,6 +51,9 @@ if (( ${#problems} )); then
 fi
 
 chunk=$(( int(TIME_LIMIT * 60) - 10 ))
+for p in ${=PARTS}; do
+  case $p in check|transfer) chunk=$(( chunk - 15 )) ;; esac
+done
 (( chunk > 0 )) || { print -u2 "submit_read.sh: refused: a time limit of $TIME_LIMIT h leaves no room"; exit 1; }
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sim-read.XXXXXX")
 trap 'rm -rf $tmp' EXIT
