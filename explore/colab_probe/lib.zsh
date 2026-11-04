@@ -143,8 +143,10 @@ setup_step() {
   x uv run python -I explore/sim_quant.py check --out $SETUP_DIR
 }
 
-# gate WHERE SERVER_FILE: before each simtest run: the check passed, and this server shows the scheme
-# (a new VM or job is a new server). It writes the scheme to the run's record, logs/<name>/backend.jsonl.
+# gate WHERE SERVER_FILE: before each simtest run: the check passed, this server shows the scheme (a new
+# VM or job is a new server), and both servers are served as the check saw them: setup_step's pass isn't
+# measured again, so this is what holds it to its settings. It writes the scheme to the run's record,
+# logs/<name>/backend.jsonl.
 gate() {
   local args=(--out $SETUP_DIR --server $2 --run-log ${LOGS:-logs}/$name --where $1)
   [[ ${SPEED_OK:-} != 1 ]] || args+=(--speed-ok)

@@ -7,8 +7,8 @@
 # simulator (Qwen-AgentWorld-35B-A3B, official bf16 weights quantized to FP8 by vLLM at load) on
 # :8001 as "simulator". Writes the GPU, versions, model revisions, the served command lines and
 # each step's time to $WORK/probe/, and each server's log to $WORK/probe/<name>.log.
-# $WORK/probe/server.txt holds what the setup check reads (explore/sim_quant.py): the GPU, the
-# simulator's served line, and what vLLM says it quantized.
+# $WORK/probe/server.txt holds what the setup check reads (explore/sim_quant.py): the GPU, both
+# servers' served lines, and what vLLM says it quantized.
 #
 # From the laptop (session "probe"; every Colab command uses gcloud ADC):
 #   colab --auth adc new -s probe --gpu G4          # or A100, H100 (80 GB: shorter contexts, below)
@@ -239,8 +239,11 @@ else
   serve agent 8000 "$MODELS/agent" "$AGENT_MEM" "$AGENT_LEN" "$AGENT_GPU" "${AGENT_ARGS[@]}"
 fi
 serve simulator 8001 "$MODELS/simulator" "$SIM_MEM" "$SIM_LEN" "$SIM_GPU" "${SIM_ARGS[@]}"
+# versions.txt starts over on every run, so after SIM_ONLY=1 the running agent's line is the last file's.
+agent_line=$(grep -sh -- "--served-model-name agent" "$OUT/server.txt" "$OUT/versions.txt" | tail -1 || true)
 {
   echo "gpu: $(nvidia-smi --query-gpu=name --format=csv,noheader | sort -u | paste -s -d, -)"
+  [ -z "$agent_line" ] || echo "$agent_line"
   grep -- "--served-model-name simulator" "$OUT/versions.txt" | tail -1
   grep -h -E "Quantizing|Fp8 MoE backend|Selected .* for Fp8" "$OUT/simulator.log" || true
 } >"$OUT/server.txt"

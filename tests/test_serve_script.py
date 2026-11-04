@@ -395,8 +395,8 @@ VLLM_SAYS = ((Path(__file__).parent / "sim_quant_fixtures" / "g4-simulator-fp8.l
 
 
 def test_serve_keeps_the_lines_the_setup_check_reads(tmp_path):
-    """The served simulator line, what vLLM says it quantized and the GPU, in one file on both Colab
-    and Hopper, whichever scheme it served."""
+    """Both served lines, what vLLM says it quantized and the GPU, in one file on both Colab and Hopper,
+    whichever scheme it served."""
     work, rec = tmp_path / "work", tmp_path / "rec.txt"
     (tmp_path / "vllm-says").write_text(VLLM_SAYS)
     proc = run(tmp_path, {"WORK": str(work), "GPU_MIB": H100_MIB, "GPU_COUNT": "2", "EAGER": "1"}, dry=False, record=rec)
@@ -404,7 +404,7 @@ def test_serve_keeps_the_lines_the_setup_check_reads(tmp_path):
     text = (work / "probe" / "server.txt").read_text().splitlines()
     assert text[0] == "gpu: NVIDIA H100 80GB HBM3"             # both cards the same: one name
     assert sum("--served-model-name simulator" in x and "--quantization fp8_per_channel" in x for x in text) == 1
-    assert not any("--served-model-name agent" in x for x in text)
+    assert sum("--served-model-name agent" in x for x in text) == 1
     assert sum("Quantizing 340 layers" in x for x in text) == 1
     assert sum("Using TRITON Fp8 MoE backend" in x for x in text) == 1
     assert sum("Selected CutlassFP8ScaledMMLinearKernel" in x for x in text) == 1
@@ -414,6 +414,64 @@ def test_serve_keeps_the_lines_the_setup_check_reads(tmp_path):
     sq = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sq)
     assert sq.server_check("\n".join(text)) == ([], [])
+
+
+def _sim_quant():
+    spec = importlib.util.spec_from_file_location("sim_quant", SCRIPT.parents[1] / "sim_quant.py")
+    sq = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sq)
+    return sq
+
+
+def _server_txt(tmp_path, name, env):
+    """server.txt as serve.sh really writes it, in a directory of its own."""
+    d = tmp_path / name
+    d.mkdir()
+    (d / "vllm-says").write_text(VLLM_SAYS)
+    full = {"WORK": str(d / "work"), "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "VENV": "", **env}
+    proc = run(d, full, dry=False, record=d / "rec.txt")
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    return (Path(full["WORK"]) / "probe" / "server.txt").read_text()
+
+
+def _gate(sq, checked, now):
+    """The gate on a PASS recorded from `checked`, as `sim_quant.py check` records it, and this server's lines."""
+    check = {"verdict": "PASS", "commit": "h", "scheme": sq.SCHEME, "gpu": sq.gpu_name(checked), "rule": {},
+             "served": sq.served_line(checked), "agent_served": sq.served_line(checked, "agent")}
+    return sq.gate_problems(check, now, "h", False)
+
+
+@pytest.mark.parametrize("env, who", [({"SIM_MEM": "0.52"}, "simulator"), ({"AGENT_MEM": "0.42"}, "agent"), ({"EAGER": "1"}, "simulator"),
+                                      ({"SIM_LEN": "65536"}, "simulator"), ({"AGENT_LEN": "65536"}, "agent"), ({"MIX": "c3"}, "agent"),
+                                      ({"MAX_SEQS": "32"}, "simulator")], ids=lambda x: x if isinstance(x, str) else "+".join(x))
+def test_the_gate_refuses_a_session_serve_sh_started_on_other_settings(tmp_path, env, who):
+    sq = _sim_quant()
+    problems = _gate(sq, _server_txt(tmp_path, "checked", {}), _server_txt(tmp_path, "now", env))
+    assert any(who in p and "one backend" in p for p in problems), problems
+
+
+def test_the_gate_keeps_a_good_session_in_another_work_directory(tmp_path):
+    sq = _sim_quant()
+    assert _gate(sq, _server_txt(tmp_path, "checked", {}), _server_txt(tmp_path, "now", {"WORK": str(tmp_path / "elsewhere")})) == []
+
+
+def test_the_gate_keeps_a_good_job_on_other_cards_of_a_node(tmp_path):
+    sq, two = _sim_quant(), {"GPU_COUNT": "2", "GPU_MIB": H100_MIB}
+    checked, now = _server_txt(tmp_path, "checked", {**two, "GPUS": "0,1"}), _server_txt(tmp_path, "now", {**two, "GPUS": "2,3"})
+    assert "CUDA_VISIBLE_DEVICES=3 " in now and _gate(sq, checked, now) == []
+
+
+def test_a_sim_only_restart_keeps_the_running_agents_line(tmp_path):
+    """versions.txt starts over on every run, and the agent a restart leaves running is still the one served."""
+    work, rec = tmp_path / "work", tmp_path / "rec.txt"
+    (tmp_path / "vllm-says").write_text(VLLM_SAYS)
+    env = {"WORK": str(work), "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "VENV": ""}
+    assert run(tmp_path, env, dry=False, record=rec).returncode == 0
+    sq, first = _sim_quant(), (work / "probe" / "server.txt").read_text()
+    proc = run(tmp_path, {**env, "SIM_ONLY": "1"}, dry=False, record=rec)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    now = (work / "probe" / "server.txt").read_text()
+    assert sq.served_line(first, "agent") and sq.served_line(now, "agent") == sq.served_line(first, "agent")
 
 
 def test_a_sim_only_restart_replaces_the_lines(tmp_path):

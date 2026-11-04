@@ -12,7 +12,7 @@
 # one fails 3 checks in a row, so the GPUs go back to the queue. It writes STATUS_DIR/<job id>:
 #   node=<the node>  state=starting|ready|failed|server-died|ended  start=<epoch s>  end=<epoch s>
 # where end is the start plus the time limit, and, before it says ready, STATUS_DIR/<job id>.server:
-# serve.sh's server.txt (the GPU, the served simulator line, what vLLM quantized). run_chunks.sh reads
+# serve.sh's server.txt (the GPU, both servers' served lines, what vLLM quantized). run_chunks.sh reads
 # both through the login host.
 #
 # The time limit is a parameter, not set here: submit_chunks.sh passes it (sbatch --time, and

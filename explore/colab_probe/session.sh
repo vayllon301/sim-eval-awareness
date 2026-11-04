@@ -21,8 +21,9 @@
 #                  against 12 at once), one forced bake-off pass at 12 at once with its speed. Anything
 #                  but PASS stops the session here: no episode runs. A PASS on this commit and backend
 #                  is kept in SETUP_DIR, so a resumed session doesn't pay for it again.
-#        run       the gate (a PASS on this commit, and this server's own lines show the scheme; it
-#                  writes the scheme to logs/<name>/backend.jsonl), then uv run --env-file ENV_FILE
+#        run       the gate (a PASS on this commit, this server's own lines show the scheme, and both
+#                  servers are served as the check saw them; it writes the scheme to
+#                  logs/<name>/backend.jsonl), then uv run --env-file ENV_FILE
 #                  simtest run CONFIG [--epochs EPOCHS] [--admit-for ADMIT_FOR] [--carry-under
 #                  CARRY_UNDER]. Exit 3 (incomplete, resumable) is reported, and the next steps run.
 #        equiv     simtest equiv score EQUIV_CONTEXTS, one request at a time and 12 at once

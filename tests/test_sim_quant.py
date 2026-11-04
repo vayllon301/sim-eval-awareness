@@ -133,6 +133,9 @@ def _server(scheme, quant_flag, layers="340", backend="TRITON", stray=None, gpu=
     if stray:
         said = said.replace(f"attn.qkv: 27 (from linear: {scheme})", f"attn.qkv: 27 (from linear: {stray})")
     return (f"gpu: {gpu}\n"
+            "vllm serve /content/models/agent --served-model-name agent --host 127.0.0.1 --port 8000 "
+            "--gpu-memory-utilization 0.42 --max-model-len 131072 --max-num-seqs 64 --language-model-only "
+            "--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder\n"
             "vllm serve /content/models/simulator --served-model-name simulator --host 127.0.0.1 --port 8001 "
             f"--gpu-memory-utilization 0.52 --max-model-len 131072 --max-num-seqs 64 --language-model-only "
             f"--reasoning-parser qwen3 {quant_flag} --trust-remote-code\n" + said +
@@ -389,6 +392,7 @@ HEAD = "0123456789abcdef"
 
 def _passed(**kw):
     return {"verdict": "PASS", "commit": HEAD, "scheme": S.SCHEME, "gpu": GPU, "rule": {"confirm_budget": False},
+            "served": S.served_line(PC), "agent_served": S.served_line(PC, "agent"),
             "fidelity": {"mean_sim": 0.905, "truncated": 1}, "speed": {"median_tok_s": 450.0}, **kw}
 
 
@@ -410,6 +414,68 @@ def test_gate_lets_a_passed_setup_through():
 def test_gate_refuses(check, text, head, why):
     problems = S.gate_problems(check, text, head, False)
     assert problems and any(why in p for p in problems), problems
+
+
+SIM_LINE, AGENT_LINE = S.served_line(PC), S.served_line(PC, "agent")
+
+
+@pytest.mark.parametrize("old,new", [
+    ("--gpu-memory-utilization 0.52", "--gpu-memory-utilization 0.47"),
+    ("--max-model-len 131072 --max-num-seqs 64 --language-model-only --reasoning-parser qwen3 --quantization",
+     "--max-model-len 65536 --max-num-seqs 64 --language-model-only --reasoning-parser qwen3 --quantization"),
+    (" --trust-remote-code", " --trust-remote-code --enforce-eager"),
+    ("--max-num-seqs 64 --language-model-only --reasoning-parser qwen3 --quantization",
+     "--max-num-seqs 32 --language-model-only --reasoning-parser qwen3 --quantization"),
+], ids=["memory", "context", "eager", "sequences"])
+def test_gate_refuses_a_simulator_served_other_than_the_check_saw(old, new):
+    assert old in SIM_LINE
+    problems = S.gate_problems(_passed(), PC.replace(SIM_LINE, SIM_LINE.replace(old, new)), HEAD, False)
+    assert len(problems) == 1 and "simulator" in problems[0] and "one backend" in problems[0]
+
+
+@pytest.mark.parametrize("old,new", [
+    ("--gpu-memory-utilization 0.42", "--gpu-memory-utilization 0.47"),
+    ("--max-model-len 131072", "--max-model-len 65536"),
+    (" --tool-call-parser qwen3_coder", " --tool-call-parser qwen3_coder --enforce-eager"),
+], ids=["memory", "context", "eager"])
+def test_gate_refuses_an_agent_served_other_than_the_check_saw(old, new):
+    assert old in AGENT_LINE
+    problems = S.gate_problems(_passed(), PC.replace(AGENT_LINE, AGENT_LINE.replace(old, new)), HEAD, False)
+    assert len(problems) == 1 and "agent" in problems[0] and "one backend" in problems[0]
+
+
+def test_gate_refuses_the_engine_variable_that_goes_with_eager():
+    eager = "VLLM_USE_V2_MODEL_RUNNER=0 " + SIM_LINE
+    assert S.gate_problems(_passed(), PC.replace(SIM_LINE, eager), HEAD, False)
+
+
+@pytest.mark.parametrize("old,new", [
+    ("/content/models/simulator", "/scratch/v/sim/models/simulator"),
+    ("--port 8001", "--port 18001"),
+    ("--host 127.0.0.1", "--host 0.0.0.0"),
+], ids=["path", "port", "host"])
+def test_gate_lets_through_what_differs_between_two_good_starts(old, new):
+    assert S.gate_problems(_passed(), PC.replace(SIM_LINE, SIM_LINE.replace(old, new)), HEAD, False) == []
+
+
+def test_gate_doesnt_mind_which_card_of_the_job_a_server_landed_on():
+    text = PC.replace(SIM_LINE, "CUDA_VISIBLE_DEVICES=3 " + SIM_LINE).replace(AGENT_LINE, "CUDA_VISIBLE_DEVICES=2 " + AGENT_LINE)
+    check = _passed(served="CUDA_VISIBLE_DEVICES=1 " + SIM_LINE, agent_served="CUDA_VISIBLE_DEVICES=0 " + AGENT_LINE)
+    assert S.gate_problems(check, text, HEAD, False) == []
+
+
+def test_gate_doesnt_mind_a_line_of_the_servers_log_that_varies():
+    assert S.gate_problems(_passed(), PC + "INFO 11-04 21:03:44 [api_server.py:101] pid 4242 started\n", HEAD, False) == []
+
+
+@pytest.mark.parametrize("key", ["served", "agent_served"])
+def test_gate_refuses_a_check_that_recorded_no_line(key):
+    assert any("one backend" in p for p in S.gate_problems(_passed(**{key: None}), PC, HEAD, False))
+
+
+def test_gate_refuses_a_server_with_no_agent_line():
+    problems = S.gate_problems(_passed(), PC.replace(AGENT_LINE + "\n", ""), HEAD, False)
+    assert any("no agent command line" in p for p in problems)
 
 
 def test_gate_holds_a_low_speed_until_victor_confirms():
@@ -442,6 +508,13 @@ def test_gate_writes_the_scheme_in_the_runs_record_once_per_start(tmp_path, monk
     assert r["where"] == "Hopper, job 1001 on gpu07"
     assert "--quantization fp8_per_channel --moe-backend triton" in r["served"]
     assert r["setup_check"]["verdict"] == "PASS" and r["setup_check"]["mean_sim"] == 0.905
+
+
+def test_the_record_has_both_servers_lines(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "_commit", lambda: HEAD)
+    assert S.main(_gate_files(tmp_path)) == 0
+    row = json.loads((tmp_path / "logs" / "n2-pilot" / "backend.jsonl").read_text())
+    assert row["served"] == SIM_LINE and row["agent_served"] == AGENT_LINE
 
 
 def test_a_refused_gate_returns_an_error_and_writes_no_record(tmp_path, monkeypatch, capsys):
@@ -619,6 +692,20 @@ def test_check_end_to_end_passes(tmp_path, monkeypatch):
     assert d["noise"]["agent"]["contexts"] == 2 and d["noise"]["simulator"]["contexts"] == 6
     assert d["constants"]["sim_floor"] == S.SIM_FLOOR
     assert d["layers"] == 340
+
+
+def test_the_gate_holds_a_check_to_the_lines_it_really_recorded(tmp_path, monkeypatch):
+    """check, then gate, on files: a resumed session on other fractions keeps the PASS and is refused."""
+    out = tmp_path / "setup"
+    _check_dir(out, monkeypatch)
+    assert S.main(["check", "--out", str(out)]) == 0
+    assert _verdict(out)["served"] == SIM_LINE and _verdict(out)["agent_served"] == AGENT_LINE
+    server = tmp_path / "server.txt"
+    server.write_text(PC.replace("/content/", "/scratch/v/sim/"))
+    args = ["gate", "--out", str(out), "--server", str(server), "--run-log", str(tmp_path / "logs" / "n2-pilot"), "--where", "x"]
+    assert S.main(args) == 0
+    server.write_text(PC.replace("--gpu-memory-utilization 0.52", "--gpu-memory-utilization 0.47"))
+    assert S.main(args) == 1
 
 
 def test_check_exit_says_fail(tmp_path, monkeypatch):

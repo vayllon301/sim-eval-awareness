@@ -14,16 +14,18 @@ run it on the laptop, through the tunnel, before any episode:
   check              applies the rule below to the server's lines, the pass, the speed and the
                      `simtest equiv` noise floors, and writes check.json. Exit: 0 PASS, 1 FAIL,
                      2 INCOMPLETE.
-  gate               the last check before each `simtest run`: a PASS on this commit and these
-                     lines on this very server. Then it appends the scheme to the run's record,
-                     logs/<name>/backend.jsonl. Refused: exit 1, and no episode starts.
+  gate               the last check before each `simtest run`: a PASS on this commit, these lines
+                     on this very server, and both servers served as the check saw them (only the
+                     card, the model's directory, the host and the port may differ). Then it appends
+                     the scheme to the run's record, logs/<name>/backend.jsonl. Refused: exit 1, and no
+                     episode starts.
   recording          whether the bake-off's recording is the pinned one (before a VM exists).
 
     uv run python -I explore/sim_quant.py fidelity --out logs/setup/<dir>
     uv run python -I explore/sim_quant.py check --out logs/setup/<dir>
 
 Files under --out, one commit's check on one backend (logs/ is not in git):
-  server.txt                     serve.sh's lines: the GPU, the simulator's served line, what vLLM
+  server.txt                     serve.sh's lines: the GPU, both servers' served lines, what vLLM
                                  says it quantized and the MoE kernel it chose
   equiv-c1.jsonl, equiv-c12.jsonl    `simtest equiv score --concurrency 1 12`, both models
   real.jsonl, snapshot.txt       copies of logs/bakeoff/'s (the bake-off's recording, 26-10-2026)
@@ -59,6 +61,7 @@ import importlib
 import json
 import os
 import re
+import shlex
 import shutil
 import statistics
 import subprocess
@@ -111,13 +114,27 @@ def gpu_name(text: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def served_line(text: str) -> str | None:
-    served = [x for x in text.splitlines() if "--served-model-name simulator" in x]
+def served_line(text: str, name: str = "simulator") -> str | None:
+    served = [x for x in text.splitlines() if f"--served-model-name {name}" in x]
     return served[-1] if served else None
 
 
+def served_settings(line: str | None) -> list[str] | None:
+    """What a served line sets, without what differs between two good starts of one backend: which card
+    of the job the server landed on, where the model's directory is, the host and the port."""
+    if line is None:
+        return None
+    out, words = [], iter(shlex.split(line))
+    for w in words:
+        if w in ("serve", "--host", "--port"):
+            next(words, None)
+        if w not in ("--host", "--port") and not w.startswith("CUDA_VISIBLE_DEVICES="):
+            out.append(w)
+    return out
+
+
 def server_check(text: str) -> tuple[list[str], list[str]]:
-    """(missing, wrong) from server.txt: the simulator's served line, the scheme vLLM reports for
+    """(missing, wrong) from server.txt: both servers' served lines, the scheme vLLM reports for
     every quantized layer kind, the MoE kernel it chose, and the GPU. Missing is a line that isn't
     there, a layer kind that can't be read, or kinds that don't add up to the layers quantized; wrong
     is a line that shows something else."""
@@ -127,6 +144,8 @@ def server_check(text: str) -> tuple[list[str], list[str]]:
         missing.append("no simulator command line in server.txt")
     elif not _FLAG.search(served):
         wrong.append(f"the served simulator line is not --quantization {SCHEME} --moe-backend triton")
+    if served_line(text, "agent") is None:
+        missing.append("no agent command line in server.txt")
     lines = list(_QUANTIZING.finditer(text))
     if not lines:
         missing.append("no 'Quantizing ... layers' line from the simulator's log")
@@ -365,6 +384,9 @@ def rule(fid: dict, noise_: dict, missing: list[str], wrong: list[str], tok_s: f
             "action": f"the episodes may start on {SCHEME}" if ok else ON_FAIL}
 
 
+SERVED = {"simulator": "served", "agent": "agent_served"}       # check.json's key for each server's line
+
+
 def gate_problems(check: dict | None, text: str, head: str | None, speed_ok: bool) -> list[str]:
     """Why a `simtest run` must not start on the server whose lines are `text`."""
     if check is None:
@@ -380,6 +402,11 @@ def gate_problems(check: dict | None, text: str, head: str | None, speed_ok: boo
     gpu = gpu_name(text)
     if gpu is not None and gpu != check.get("gpu"):
         problems.append(f"this server runs on {gpu}, and the setup check on {check.get('gpu')}: one backend per experiment")
+    for name, key in SERVED.items():
+        now, then = served_settings(served_line(text, name)), served_settings(check.get(key))
+        if now is not None and now != then:
+            changed = " ".join(sorted(set(now) ^ set(then or [])))
+            problems.append(f"the {name} isn't served as in the setup check (these differ: {changed}): one backend per experiment")
     if (check.get("rule") or {}).get("confirm_budget") and not speed_ok:
         problems.append(f"the speed is under {REFERENCE_TOK_S * SPEED_CONFIRM:.0f} tokens/s, or missing: Victor confirms "
                         "the rescaled budget first, then SPEED_OK=1")
@@ -454,7 +481,7 @@ def main_check(args) -> int:
     r = rule(fid, nz, recording_check(out) + missing, wrong, spd["median_tok_s"])
     check = {"verdict": r["verdict"], "commit": _commit(), "scheme": SCHEME, "gpu": gpu_name(text), "rule": r,
              "fidelity": fid, "graded": graded_fidelity(out), "speed": spd, "noise": nz, "layers": layer_count(text),
-             "served": served_line(text),
+             "served": served_line(text), "agent_served": served_line(text, "agent"),
              "constants": {"sim_floor": SIM_FLOOR, "max_truncated": MAX_TRUNCATED, "reference_tok_s": REFERENCE_TOK_S,
                            "speed_confirm": SPEED_CONFIRM, "at_once": AT_ONCE}}
     (out / "check.json").write_text(json.dumps(check, indent=1, default=str) + "\n")
@@ -493,7 +520,7 @@ def main_gate(args) -> int:
             print(f"gate: refused: {x}", file=sys.stderr)
         return 1
     row = {"t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "where": args.where, "commit": head, "scheme": SCHEME,
-           "gpu": gpu_name(text), "served": served_line(text),
+           "gpu": gpu_name(text), "served": served_line(text), "agent_served": served_line(text, "agent"),
            "setup_check": {"dir": str(out), "verdict": check["verdict"], "gpu": check.get("gpu"),
                            "mean_sim": (check.get("fidelity") or {}).get("mean_sim"),
                            "truncated": (check.get("fidelity") or {}).get("truncated"),

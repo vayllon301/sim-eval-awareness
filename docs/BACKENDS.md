@@ -44,7 +44,7 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
   Nothing else is accepted. [Below](#the-simulators-quantization-fp8_per_channel).
 - `session.sh` and `submit_chunks.sh` always name `fp8_per_channel` to `serve.sh`. They refuse `fp8`
   for the setup check and for episodes, even if it is left over in the shell.
-- `$WORK/probe/server.txt` holds what the setup check reads: the GPU, the simulator's served line,
+- `$WORK/probe/server.txt` holds what the setup check reads: the GPU, both servers' served lines,
   what vLLM says it quantized and the MoE kernel it chose.
 - `SIM_ONLY=1` restarts the simulator alone next to a running agent (it stops only the simulator of
   the same `WORK`).
@@ -198,8 +198,8 @@ differ), and about 0.12 GB of scales.
 isn't a comparison: no `fp8` pass runs. `session.sh`'s `setup` step and `run_chunks.sh` run it on the
 laptop, through the tunnel, before any episode, in this order:
 
-1. **The server's scheme lines.** `serve.sh` writes them to `$WORK/probe/server.txt`: the GPU, the
-   simulator's served line, and what vLLM says it quantized and which MoE kernel it chose. They come
+1. **The server's scheme lines.** `serve.sh` writes them to `$WORK/probe/server.txt`: the GPU, both
+   servers' served lines, and what vLLM says it quantized and which MoE kernel it chose. They come
    first, so a wrong server costs no GPU time.
 2. **The noise floors.** `simtest equiv score --concurrency 1 12`, both models, the 30 contexts of
    sessions 4 and 5.
@@ -210,9 +210,12 @@ laptop, through the tunnel, before any episode, in this order:
 4. **The rule.** `sim_quant.py check` writes `check.json`. Exit 0 PASS, 1 FAIL, 2 INCOMPLETE.
 
 Before each `simtest run`, on every VM and every Hopper job, `sim_quant.py gate` runs the last check.
-A PASS on this commit must exist, this server's own lines must show the scheme, and its GPU must be
-the check's. Then it appends one line to the run's record, `logs/<name>/backend.jsonl`: the scheme,
-the served line, the GPU, the commit and the check's numbers. If the gate refuses, no episode starts.
+A PASS on this commit must exist, this server's own lines must show the scheme, its GPU must be the
+check's, and both servers must be served as the check saw them: memory, context length, engine and
+every other flag. Only the card of the job, the model's directory, the host and the port may differ.
+A pass isn't measured twice, so this is what holds it to the settings it measured. Then it appends one
+line to the run's record, `logs/<name>/backend.jsonl`: the scheme, both served lines, the GPU, the
+commit and the check's numbers. If the gate refuses, no episode starts.
 
 ```bash
 # before the session, on the laptop (offline): the contexts from sessions 4 and 5
@@ -229,8 +232,9 @@ twice.
 **Cost:** about 25 minutes of the G4, so about 4 units at 10.05 an hour: 14–18 minutes for the forced
 pass (the 29-10 pass's 339K generated tokens through 12 slots at 400–500 tokens a second) and a few
 minutes of `equiv`. This is an estimate, not a measurement. An `equiv` request that runs a server out
-of memory (above) stops the session; run the check alone with `STEPS=setup AGENT_MEM=... SIM_MEM=...`,
-then `STEPS=run`.
+of memory (above) stops the session. The check can then run alone with `STEPS=setup AGENT_MEM=...
+SIM_MEM=...`, but its PASS admits no episodes: they never run on those fractions, and the gate refuses
+any others. What comes next is Victor's to decide.
 
 **The rule (frozen in LOG.md before the pilot).** No `fp8` pass runs in the session, so the bars are
 fixed numbers from earlier sessions. PASS needs all four:

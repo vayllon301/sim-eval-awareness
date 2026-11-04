@@ -42,8 +42,9 @@ One VM session does all of a config's GPU work, so the setup is paid once (741 s
      server's scheme lines, the `simtest equiv` noise floors of both models, one forced bake-off
      pass at 12 at once with its speed. Anything but PASS stops the session here. A PASS on this
      commit and backend stays in `logs/setup/`, so a resumed session doesn't pay for it twice.
-   - `run`: the gate first (a PASS on this commit, and this server's lines show the scheme; it writes
-     the scheme to `logs/<name>/backend.jsonl`), then `simtest run`, with `EPOCHS`, `ADMIT_FOR` and
+   - `run`: the gate first (a PASS on this commit, this server's lines show the scheme, and both
+     servers are served as the check saw them; it writes the scheme to
+     `logs/<name>/backend.jsonl`), then `simtest run`, with `EPOCHS`, `ADMIT_FOR` and
      `CARRY_UNDER` passed on. If the run is incomplete (exit 3), it says so and goes on.
    - `equiv` (only when named): `simtest equiv score` on the contexts, one request at a time and 12
      at once (BACKENDS.md). The setup step already scores them for a run, so this is for a session
@@ -190,9 +191,10 @@ LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." P
   (`tests/test_read_run_script.py`, `test_session_script.py`). `read_run.py` has run on the laptop's MLX
   on real logs.
 - **Equivalence memory.** Prompt log-probs may need more memory than the servers leave free
-  (BACKENDS.md, "Practicalities"). If the setup check's `equiv` runs out of memory, run the check
-  alone: `STEPS=setup AGENT_MEM=... SIM_MEM=...` (`session.sh` passes both to `serve.sh`), then
-  `STEPS=run` without them. Never run episodes with them: other fractions mean another KV cache.
+  (BACKENDS.md, "Practicalities"). If the setup check's `equiv` runs out of memory, the check can run
+  alone: `STEPS=setup AGENT_MEM=... SIM_MEM=...` (`session.sh` passes both to `serve.sh`). Its PASS
+  admits no episodes: never run them with those fractions, since they mean another KV cache, and the
+  gate refuses a run on any others. What comes next is Victor's to decide.
 - **Untested on the real systems.** None of these scripts has run against Colab or Slurm yet:
   only against stubs (`tests/test_watchdog_script.py`, `test_session_script.py`,
   `test_hopper_scripts.py`) and in dry runs.
