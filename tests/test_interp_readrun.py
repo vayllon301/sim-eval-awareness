@@ -301,7 +301,7 @@ def test_a_path_check_says_what_it_took_and_read(tmp_path, vectors):
     a = checked(tmp_path, vectors, FakeBackend(), "a")
     assert a["label"] == "a" and a["engine"] == "fake" and a["tokens"] > 100 and a["path"] == "token_losses"
     assert a["seconds"]["pass"] >= 0 and a["seconds"]["phrases"] >= 0
-    assert len(a["turns"]) == 3 and len(a["logprobs"]) == 3 * 5 + 3 * 3   # tokens of both phrases at each turn
+    assert len(a["turns"]) == 3 and len(a["logprobs"]) == 3 * (20 + 11)   # both phrases, in characters, at each turn
     assert len(a["projection"]) == a["tokens"]
 
 
