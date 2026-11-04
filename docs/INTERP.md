@@ -635,9 +635,9 @@ one the G4 served):
 
 | What | Real logs | Result |
 | --- | --- | --- |
-| Rendered prompt length against the server's `prompt_tokens` | 2,165 agent calls, sessions 3, 4, 5 and n0, C0 and C3 | 2,165 equal |
+| Rendered prompt length against the server's `prompt_tokens` | 1,523 agent calls, 87 episodes (24 C0, 63 C3), sessions 3, 4, 5 and n0 | 1,523 equal |
 | The same on the simulator's calls (its own template) | 613 calls, session 5 | 613 equal |
-| Each prompt a prefix of the next one, by token | the same calls | all |
+| Each prompt a prefix of the next one, by token | 1,436 pairs of those agent calls | 1,436 |
 | The turn as re-rendered against `completion_tokens` | 1,420 turns, 95 episodes | 1,411 equal, 9 differ by 1 to 3 tokens |
 | Through the reader, after a save and a load | 23 episodes, 802 turns | 802 equal, 802 prompt ends found, 0 replays that differ |
 
