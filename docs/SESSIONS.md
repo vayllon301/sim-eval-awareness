@@ -144,7 +144,7 @@ The steps come from `explore/interp/read_run.sh`, on a Colab VM or a Hopper node
 | `READ_PARTS` (`PARTS`) | What | Engine | Pilot, minutes |
 | --- | --- | --- | --- |
 | `vectors` | Hopper only: the vector file on this backend, with its checks. Colab's is the `readings` step | vLLM | about 8 |
-| `check` | The first GPU run: the reading paths on the longest and shortest episode | vLLM, then transformers | about 15 |
+| `check` | The first GPU run: the reading paths on the longest and shortest episode. A missed bar holds the parts it touches, and the job exits 4 (INTERP.md, "What the first GPU run measures") | vLLM, then transformers | about 15 |
 | `proj` | Projections, prompt ends, turn curves, SAE latents | vLLM (`READ_ENGINE=hf` to change) | about 15 |
 | `logit` | The logit monitor. Needs `READ_PHRASES`, so the judge first | transformers | about 25 |
 | `transfer` | The Qwen-Scope transfer check | transformers, then vLLM | about 15 |

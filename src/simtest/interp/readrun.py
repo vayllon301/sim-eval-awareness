@@ -45,6 +45,9 @@ from .reader import Reading, completion_checks, load_episode, read, render
 
 PARTS = ("proj", "logit")
 MAX_FAILURES = 3
+# The first GPU run's bars with a number. DRAFT, as docs/INTERP.md's table is.
+MAX_MONITOR_ERROR = 0.5             # of the monitor's turn-to-turn SD, on both episodes
+MIN_PROJECTION_CORRELATION = 0.99
 # The served context (serve.sh): vllm_backend.ENGINE's 16K is the smoke test's, and session 5's agent
 # prompts reach 80K tokens.
 READ_ENGINE = {"max_model_len": 131072}
@@ -323,6 +326,27 @@ def compare_paths(a: dict, b: dict) -> dict:
             "monitor_error_over_turn_sd": float(np.sqrt(((m - n) ** 2).mean()) / sd) if sd else None,
             "tokens_per_second": {c["label"]: round(c["tokens"] / c["seconds"]["pass"]) if c["seconds"]["pass"] else None
                                   for c in (a, b)}, "seconds": {c["label"]: c["seconds"] for c in (a, b)}}
+
+
+def path_rule(rows: list[dict]) -> dict:
+    """The first GPU run's bars on `compare_paths`' rows (docs/INTERP.md, "What the first GPU run
+    measures"): {"missed": [what], "held": [parts]}. Only hf against vllm and hf against hf-2048 have a
+    bar. A number that can't be had isn't a pass. The logit monitor is read on hf, so a miss on it holds
+    `logit`; a miss on the projections holds `proj` on hf, as `proj-hf`, and `proj` on vLLM goes on."""
+    missed, held = [], set()
+    for r in rows:
+        paths, tokens = tuple(r["paths"]), r["tokens"]
+        if paths not in (("vllm", "hf"), ("hf", "hf-2048")):
+            continue
+        gap = r["monitor_error_over_turn_sd"]
+        if gap is None or not round(gap, 6) <= MAX_MONITOR_ERROR:
+            missed.append(f"{paths[1]} against {paths[0]} on {tokens} tokens: the logit monitor is {gap} turn SDs apart, at most {MAX_MONITOR_ERROR}")
+            held.add("logit")
+        corr = r["projection_correlation"]
+        if paths == ("vllm", "hf") and not round(corr, 6) >= MIN_PROJECTION_CORRELATION:
+            missed.append(f"hf against vllm on {tokens} tokens: the projections correlate {corr}, at least {MIN_PROJECTION_CORRELATION}")
+            held.add("proj-hf")
+    return {"missed": missed, "held": sorted(held)}
 
 
 def _post(url: str, body: dict) -> dict:

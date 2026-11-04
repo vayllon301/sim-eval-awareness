@@ -14,7 +14,11 @@
 #             About 8 minutes.
 #   check     explore/interp/read_check.py, on the first GPU run: the longest and the shortest episode
 #             on vllm and on hf, the agreement of the two paths, and the chunk noise. About 15 minutes.
-#             Needs VECTORS and PHRASES. Skipped once read-check.json exists. Pass rules: docs/INTERP.md.
+#             Needs VECTORS and PHRASES. Goes before proj and logit. read-check.json is the accepted
+#             check, and it is skipped once that exists. Pass rules: docs/INTERP.md. On a missed bar
+#             read-check-held.txt names the parts it touches: logit, or proj-hf (proj on hf). They are
+#             held, here and in later runs, and the rest goes on. The check isn't paid for again;
+#             to run it after a fix or a decision, delete that file.
 #   proj      explore/interp/read_run.py on PROJ_ENGINE (vllm, the episodes' engine and the vectors';
 #             hf if vllm-lens fails on long prompts): projections, prompt ends, SAE top-k latents
 #             at SAE_LAYERS. Needs VECTORS. Resumable, episode by episode.
@@ -40,7 +44,8 @@
 # TRANSFER_LAYERS (32,42,48), TRANSFER_PER_CONDITION (2), CHUNK_MIN (20), NO_SERVER_IDS (1: proj and
 # logit read episodes that have no server IDs, and each reading says so; docs/INTERP.md),
 # ALLOW_OTHER_BACKEND (1: proj reads vectors built on another card, and each reading says so).
-# Exit: 0 when every part is complete, 3 when some are left (run it again), 1 on an error.
+# Exit: 0 when every part is complete, 3 when some are left (run it again), 4 when all that can run
+# has run and a missed bar holds a part (running it again changes nothing), 1 on an error.
 set -uo pipefail
 VLLM_VERSION=${VLLM_VERSION:-0.32.0}
 LENS_VERSION=${LENS_VERSION:-1.3.0}
@@ -79,6 +84,7 @@ for p in $PARTS; do
 done
 case " $PARTS " in *" vectors "*) [ "${PARTS%% *}" = vectors ] || { echo "read_run.sh: vectors goes first in PARTS: the other parts read them"; exit 1; } ;; esac
 [ -f "$IN/episodes/manifest.json" ] || { echo "read_run.sh: no episodes in $IN/episodes: run simtest interp export"; exit 1; }
+case " $PARTS " in *" proj "*"check "*|*" logit "*"check "*) echo "read_run.sh: check goes before proj and logit: it can hold them"; exit 1 ;; esac
 case " $PARTS " in *" vectors "*) ;; *" proj "*|*" check "*) [ -f "$VECTORS" ] || { echo "read_run.sh: no vector file at $VECTORS"; exit 1; } ;; esac
 case " $PARTS " in *" logit "*|*" check "*) [ -f "$PHRASES" ] || { echo "read_run.sh: no phrase file at $PHRASES"; exit 1; } ;; esac
 used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | sort -n | tail -1)
@@ -97,8 +103,13 @@ fi
 set +e
 
 rc=0
-note() {   # an exit code of read_run.py: 3 (some left) must not hide an error
-  case $1 in 0) ;; 3) [ "$rc" = 1 ] || rc=3 ;; *) rc=1 ;; esac
+note() {   # an exit code of a step: 3 (some left) must not hide an error, and 4 (held) must not hide either
+  case $1 in 0) ;; 3) [ "$rc" = 1 ] || rc=3 ;; 4) [ "$rc" != 0 ] || rc=4 ;; *) rc=1 ;; esac
+}
+held() {   # PART: true if a check that missed a bar holds it
+  grep -qsx "$1" "$OUT/read-check-held.txt" || return 1
+  echo "read_run.sh: $1 is held: the check missed a bar (read-check-held.txt, read-check-diagnostics.json)"
+  note 4
 }
 no_ids=()
 [ "${NO_SERVER_IDS:-}" != 1 ] || no_ids=(--no-server-ids)
@@ -118,6 +129,7 @@ for p in $PARTS; do
         "$WORK/interp-smoke/agent/lens.json" "$OUT/vectors/" || note 1 ;;
     check)
       [ ! -e "$OUT/read-check.json" ] || continue
+      if [ -e "$OUT/read-check-held.txt" ]; then note 4; continue; fi
       check() { "$PY" -I "$CODE/explore/interp/read_check.py" "$@" 2>&1 | tee -a "$OUT/check.log"; note "${PIPESTATUS[0]}"; }
       common=(--episodes "$IN/episodes" --vectors "$VECTORS" --phrases "$PHRASES" --out "$OUT")
       check run "$MODELS/agent" --engine vllm "${common[@]}"
@@ -125,6 +137,7 @@ for p in $PARTS; do
       check run "$MODELS/agent" --engine hf --chunk 2048 --label hf-2048 "${common[@]}"
       check compare --out "$OUT" ;;
     proj)
+      if held "proj-$PROJ_ENGINE"; then continue; fi
       args=(--engine "$PROJ_ENGINE" --out "$OUT" --parts proj --vectors "$VECTORS" --budget-min "$budget")
       [ -z "$LAYERS" ] || args+=(--layers "$LAYERS")
       args+=(${other[@]+"${other[@]}"})
@@ -132,6 +145,7 @@ for p in $PARTS; do
       reader "${args[@]}" 2>&1 | tee -a "$OUT/proj.log"
       note "${PIPESTATUS[0]}" ;;
     logit)
+      if held logit; then continue; fi
       reader --engine hf --out "$OUT/logit" --parts logit --phrases "$PHRASES" --budget-min "$budget" 2>&1 | tee -a "$OUT/logit.log"
       note "${PIPESTATUS[0]}" ;;
     transfer)

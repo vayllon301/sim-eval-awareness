@@ -643,6 +643,12 @@ def test_a_chunk_that_finishes_nothing_stops_the_read(tmp_path):
     assert len((state / "read-cmds").read_text().splitlines()) == 2
 
 
+def test_a_part_held_by_the_check_stops_the_read_and_says_so(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, {"READ_RC": "4"})
+    assert proc.returncode == 1 and "held" in proc.stdout and len((state / "read-cmds").read_text().splitlines()) == 1
+    assert any("tar czf - -C /content/read readings" in c for c in calls)     # the hold comes back with the readings
+
+
 def test_a_failed_read_is_reported_and_what_it_read_still_comes_back(tmp_path):
     proc, calls, out, state = read_run(tmp_path, {"READ_RC": "1"})
     assert proc.returncode == 1 and "read: exit 1" in proc.stdout

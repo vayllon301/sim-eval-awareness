@@ -32,6 +32,10 @@ PYTHON = REC + """case "$*" in
     for a in "$@"; do [ "$prev" = --out-dir ] && d=$a/agent; prev=$a; done
     mkdir -p "$d" && touch "$d/vectors.safetensors" "$d/vectors.safetensors.report.json" "$d/lens.json"
     exit "${LENS_RC:-0}" ;;
+  *read_check.py*compare*)
+    for a in "$@"; do [ "$prev" = --out ] && d=$a; prev=$a; done
+    [ -z "${CHECK_HOLDS:-}" ] || { printf '%s\n' $CHECK_HOLDS > "$d/read-check-held.txt"; exit 4; }
+    exit 0 ;;
   *) exit 0 ;;
 esac
 """
@@ -59,8 +63,11 @@ def setup(tmp_path: Path, used="10"):
     return work, stubs, state
 
 
-def run(tmp_path, env=None, used="10"):
+def run(tmp_path, env=None, used="10", held=None):
     work, stubs, state = setup(tmp_path, used)
+    if held is not None:                    # what an earlier job left: the readings come back with the next job
+        (work / "read" / "readings").mkdir()
+        (work / "read" / "readings" / "read-check-held.txt").write_text(held)
     full = {"PATH": f"{stubs}:/usr/bin:/bin", "HOME": str(tmp_path), "STATE": str(state), "WORK": str(work), **(env or {})}
     proc = subprocess.run([BASH, str(work / "sim" / "explore" / "interp" / "read_run.sh")], env=full, capture_output=True,
                           text=True, timeout=30, stdin=subprocess.DEVNULL)
@@ -229,10 +236,10 @@ def test_the_interp_downloads_take_serve_shs_commits(tmp_path):
     assert f"Qwen/Qwen3.8-27B-FP8 {AGENT_REV}\n" in versions and f"Qwen/Qwen-AgentWorld-35B-A3B {SIM_REV}\n" in versions
 
 
-def check_file(out, label, uuid):
+def check_file(out, label, uuid, **over):
     (out / f"check-{label}-{uuid}.json").write_text(json.dumps({
         "label": label, "uuid": uuid, "tokens": 3, "turns": [0, 1], "projection": [1.0, 2.0, 3.0], "logprobs": [-1.0, -2.0],
-        "monitor": [0.1, 0.2], "seconds": {"pass": 1.0, "phrases": 1.0}}))
+        "monitor": [0.1, 0.2], "seconds": {"pass": 1.0, "phrases": 1.0}, **over}))
 
 
 def compare(out):
@@ -264,6 +271,131 @@ def test_a_complete_check_writes_its_result(tmp_path):
     proc = compare(tmp_path)
     assert proc.returncode == 0, proc.stderr
     assert len(json.loads((tmp_path / "read-check.json").read_text())) == 3
+
+
+# --- the check's bars (docs/INTERP.md, "What the first GPU run measures") ----------------------------
+
+SD = 0.05              # of the monitor [0.1, 0.2]
+FAR = [0.1 + 12 * SD, 0.2 + 12 * SD]
+
+
+def checks(out, episodes=("long", "short"), **paths):
+    """All three paths on every episode, with `hf`, `hf_2048` or `vllm` overriding that path's numbers."""
+    for uuid in episodes:
+        for label in ("vllm", "hf", "hf-2048"):
+            check_file(out, label, uuid, **paths.get(label.replace("-", "_"), {}))
+
+
+def verdict(out, proc):
+    held = out / "read-check-held.txt"
+    return proc.returncode, (out / "read-check.json").exists(), held.read_text().split() if held.exists() else None
+
+
+@pytest.mark.parametrize("paths, held", [
+    ({"hf": {"monitor": FAR}, "hf_2048": {"monitor": FAR}}, ["logit"]),                  # the kernels, chunk size agreeing
+    ({"hf": {"monitor": FAR}}, ["logit"]),                                               # the kernels, and the chunk noise too
+    ({"hf_2048": {"monitor": FAR}}, ["logit"]),                                          # chunk noise alone
+    ({"hf": {"projection": [3.0, 1.0, 2.0]}}, ["proj-hf"]),                              # hf's projections are another curve
+    ({"hf": {"monitor": FAR, "projection": [3.0, 1.0, 2.0]}}, ["logit", "proj-hf"]),
+], ids=["kernel-gap", "kernel-gap-and-chunks", "chunk-noise", "projection", "both"])
+def test_a_missed_bar_accepts_nothing_exits_4_and_holds_the_path_it_touches(tmp_path, paths, held):
+    checks(tmp_path, **paths)
+    proc = compare(tmp_path)
+    assert verdict(tmp_path, proc) == (4, False, held), proc.stdout + proc.stderr
+    assert "read-check.json" in proc.stdout and "missed" in proc.stdout
+
+
+def test_a_gap_on_one_episode_is_a_miss_and_every_number_is_kept(tmp_path):
+    checks(tmp_path, episodes=("long",))
+    checks(tmp_path, episodes=("short",), hf={"monitor": FAR})
+    proc = compare(tmp_path)
+    assert verdict(tmp_path, proc) == (4, False, ["logit"])
+    kept = json.loads((tmp_path / "read-check-diagnostics.json").read_text())
+    assert len(kept["rows"]) == 6 and kept["held"] == ["logit"] and len(kept["missed"]) == 2
+    assert max(r["monitor_error_over_turn_sd"] for r in kept["rows"]) == pytest.approx(12)
+
+
+def test_a_monitor_that_didnt_move_has_no_number_so_it_isnt_a_pass(tmp_path):
+    checks(tmp_path, vllm={"monitor": [0.1, 0.1]})
+    assert verdict(tmp_path, compare(tmp_path)) == (4, False, ["logit"])
+
+
+def test_a_projection_with_no_correlation_isnt_a_pass(tmp_path):
+    checks(tmp_path, hf={"projection": [1.0, 1.0, 1.0]})
+    assert verdict(tmp_path, compare(tmp_path)) == (4, False, ["proj-hf"])
+
+
+def test_on_the_bar_passes(tmp_path):
+    """At most 0.5 of the monitor's turn SD: 0.5 itself passes, whatever the arithmetic's dust."""
+    checks(tmp_path, hf={"monitor": [0.1 + SD / 2, 0.2 + SD / 2]}, hf_2048={"monitor": [0.1 + SD / 2, 0.2 + SD / 2]})
+    proc = compare(tmp_path)
+    assert verdict(tmp_path, proc) == (0, True, None), proc.stdout + proc.stderr
+
+
+def test_vllm_against_hf_2048_has_no_bar_of_its_own(tmp_path):
+    """The rule names hf against vllm and hf against hf-2048. Half a turn SD each way adds up to one SD."""
+    checks(tmp_path, hf={"monitor": [0.1 + SD / 2, 0.2 + SD / 2]}, hf_2048={"monitor": [0.1 + SD, 0.2 + SD]})
+    assert verdict(tmp_path, compare(tmp_path)) == (0, True, None)
+
+
+def test_a_check_that_passes_leaves_the_numbers_too(tmp_path):
+    checks(tmp_path, episodes=("long",))
+    assert compare(tmp_path).returncode == 0
+    assert len(json.loads((tmp_path / "read-check-diagnostics.json").read_text())["rows"]) == 3
+
+
+def test_a_miss_takes_an_old_acceptance_away_and_a_pass_lifts_the_hold(tmp_path):
+    (tmp_path / "read-check.json").write_text("[]")
+    checks(tmp_path, hf={"monitor": FAR})
+    assert verdict(tmp_path, compare(tmp_path)) == (4, False, ["logit"])
+    checks(tmp_path)
+    assert verdict(tmp_path, compare(tmp_path)) == (0, True, None)
+
+
+def test_a_missed_monitor_holds_logit_and_the_rest_goes_on(tmp_path):
+    proc, calls, _ = run(tmp_path, {"PARTS": "check proj logit transfer", "CHECK_HOLDS": "logit"})
+    assert proc.returncode == 4, proc.stdout + proc.stderr
+    assert any("--parts proj" in c for c in calls) and any("sae_transfer.py" in c for c in calls)
+    assert not any("--parts logit" in c for c in calls) and "logit is held" in proc.stdout
+
+
+def test_a_missed_projection_holds_proj_on_hf_only(tmp_path):
+    proc, calls, _ = run(tmp_path, {"PARTS": "check proj logit", "CHECK_HOLDS": "proj-hf", "PROJ_ENGINE": "hf"})
+    assert proc.returncode == 4 and not any("--parts proj" in c for c in calls) and any("--parts logit" in c for c in calls)
+
+
+def test_proj_on_vllm_goes_on_after_a_missed_projection(tmp_path):
+    proc, calls, _ = run(tmp_path, {"PARTS": "check proj", "CHECK_HOLDS": "proj-hf"})
+    assert proc.returncode == 4 and any("--parts proj" in c and "--engine vllm" in c for c in calls)
+
+
+def test_a_held_check_isnt_paid_for_twice_and_a_later_job_keeps_the_hold(tmp_path):
+    proc, calls, _ = run(tmp_path, {"PARTS": "check proj logit"}, held="logit\n")
+    assert proc.returncode == 4
+    assert not any("read_check.py" in c for c in calls) and not any("--parts logit" in c for c in calls) and any("--parts proj" in c for c in calls)
+
+
+def test_a_job_that_doesnt_ask_for_the_check_keeps_the_hold_too(tmp_path):
+    proc, calls, _ = run(tmp_path, {"PARTS": "logit"}, held="logit\n")
+    assert proc.returncode == 4 and not any("--parts logit" in c for c in calls)
+
+
+def test_a_hold_on_one_part_doesnt_touch_a_job_on_another(tmp_path):
+    proc, calls, _ = run(tmp_path, {"PARTS": "proj"}, held="logit\n")
+    assert proc.returncode == 0 and any("--parts proj" in c for c in calls)
+
+
+@pytest.mark.parametrize("env, rc", [({"PROJ_RC": "3"}, 3), ({"PROJ_RC": "1"}, 1)], ids=["left", "error"])
+def test_episodes_left_or_an_error_outrank_a_hold(tmp_path, env, rc):
+    """Exit 3 says run it again, and that is still true of the rest while logit waits."""
+    proc, *_ = run(tmp_path, {"PARTS": "check proj logit", "CHECK_HOLDS": "logit", **env})
+    assert proc.returncode == rc
+
+
+@pytest.mark.parametrize("parts", ["logit check", "proj+check", "proj logit check"])
+def test_the_check_goes_before_the_parts_it_can_hold(tmp_path, parts):
+    proc, calls, _ = run(tmp_path, {"PARTS": parts})
+    assert proc.returncode == 1 and "check goes before" in proc.stdout and not any("read_run.py" in c for c in calls)
 
 
 def test_the_estimate_is_in_the_header():

@@ -4,7 +4,8 @@
 # A Slurm job that reads a run's exported episodes on one GPU: explore/interp/read_run.sh, as it is,
 # with WORK on scratch. submit_read.sh, on the laptop, puts the code and the episodes there first and
 # submits this. No server runs here and no episode runs: only the reader. Its exit code is the job's:
-# 3 means episodes are left, and submitting again resumes.
+# 3 means episodes are left, and submitting again resumes. 4 means the check missed a bar and a part is
+# held (read_run.sh): submitting again changes nothing.
 #
 # Required (sbatch --export): WORK. Optional: read_run.sh's settings (PARTS, PROJ_ENGINE, LAYERS,
 # SAE_LAYERS, TRANSFER_LAYERS, CHUNK_MIN, NO_SERVER_IDS). --export splits on commas and can't carry spaces, so

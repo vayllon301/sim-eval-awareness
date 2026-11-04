@@ -423,6 +423,15 @@ def test_noisy_kernels_show_in_the_comparison(tmp_path, vectors):
     assert 0 < out["projection_correlation"] < 1 and out["logprob_rms"] > 0.1
 
 
+def test_the_bars_read_compare_paths_real_rows(tmp_path, vectors):
+    a = checked(tmp_path, vectors, FakeBackend(), "vllm")
+    same = checked(tmp_path / "b" if (tmp_path / "b").mkdir() is None else None, vectors, FakeBackend(), "hf")
+    far = checked(tmp_path / "c" if (tmp_path / "c").mkdir() is None else None, vectors, noisy(FakeBackend(), 2.0), "hf")
+    assert RR.path_rule([RR.compare_paths(a, same)]) == {"missed": [], "held": []}
+    rule = RR.path_rule([RR.compare_paths(a, far)])
+    assert "logit" in rule["held"] and rule["missed"]
+
+
 def test_paths_on_different_tokens_arent_compared(tmp_path, vectors):
     a = checked(tmp_path, vectors, FakeBackend(), "a")
     with pytest.raises(RR.ReadError, match="same tokens"):

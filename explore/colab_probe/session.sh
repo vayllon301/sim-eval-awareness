@@ -402,6 +402,7 @@ if want read; then
       3) now=$(finished)
          if (( now <= before )); then note "read: a chunk finished nothing more (see $OUTDIR/read-$round.log)"; final=1; break; fi
          before=$now ;;
+      4) note "read: the check missed a bar and a part is held ($READ_DIR/readings/read-check-held.txt; docs/INTERP.md)"; final=1; break ;;
       *) note "read: exit $rc (see $OUTDIR/read-$round.log)"; final=1; break ;;
     esac
   done

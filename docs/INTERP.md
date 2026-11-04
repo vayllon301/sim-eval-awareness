@@ -776,8 +776,8 @@ with setup.
 ### What the first GPU run measures
 
 `PARTS=check` (`explore/interp/read_check.py`, about 15 minutes): the longest and the shortest episode
-on vLLM and on transformers, then transformers at another chunk size. `read-check.json` has the
-comparisons. The pass rules are a DRAFT, written before any of this has run:
+on vLLM and on transformers, then transformers at another chunk size. `read-check-diagnostics.json` has
+the comparisons, whatever they say. The pass rules are a DRAFT, written before any of this has run:
 
 | It measures | Passes when | If not |
 | --- | --- | --- |
@@ -787,6 +787,15 @@ comparisons. The pass rules are a DRAFT, written before any of this has run:
 | Chunk noise on the monitor: the same number, hf against hf-2048 | At most 0.5 | Fix one chunk size for every reading, and report the noise |
 | Kernel gap on projections: `projection_correlation` | At least 0.99 | Report it; `proj` stays on vLLM |
 | `/tokenize` against the rendering | Equal on every episode (`read_run.py` refuses otherwise) | Find why before any reading |
+
+`read-check.json` is the accepted check: it is written only when the three rows with a number are met on
+both episodes. A number that can't be had, such as a monitor that didn't move between turns, is a miss.
+On a miss there is no `read-check.json`, `compare` exits 4, and `read-check-held.txt` names the parts it
+touches, in the last column above. A miss on the monitor holds `logit`. A miss on the projections holds
+`proj` on hf. `proj` on vLLM and `transfer` go on: they read nothing the check found wrong. `read_run.sh`
+keeps the hold in later runs, since the file comes back with the readings, doesn't pay for the check
+again, and exits 4 once nothing else can run. No setting overrides a hold: the docs offer none, and what
+comes next is decided with Victor. To run the check again after that, delete the file.
 
 Also from that run: tokens/s against position, to replace the laptop's curve, and `timings.jsonl`.
 
