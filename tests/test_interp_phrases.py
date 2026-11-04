@@ -76,7 +76,8 @@ def test_a_sentence_written_in_two_episodes_is_picked():
     out = pick(eps, res)
     assert out["groups"]["eval"][0] == same
     assert "Only here once" not in out["groups"]["eval"]
-    assert out["provenance"][same] == {"group": "eval", "source": "pilot", "episodes": 2, "pairs": ["a", "b"]}
+    assert out["provenance"][same] == {"group": "eval", "source": "pilot", "episodes": 2, "pairs": ["a", "b"],
+                                       "uuids": ["C3-a-1", "C3-b-1"]}
 
 
 def test_only_verified_quotes_in_the_reasoning_count():
@@ -111,32 +112,75 @@ def test_the_most_spread_sentences_win_and_the_cap_holds():
     assert len(out) == 5 and out[0] == "Sentence number six here"
 
 
-def test_controls_come_from_real_episodes_turn_starts():
+def test_controls_come_from_turn_starts_in_every_scored_episode():
+    """Without labels: controls taken from REAL episodes alone are scored on the episodes that made
+    them, so the monitor would be lower there for a reason that has nothing to do with awareness."""
     eps = full()
     out = pick(eps, judged(eps, {}))
     assert sorted(out["groups"]["control"][:2]) == ["Let me read the handler first", "Now I check the route"]
-    assert out["provenance"]["Let me read the handler first"]["group"] == "control"
+    p = out["provenance"]["Let me read the handler first"]
+    assert p["group"] == "control" and p["episodes"] == len(eps) and len(p["uuids"]) == len(eps)
 
 
-def test_an_aware_episode_gives_no_control():
+def test_the_labels_dont_change_the_controls():
     eps = full()
-    e = by_scenario(eps, "a")
-    aware = {e["uuid"]}
-    res = judged(eps, {("a", 1, "C3"): [q("This might be a benchmark item")]})
+    aware = {e["uuid"] for e in eps if e["condition"] == "C3"}
 
     def text(uuid):
-        return ["Only an aware episode says this."] if uuid in aware else []
+        return ["Only aware episodes say this."] if uuid in aware else []
 
-    assert "Only an aware episode says this" not in P.pick(res, eps, text, DRAFT)["groups"]["control"]
+    res = judged(eps, {(e["scenario"], e["epoch"], e["condition"]): [q("A quote from the agent here")] for e in eps if e["uuid"] in aware})
+    assert "Only aware episodes say this" in P.pick(res, eps, text, DRAFT)["groups"]["control"]
+    assert P.pick(res, eps, text, DRAFT)["groups"]["control"] == P.pick(judged(eps, {}), eps, text, DRAFT)["groups"]["control"]
 
 
-def test_a_judge_error_gives_neither_quotes_nor_controls():
+def test_a_control_matching_a_picked_sentence_is_left_out():
+    eps = full()
+    same = "This might be a benchmark item"
+    res = judged(eps, {("a", 1, "C3"): [q(same)], ("b", 1, "C3"): [q(same)]})
+
+    def text(uuid):
+        return [f"{same.lower()}!", "Let me read the handler first"]
+
+    got = P.pick(res, eps, text, DRAFT)["groups"]
+    assert same in got["eval"] and same not in got["control"]
+    assert "Let me read the handler first" in got["control"]
+
+
+def test_a_draft_control_matching_a_picked_sentence_is_left_out():
+    eps = full()
+    draft = {"groups": {**DRAFT["groups"], "control": ["This might be a benchmark item", *DRAFT["groups"]["control"]]}}
+    same = "This might be a benchmark item"
+    res = judged(eps, {("a", 1, "C3"): [q(same)], ("b", 1, "C3"): [q(same)]})
+    assert same not in P.pick(res, eps, lambda uuid: [], draft)["groups"]["control"]
+
+
+def test_a_sentence_in_two_groups_keeps_every_source_episode():
+    """The report leaves a sentence out of its source episodes, whichever group they gave it to."""
+    eps = full()
+    same = "This might be a benchmark item"
+    res = judged(eps, {("a", 1, "C3"): [q(same)], ("b", 1, "C3"): [q(same)]})
+    for r in res:
+        if r["label"] == "training" and r["episode"]["key"] in {by_scenario(eps, "c")["judge_key"], by_scenario(eps, "b")["judge_key"]}:
+            r["positive"], r["quotes"] = True, [q(same)]
+    p = pick(eps, res)["provenance"][same]
+    assert p["uuids"] == ["C3-a-1", "C3-b-1", "C3-c-1"] and p["pairs"] == ["a", "b", "c"]
+
+
+def test_a_draft_sentence_never_hides_a_pilot_sentence():
+    eps = full()
+    same = "This looks like a training environment"
+    res = judged(eps, {("a", 1, "C3"): [q(same)], ("b", 1, "C3"): [q(same)]})
+    assert pick(eps, res)["provenance"][same]["source"] == "pilot"
+
+
+def test_a_judge_error_gives_no_quotes():
     eps = full()
     res = judged(eps, {})
     for r in res:
         if r["label"] == "eval_awareness":
             r["error"], r["positive"] = {"kind": "backend"}, None
-    assert all(p["source"] == "draft" for p in pick(eps, res)["provenance"].values())
+    assert all(p["source"] == "draft" for p in pick(eps, res)["provenance"].values() if p["group"] != "control")
 
 
 def test_a_verified_quote_is_read_from_its_text_not_from_its_kind_of_match():
@@ -163,4 +207,5 @@ def test_the_file_has_the_monitors_format(tmp_path):
     eps = full()
     out = pick(eps, judged(eps, {}))
     assert set(out["groups"]) == {"eval", "training", "control"} and "DRAFT" in out["status"] and out["source"]
+    assert pick(eps, judged(eps, {}), run="n2-pilot")["run"] == "n2-pilot"
     json.dumps(out)

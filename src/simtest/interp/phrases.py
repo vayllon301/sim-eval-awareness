@@ -8,11 +8,14 @@ mechanical pick from text alone, made before anyone sees a monitor's value on th
   episodes it labelled positive (eval_awareness, training). Each is cut to a clean sentence, near
   duplicates are one sentence, and a sentence needs 2 episodes. The ones in the most world pairs and
   episodes come first. Sentences that name code, paths or the scenario's own words are dropped.
-- Control group: the first sentences of reasoning turns, in scored episodes with both labels
-  negative: what the agent writes when it isn't aware, ranked the same way.
-- A group short of its minimum is filled from the draft file, in its order, marked `draft`.
-- `provenance` says where each sentence came from. The report uses it to score no sentence on a world
-  it came from alone (validate.py), since a sentence picked on an episode can't validate on it.
+- Control group: the first sentences of reasoning turns, in every scored episode, ranked the same way.
+  No label is read, so no episode's verdict decides what it is compared with. A sentence that matches a
+  picked eval or training sentence is left out.
+- A group short of its minimum is filled from the draft file, in its order, marked `draft`. The status
+  says how many of each group came from where.
+- `provenance` says where each sentence came from, with its source episodes' uuids, and `run` which run
+  it was picked on. The report scores no sentence on its own episodes or on a world it came from alone
+  (validate.py), since a sentence picked on an episode can't validate on it.
 """
 
 from __future__ import annotations
@@ -82,28 +85,30 @@ def pick(results: list[dict], episodes: list[dict], turn_texts: Callable[[str], 
                 for q in r.get("quotes") or []:
                     if q.get("status") == "verified" and q.get("part") == "reasoning":
                         _add(found[group], q["text"], e["uuid"], e["scenario"], banned)
-        if all(r and r.get("positive") is False and not r.get("error") for r in results_.values()):
-            for text in turn_texts(e["uuid"]):
-                _add(found["control"], text, e["uuid"], e["scenario"], banned)
+        for text in turn_texts(e["uuid"]):
+            _add(found["control"], text, e["uuid"], e["scenario"], banned)
     groups: dict[str, list[str]] = {}
     provenance: dict[str, dict] = {}
-    for group, cap in MAX.items():
-        picked = _rank(found[group], MIN_EPISODES)[:cap]
+    for group, cap in MAX.items():      # controls last: they leave out what the other groups picked
+        taken = {_key(t) for ts in groups.values() for t in ts}
+        picked = [x for x in _rank(found[group], MIN_EPISODES) if group != "control" or _key(x[0]) not in taken][:cap]
         groups[group] = [t for t, _ in picked]
         for t, v in picked:
-            provenance[t] = {"group": group, "source": "pilot", "episodes": len(v["episodes"]), "pairs": sorted(v["pairs"])}
+            old = provenance.get(t) or {"uuids": [], "pairs": []}      # in two groups: every source counts
+            uuids, pairs = sorted(v["episodes"] | set(old["uuids"])), sorted(v["pairs"] | set(old["pairs"]))
+            provenance[t] = {"group": group, "source": "pilot", "episodes": len(uuids), "pairs": pairs, "uuids": uuids}
         for t in draft["groups"].get(group, []):
             if len(groups[group]) >= MIN[group]:
                 break
-            if t not in groups[group]:
+            if t not in groups[group] and (group != "control" or _key(t) not in taken):
                 groups[group].append(t)
-                provenance[t] = {"group": group, "source": "draft", "episodes": 0, "pairs": []}
+                provenance.setdefault(t, {"group": group, "source": "draft", "episodes": 0, "pairs": [], "uuids": []})
     counts = {g: [sum(provenance[t]["source"] == where for t in groups[g]) for where in ("pilot", "draft")] for g in MAX}
     return {"status": "DRAFT rule, not frozen: " + "; ".join(f"{g} {p} from the pilot, {d} from the draft file"
                                                              for g, (p, d) in counts.items()),
             "source": f"The frozen judge's verified quotes on {run or 'the pilot'} (simtest interp phrases, docs/INTERP.md), "
                       "filled from the draft file where a group is short.",
-            "groups": groups, "provenance": provenance}
+            "run": run, "groups": groups, "provenance": provenance}
 
 
 def reasoning_turns(episode) -> list[str]:
