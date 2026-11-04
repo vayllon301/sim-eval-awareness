@@ -195,3 +195,36 @@ def test_fp8_skips_that_match_no_module_are_dropped(tmp_path):
     cfg.quantization_config = {"quant_method": "fp8", "modules_to_not_convert": ["lm_head"]}
     cfg.save_pretrained(tmp_path)
     assert fp8_config_without_phantom_skips(tmp_path) is None   # nothing to cut: the checkpoint's own config
+
+
+def test_one_scan_matches_token_losses_at_every_stop(backend):
+    """The logit monitor's path: one pass over the episode, each continuation forked at its stop."""
+    b = backend
+    ids = ids_of(b)
+    conts = [ids_of(b, "the tests"), ids_of(b, "a"), ids_of(b, "nobody has looked")]
+    stops = [10, 40, 41, 90]
+    out = b.continuation_scan(ids, stops, conts, chunk=16)
+    assert sorted(out) == stops
+    for p in stops:
+        assert [x.shape for x in out[p]] == [(len(c),) for c in conts]
+        for c, x in zip(conts, out[p]):
+            np.testing.assert_allclose(x, -b.token_losses(ids[:p] + c)[-len(c):], rtol=1e-3, atol=1e-3)
+            np.testing.assert_allclose(x, b.continuation_logprobs(ids[:p], [c])[0], rtol=1e-3, atol=1e-3)
+
+
+def test_a_continuation_leaves_no_trace_in_the_scan(backend):
+    b = backend
+    ids = ids_of(b)
+    long = ids_of(b, "a much longer continuation that should not stay in the cache")
+    alone = b.continuation_scan(ids, [60], [ids_of(b, "the")])[60][0]
+    after = b.continuation_scan(ids, [30, 60], [long, ids_of(b, "the")])[60][1]
+    np.testing.assert_allclose(alone, after, rtol=1e-4, atol=1e-4)
+
+
+def test_a_scan_needs_a_prefix_and_tokens(backend):
+    with pytest.raises(ValueError, match="stop"):
+        backend.continuation_scan(ids_of(backend), [0], [[1]])
+    with pytest.raises(ValueError, match="stop"):
+        backend.continuation_scan([1, 2, 3], [9], [[1]])
+    with pytest.raises(ValueError, match="continuation"):
+        backend.continuation_scan(ids_of(backend), [5], [[]])

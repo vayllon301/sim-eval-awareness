@@ -19,9 +19,13 @@ Conventions every backend honours (docs/INTERP.md, "Backend interface"):
 - `generate` is greedy (argmax) and stops at an end-of-turn token or `max_tokens`.
 - Optional: `continuation_logprobs(prefix_ids, continuations) -> list[np.ndarray]`, the
   per-token log-probs (nats) of each continuation after one prefix, the prefix computed
-  once. The logit monitor (monitors.py) uses it when present, and otherwise falls back to
-  one `token_losses` pass per continuation. The HF backend implements it with a prefix
-  cache; the MLX and vLLM backends don't.
+  once. The HF backend implements it with a prefix cache.
+- Optional: `continuation_scan(ids, stops, continuations) -> {stop: list[np.ndarray]}`, the
+  same at each position in `stops` (a prefix length, 0 < stop <= len(ids)), in one pass over
+  `ids`: each continuation runs from a fork of the cache at its stop, so the whole
+  episode's logit monitor costs one pass plus a short pass per turn and phrase. The HF and
+  MLX backends implement it. The logit monitor (monitors.py) prefers it, then
+  `continuation_logprobs`, then one `token_losses` pass per continuation (the vLLM backend).
 """
 
 from __future__ import annotations
@@ -88,6 +92,19 @@ def check_adds(steer: Sequence[Add], n_layers: int, d_model: int) -> dict[int, n
             raise ValueError(f"steering delta has shape {a.delta.shape}, expected ({d_model},)")
         out[a.layer] = out.get(a.layer, 0) + a.delta.astype(np.float32)
     return out
+
+
+def check_scan(ids: Sequence[int], stops: Sequence[int],
+               continuations: Sequence[Sequence[int]]) -> tuple[list[int], list[int], list[list[int]]]:
+    """`continuation_scan`'s arguments as plain ints, stops sorted and unique."""
+    ids = [int(i) for i in ids]
+    stops = sorted({int(p) for p in stops})
+    if stops and not 0 < stops[0] <= stops[-1] <= len(ids):
+        raise ValueError(f"every stop must be in 1..{len(ids)}, got {stops}")
+    conts = [[int(i) for i in c] for c in continuations]
+    if not conts or not all(conts):
+        raise ValueError("every continuation needs at least one token")
+    return ids, stops, conts
 
 
 def encode(tokenizer: Any, text: str) -> list[int]:

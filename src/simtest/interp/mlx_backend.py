@@ -19,7 +19,7 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-from .backend import Add, Replace, check_adds, check_layers
+from .backend import Add, Replace, check_adds, check_layers, check_scan
 from .meta import hf_revision, quantization, tokenizer_info, weights_fingerprint
 
 
@@ -176,6 +176,42 @@ class MLXBackend:
                     break
                 logits = self.lm(mx.array([[t]]), cache=cache)
         return new
+
+    def continuation_scan(self, ids, stops, continuations, *, chunk: int = 1024) -> dict[int, list[np.ndarray]]:
+        """Per-token log-probs (nats) of each continuation after ids[:stop], for every stop, in one
+        pass over `ids`. A continuation grows the cache and is taken back: attention layers are
+        trimmed, and linear-attention layers get their arrays back (MLX arrays are immutable)."""
+        import mlx.core as mx
+
+        ids, stops, conts = check_scan(ids, stops, continuations)
+        cache = self.model.make_cache()
+        out: dict[int, list[np.ndarray]] = {}
+        logits, at = None, 0
+        for stop in stops:
+            while at < stop:
+                b = min(at + chunk, stop)
+                logits = self.lm(mx.array(ids[at:b])[None], cache=cache)[0, -1].astype(mx.float32)
+                mx.eval(logits, self._states(cache))
+                at = b
+            first = logits - mx.logsumexp(logits)
+            row = []
+            for c in conts:
+                lp = [float(first[c[0]].item())]
+                if len(c) > 1:
+                    saved = [(x, list(x.cache)) for x in cache if hasattr(x, "cache")]
+                    step = self.lm(mx.array(c[:-1])[None], cache=cache)[0].astype(mx.float32)
+                    ls = step - mx.logsumexp(step, axis=-1, keepdims=True)
+                    pick = mx.take_along_axis(ls, mx.array(c[1:])[:, None], axis=-1)[:, 0]
+                    mx.eval(pick)
+                    lp += np.array(pick).tolist()
+                    for x in cache:
+                        if hasattr(x, "trim") and x.is_trimmable():
+                            x.trim(len(c) - 1)
+                    for x, state in saved:
+                        x.cache = state
+                row.append(np.asarray(lp, dtype=np.float64))
+            out[stop] = row
+        return out
 
     def close(self) -> None:
         """Drop the weights and clear MLX's buffer cache."""

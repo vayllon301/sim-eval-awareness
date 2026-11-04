@@ -13,6 +13,7 @@ from simtest.interp import directions as D
 from simtest.interp.backend import encode
 from simtest.interp.fake import FakeBackend
 from simtest.interp.meta import file_sha256
+from simtest.interp import monitors as M
 from simtest.interp.monitors import logit_monitor, reasoning_starts
 from simtest.interp.reader import (R, Reading, colab_probe_prompts, from_colab_probe, read, render, summarize,
                                    turn_prompts)
@@ -159,3 +160,50 @@ def test_the_phrase_file():
     b = FakeBackend()
     out = logit_monitor(b, *rendered(b), g, turns=[0])
     assert len(out["phrases"]) == sum(map(len, g.values())) and out["by_turn"][0]["eval_minus_control"] is not None
+
+
+# --- one pass over the episode: the cached path that makes the monitor affordable ------------------
+
+class ScanBackend(FakeBackend):
+    """A fake with `continuation_scan`, checked against `token_losses`; counts its calls."""
+
+    def __init__(self):
+        super().__init__()
+        self.scans = []
+
+    def continuation_scan(self, ids, stops, continuations):
+        self.scans.append(list(stops))
+        return {p: [-self.token_losses([*ids[:p], *c])[-len(c):] for c in continuations] for p in stops}
+
+
+def test_the_monitor_makes_one_scan_over_the_episode_when_the_backend_can():
+    b = ScanBackend()
+    ids, role, turn = rendered(b)
+    out = logit_monitor(b, ids, role, turn, GROUPS)
+    assert out["path"] == "continuation_scan"
+    starts = reasoning_starts(role, turn)
+    assert b.scans == [[starts[t] for t in range(4)]]
+    plain = logit_monitor(FakeBackend(), ids, role, turn, GROUPS)
+    for a, c in zip(out["by_turn"], plain["by_turn"]):
+        assert a["prefix_len"] == c["prefix_len"]
+        assert a["groups"]["eval"]["logprob"] == pytest.approx(c["groups"]["eval"]["logprob"])
+
+
+def test_the_scan_helper_falls_back_on_one_prefix_at_a_time():
+    b = FakeBackend()
+    ids, role, turn = rendered(b)
+    pids = [encode(b.tokenizer, "Let me"), encode(b.tokenizer, "So")]
+    out = M.continuation_scan(b, ids, [40, 90], pids)
+    assert sorted(out) == [40, 90]
+    for p in (40, 90):
+        for c, x in zip(pids, out[p]):
+            np.testing.assert_allclose(x, -b.token_losses([*ids[:p].tolist(), *c])[-len(c):])
+
+
+def test_a_turn_without_reasoning_needs_no_scan():
+    b = ScanBackend()
+    ids, role, turn = rendered(b)
+    no_reasoning = role.copy()
+    no_reasoning[no_reasoning == R["reasoning"]] = R["content"]
+    out = logit_monitor(b, ids, no_reasoning, turn, GROUPS)
+    assert b.scans == [] and all(row["phrases"] is None for row in out["by_turn"])

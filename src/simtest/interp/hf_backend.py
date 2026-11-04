@@ -18,7 +18,8 @@ sequences run in chunks with the model's own cache. `generate` copies the way
 `model.generate` calls the model (one pass over the prompt with `logits_to_keep=1`, then
 one token at a time, with an all-ones attention mask), so unhooked output is
 token-identical to transformers' own greedy generation. `continuation_logprobs` runs the
-prefix once and scores each continuation from a copy of its cache.
+prefix once and scores each continuation from a copy of its cache; `continuation_scan` does
+that at every stop of one pass over an episode, from a fork of the cache (`fork_cache`).
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-from .backend import Add, Replace, check_adds, check_layers
+from .backend import Add, Replace, check_adds, check_layers, check_scan
 from .meta import hf_revision, load_fingerprint, quantization, tokenizer_info, versions
 
 
@@ -53,6 +54,24 @@ def decoder(model):
     if not hasattr(inner, "layers"):
         raise ValueError(f"can't find the decoder layers of {type(model).__name__}")
     return inner
+
+
+def fork_cache(cache):
+    """A copy of a transformers cache that one continuation can extend and then drop. Attention keys
+    and values stay shared: an update makes new tensors and never writes to these, and copying them
+    would move gigabytes per phrase on a long episode. What an update writes in place, the states of
+    a linear-attention layer, is cloned; they don't grow with the episode."""
+    import torch
+
+    fork = copy.copy(cache)
+    fork.layers = []
+    for layer in cache.layers:
+        new = copy.copy(layer)
+        for name, value in vars(layer).items():
+            if isinstance(value, dict):
+                setattr(new, name, {k: v.clone() if torch.is_tensor(v) else v for k, v in value.items()})
+        fork.layers.append(new)
+    return fork
 
 
 def eos_ids(model, tokenizer) -> frozenset[int]:
@@ -262,6 +281,32 @@ class HFBackend:
                     ls = torch.log_softmax(o.logits[0].float(), -1)
                     lp += ls[torch.arange(len(c) - 1), torch.tensor(c[1:], device=ls.device)].cpu().tolist()
                 out.append(np.asarray(lp, dtype=np.float64))
+        return out
+
+    def continuation_scan(self, ids, stops, continuations, *, chunk: int = 4096) -> dict[int, list[np.ndarray]]:
+        """Per-token log-probs (nats) of each continuation after ids[:stop], for every stop, in one
+        pass over `ids`: at each stop each continuation runs from a fork of the cache."""
+        import torch
+
+        ids, stops, conts = check_scan(ids, stops, continuations)
+        out: dict[int, list[np.ndarray]] = {}
+        cache, logits, at = None, None, 0
+        with torch.inference_mode():
+            for stop in stops:
+                while at < stop:
+                    b = min(at + chunk, stop)
+                    o = self.model(input_ids=self._ids(ids[at:b]), past_key_values=cache, use_cache=True, logits_to_keep=1)
+                    cache, logits, at = o.past_key_values, o.logits[0, -1].float(), b
+                first = torch.log_softmax(logits, -1)
+                row = []
+                for c in conts:
+                    lp = [float(first[c[0]])]
+                    if len(c) > 1:
+                        o = self.model(input_ids=self._ids(c[:-1]), past_key_values=fork_cache(cache), use_cache=True)
+                        ls = torch.log_softmax(o.logits[0].float(), -1)
+                        lp += ls[torch.arange(len(c) - 1), torch.tensor(c[1:], device=ls.device)].cpu().tolist()
+                    row.append(np.asarray(lp, dtype=np.float64))
+                out[stop] = row
         return out
 
     def close(self) -> None:
