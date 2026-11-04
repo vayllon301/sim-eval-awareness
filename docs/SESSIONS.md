@@ -28,20 +28,27 @@ MIX=c3 ADMIT_FOR=14 explore/colab_probe/session.sh configs/coding/pilot.yaml 180
 
 One VM session does all of a config's GPU work, so the setup is paid once (741 s in session 4):
 
-1. Checks first: the preflight, a clean tree, the env file, the equivalence contexts, free ports
-   18000 and 18001, a readable balance. Any failure means no VM.
+1. Checks first: the preflight, a clean tree, the env file, the equivalence contexts, the bake-off's
+   recording, free ports 18000 and 18001, a readable balance. A session with episodes or the setup
+   check refuses `SIM_QUANT=fp8`, and episodes without a passed check are refused. Any failure means
+   no VM.
 2. Creates the VM (or attaches session `SESSION` if it exists), and starts the watchdog with the
    cap (the second argument, in units).
-3. Runs `serve.sh` once with the given `MIX` (required: `c3` or `default`), opens the tunnel and
-   waits for both `/v1/models`.
-4. Runs the steps in `STEPS`, always in this order (default: `run equiv`; `ids`, `readings` and `read` run
-   when named):
-   - `run`: `simtest run`, with `EPOCHS`, `ADMIT_FOR` and `CARRY_UNDER` passed on. If the run is
-     incomplete (exit 3), it says so and goes on.
-   - `equiv`: `simtest equiv score` on the contexts, one request at a time and 12 at once
-     (BACKENDS.md). It runs after the episodes, so they don't share its batches. With no
-     contexts file yet, it first builds one from this run's logs (`simtest equiv contexts`).
-     Keep that file: every backend is scored on the same contexts.
+3. Runs `serve.sh` once with the given `MIX` (required: `c3` or `default`) and the simulator's scheme
+   by name, opens the tunnel and waits for both `/v1/models`.
+4. Runs the steps in `STEPS`, always in this order (default: `setup run`; `equiv`, `ids`, `readings`
+   and `read` run when named):
+   - `setup`: the simulator's setup check (BACKENDS.md, "The setup check"), before any episode: the
+     server's scheme lines, the `simtest equiv` noise floors of both models, one forced bake-off
+     pass at 12 at once with its speed. Anything but PASS stops the session here. A PASS on this
+     commit and backend stays in `logs/setup/`, so a resumed session doesn't pay for it twice.
+   - `run`: the gate first (a PASS on this commit, and this server's lines show the scheme; it writes
+     the scheme to `logs/<name>/backend.jsonl`), then `simtest run`, with `EPOCHS`, `ADMIT_FOR` and
+     `CARRY_UNDER` passed on. If the run is incomplete (exit 3), it says so and goes on.
+   - `equiv` (only when named): `simtest equiv score` on the contexts, one request at a time and 12
+     at once (BACKENDS.md). The setup step already scores them for a run, so this is for a session
+     without episodes. Build the contexts first (`simtest equiv contexts`), and keep them: every
+     backend is scored on the same contexts.
    - `ids`: `simtest interp export`, then `simtest interp server-ids`: the run's episodes for the
      reader, and the token IDs of the agent server's own renderer for each one. It needs the servers
      up, no GPU time, and it changes no episode. It takes a minute or two.
@@ -54,13 +61,14 @@ One VM session does all of a config's GPU work, so the setup is paid once (741 s
    `$WORK/probe` and the smoke test's outputs come back first; a read's come back after each chunk.
 
 Everything goes to `logs/sessions/<name>-<UTC time>/`: `watchdog.log`, `serve.log`, `tunnel.log`,
-`probe/`, `equiv-c1.jsonl` and `equiv-c12.jsonl`, `readings.log` and `interp-smoke/`. The script
-exits 0 when every step passed, 3 when the run is incomplete and nothing failed, and 1 otherwise.
+`server.txt`, `probe/`, `readings.log` and `interp-smoke/`. The setup check goes to
+`logs/setup/<name>-<GPU>-<commit>/`. The script exits 0 when every step passed, 3 when the run is
+incomplete and nothing failed, and 1 otherwise.
 
 **The cap and `ADMIT_FOR`.** If the cap stops the VM in the middle of a run, the running episodes
 are cut. They come back as re-runs, and since long episodes are cut most often, the re-runs favour
 short ones. Set `ADMIT_FOR` so that admissions stop while the cap still leaves room for the longest
-episode: (cap / 10.05) − setup − longest episode, in hours.
+episode: (cap / 10.05) − setup − the setup check (about 0.4 h) − longest episode, in hours.
 
 ## 3. The watchdog: `explore/colab_probe/watchdog.sh`
 
@@ -91,24 +99,31 @@ SBATCH_ARGS="--partition=... --account=..." explore/hopper/submit_chunks.sh CONF
 explore/hopper/run_chunks.sh logs/hopper/<name>-<time>.jobs
 ```
 
+Build the setup check's contexts first (BACKENDS.md). `submit_chunks.sh` refuses without them, and
+refuses `SIM_QUANT=fp8`.
+
 - `submit_chunks.sh` runs on the laptop. It calls `simtest plan --json` to split the run into
   chunks of epochs, one per job, and submits `explore/hopper/serve.slurm` once per chunk with
-  `--dependency=afterany:<previous>`. If a submission fails, it cancels the jobs it already
-  submitted.
+  `--dependency=afterany:<previous>` and the simulator's scheme by name. If a submission fails, it
+  cancels the jobs it already submitted.
 - `serve.slurm` asks for `--gres=gpu:2`. It runs `serve.sh`'s two-gpu profile (one model per card,
   both at 128K) and refuses any other profile. It keeps the servers up until the job ends. It writes
-  `status/<job id>` next to `serve.sh` on the cluster: the node, the state, and the job's end time.
+  `status/<job id>` next to `serve.sh` on the cluster (the node, the state, and the job's end time),
+  and `status/<job id>.server`, the server's scheme lines.
 - `run_chunks.sh` runs on the laptop. For each chunk, it waits until the job is ready, opens the
-  tunnel to the node through the login host, waits for both servers, runs `simtest run --epochs
-  <chunk> --admit-for <hours>`, then cancels the job so the next one starts. With `EQUIV=1`, it
-  runs `simtest equiv score` on the first job's servers before any episode, as the pilot asks for
-  a backend other than the G4. When it exits, it cancels every job in the file, unless `KEEP=1`.
+  tunnel to the node through the login host, waits for both servers, and reads the job's scheme
+  lines. On the first usable job it runs the setup check before any episode (BACKENDS.md), which
+  scores `simtest equiv` as the pilot asks. Anything but PASS stops everything. Every chunk then
+  passes the gate on its own job's lines, runs `simtest run
+  --epochs <chunk> --admit-for <hours>`, and cancels the job so the next one starts. When it exits,
+  it cancels every job in the file, unless `KEEP=1`.
 
 The job's time limit, the login host, the partition and the scratch path are unknown, so they are
 parameters only. A job killed at its time limit cuts the episodes still running, so `--admit-for`
 must leave room for the longest one. The plan keeps `TIME_LIMIT − SETUP_HOURS − admit_for` hours of
 room. `run_chunks.sh` keeps the same room before the job's real end: if the servers come up late,
-the window shrinks, and a chunk with no room left is skipped and submitted again later.
+or the setup check takes time from the first job, the window shrinks, and a chunk with no room left
+is skipped and submitted again later.
 
 ## 5. Reading a run on the GPU
 
@@ -124,7 +139,7 @@ The steps come from `explore/interp/read_run.sh`, on a Colab VM or a Hopper node
 
 ```bash
 # with the episodes: read the projections while the VM is up
-STEPS="run equiv ids read" READ_VECTORS=logs/interp/... MIX=c3 ADMIT_FOR=14 explore/colab_probe/session.sh configs/coding/pilot.yaml 180
+STEPS="setup run ids read" READ_VECTORS=logs/interp/... MIX=c3 ADMIT_FOR=14 explore/colab_probe/session.sh configs/coding/pilot.yaml 180
 # after the judge: a short second session
 STEPS=read READ_PARTS="logit transfer" READ_PHRASES=<file> MIX=c3 explore/colab_probe/session.sh configs/coding/pilot.yaml 12
 # Hopper
@@ -153,9 +168,9 @@ LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." V
   (`tests/test_read_run_script.py`, `test_session_script.py`). `read_run.py` has run on the laptop's MLX
   on real logs.
 - **Equivalence memory.** Prompt log-probs may need more memory than the servers leave free
-  (BACKENDS.md, "Practicalities"). If `equiv` runs out of memory, run it again alone:
-  `STEPS=equiv AGENT_MEM=... SIM_MEM=...` (`session.sh` passes both to `serve.sh`). Never run
-  episodes with them: other fractions mean another KV cache.
+  (BACKENDS.md, "Practicalities"). If the setup check's `equiv` runs out of memory, run the check
+  alone: `STEPS=setup AGENT_MEM=... SIM_MEM=...` (`session.sh` passes both to `serve.sh`), then
+  `STEPS=run` without them. Never run episodes with them: other fractions mean another KV cache.
 - **Untested on the real systems.** None of these scripts has run against Colab or Slurm yet:
   only against stubs (`tests/test_watchdog_script.py`, `test_session_script.py`,
   `test_hopper_scripts.py`) and in dry runs.

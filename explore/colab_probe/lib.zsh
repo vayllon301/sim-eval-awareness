@@ -6,6 +6,9 @@ zmodload zsh/datetime zsh/mathfunc
 
 COLAB=(colab --auth adc)
 NUM='^[0-9]+([.][0-9]+)?$'
+# The simulator's one scheme from the pilot on (LOG.md, 02-11-2026): serve.sh's default. The session
+# scripts name it to serve.sh, and refuse any other for the setup check and for episodes.
+SIM_SCHEME=fp8_per_channel
 
 say() { print -r -- "$(date -u +%H:%M:%S) $*"; }
 
@@ -91,6 +94,50 @@ preflight_problems() {
     ran=$(head -1 $ok | tr -d '[:space:]')
     [[ $ran == $head ]] || print -r -- "the preflight ($ok) passed on ${ran:-nothing}, not on HEAD $head: run it again"
   fi
+}
+
+# The simulator's setup check (explore/sim_quant.py, docs/BACKENDS.md). SETUP_DIR holds one commit's
+# check on one backend, so a pass here never counts for another commit or another backend, and a
+# failed check stays as it is.
+# setup_dir CONFIG_NAME BACKEND COMMIT: the default SETUP_DIR.
+setup_dir() { print -r -- ${LOGS:-logs}/setup/$1-$2-${3[1,12]}; }
+
+# setup_verdict: PASS, FAIL or INCOMPLETE from SETUP_DIR's check.json; nothing if it has none.
+setup_verdict() { sed -n -E 's/^ *"verdict": "([A-Z]+)".*/\1/p' $SETUP_DIR/check.json 2>/dev/null | head -1; }
+
+# setup_problems: why the check couldn't run, one reason per line (nothing if it has passed already).
+setup_problems() {
+  [[ $(setup_verdict) != PASS ]] || return 0
+  [[ -f ${EQUIV_CONTEXTS:-} ]] \
+    || print -r -- "no contexts at ${EQUIV_CONTEXTS:-(none)}: build them with 'uv run simtest equiv contexts' (docs/BACKENDS.md)"
+  python3 -I explore/sim_quant.py recording --bakeoff ${BAKEOFF:-${LOGS:-logs}/bakeoff}
+}
+
+# setup_step LABEL SERVER_FILE: the check on the servers behind the tunnel, before any episode. The
+# lines first, so a wrong server costs no GPU time. A step that fails doesn't skip the verdict: the
+# check says why. A pass on this commit and backend isn't paid for twice. Its status is the verdict's.
+setup_step() {
+  if [[ $(setup_verdict) == PASS ]]; then
+    say "setup check: passed already, on this commit and backend ($SETUP_DIR)"
+    return 0
+  fi
+  [[ ${DRY_RUN:-} == 1 ]] || mkdir -p $SETUP_DIR
+  x cp $2 $SETUP_DIR/server.txt
+  if x uv run python -I explore/sim_quant.py lines --server $SETUP_DIR/server.txt; then
+    x uv run simtest equiv score ${EQUIV_CONTEXTS:-} --agent-url http://localhost:18000/v1 \
+      --simulator-url http://localhost:18001/v1 --concurrency 1 12 --out $SETUP_DIR/equiv \
+      --label "$1, $SIM_SCHEME" --force
+    x uv run python -I explore/sim_quant.py fidelity --out $SETUP_DIR --bakeoff ${BAKEOFF:-${LOGS:-logs}/bakeoff}
+  fi
+  x uv run python -I explore/sim_quant.py check --out $SETUP_DIR
+}
+
+# gate WHERE SERVER_FILE: before each simtest run: the check passed, and this server shows the scheme
+# (a new VM or job is a new server). It writes the scheme to the run's record, logs/<name>/backend.jsonl.
+gate() {
+  local args=(--out $SETUP_DIR --server $2 --run-log ${LOGS:-logs}/$name --where $1)
+  [[ ${SPEED_OK:-} != 1 ]] || args+=(--speed-ok)
+  x uv run python -I explore/sim_quant.py gate $args
 }
 
 # The Colab balance in units, or a failure (the command failed, or no balance in its output).

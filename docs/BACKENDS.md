@@ -1,14 +1,13 @@
 # Backends: serving the models, and checking two backends agree
 
 Every condition of an experiment runs on one backend: the same weights, quantization, engine,
-chat template and settings. The simulator adds one more: its FP8 MoE scales activations per
-tensor over the whole batch ([`INTERP.md`](INTERP.md), "GPU backends"), so its output depends on
-what else shares the batch. How many episodes run at once (`max_connections`) is part of the
-backend too.
+chat template and settings. The simulator adds one more: its output depends on what else shares
+the batch ([below](#the-simulators-quantization-fp8_per_channel)). How many episodes run at once
+(`max_connections`) is part of the backend too.
 
 This page covers how `explore/colab_probe/serve.sh` serves both models on each GPU we may get, how
 `simtest equiv` checks whether two backends compute the same models before work moves between
-them, and the measurement that decides between the simulator's two FP8 schemes.
+them, the simulator's FP8 scheme, and the setup check that runs before a run's first episode.
 How a whole session runs (the preflight, `session.sh`, the watchdog, Hopper's chunked jobs) is in
 [`SESSIONS.md`](SESSIONS.md).
 
@@ -31,18 +30,23 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
   uses.
 - `EAGER=1` serves on the steering engine's settings (N4). `AGENT_MEM`, `SIM_MEM`, `AGENT_LEN`,
   `SIM_LEN` and `MAX_SEQS` override the profile.
-- `SIM_QUANT` is `fp8` (the default, every episode so far) or `fp8_per_channel`; nothing else is
-  accepted. `SIM_ONLY=1` restarts the simulator alone next to a running agent (it stops only the
-  simulator of the same `WORK`). Both are for the
-  measurement [below](#the-simulators-quantization-fp8-or-fp8_per_channel).
+- `SIM_QUANT` is `fp8_per_channel` (the default, in every condition and phase from the pilot on) or
+  `fp8` (by name only, with a warning: every session before the pilot, for reproducing those).
+  Nothing else is accepted. [Below](#the-simulators-quantization-fp8_per_channel).
+- `session.sh` and `submit_chunks.sh` always name `fp8_per_channel` to `serve.sh`. They refuse `fp8`
+  for the setup check and for episodes, even if it is left over in the shell.
+- `$WORK/probe/server.txt` holds what the setup check reads: the GPU, the simulator's served line,
+  what vLLM says it quantized and the MoE kernel it chose.
+- `SIM_ONLY=1` restarts the simulator alone next to a running agent (it stops only the simulator of
+  the same `WORK`).
 - **80 GB, one card.** The agent's weights and its KV cache at 128K don't fit next to the
   simulator, so both models get 64K. Long C3 episodes can pass 64K: session 5's largest simulator
   call was 69K tokens. Those calls then fail with a context-length error. An experiment on this
   profile runs every condition on it, and its episodes never mix with the G4's.
 - `DRY_RUN=1` prints the profile and both `vllm serve` lines, and does nothing else. `GPU_MIB`
-  and `GPU_COUNT` stand in for `nvidia-smi`. `tests/test_serve_script.py` pins the G4's lines to
-  the ones the script used before Hopper support, and checks the dry run against what the script
-  really starts.
+  and `GPU_COUNT` stand in for `nvidia-smi`. `tests/test_serve_script.py` pins `SIM_QUANT=fp8`'s G4
+  lines to the ones the script used before Hopper support, byte for byte, pins the default as the
+  same lines with the new scheme, and checks the dry run against what the script really starts.
 
 ```bash
 # what a machine would serve (on the laptop: no GPU needed)
@@ -86,7 +90,7 @@ of the recorded token and the backend's top-1 token.
 
 **The noise floor.** The same server, scored one request at a time and then N at a time, gives
 different numbers, because requests share batches. That is the reference backend's own noise. It
-is measured with the same contexts at `--concurrency 1 12`.
+is measured with the same contexts at `--concurrency 1 12`, in every setup check.
 
 ```bash
 # contexts from saved episodes (logs/ is not in git: contexts hold transcripts)
@@ -102,8 +106,8 @@ uv run simtest equiv compare logs/equiv/g4-c1.jsonl logs/equiv/hopper-c1.jsonl -
 ```
 
 **Pass rule (DRAFT, 02-11-2026; to be frozen in the log before the first check).** For each model,
-the gap between the two backends, both scored one request at a time, is no bigger than the G4's own
-batching noise (one at a time against 12 at once) on the same contexts:
+both backends on the same scheme, the gap between them, both scored one request at a time, is no
+bigger than the reference's own batching noise (one at a time against 12 at once) on the same contexts:
 
 - mean absolute difference in log-prob: the gap's is no larger than the noise's;
 - top-1 agreement: the gap's is no lower than the noise's.
@@ -137,15 +141,16 @@ Practicalities (unmeasured; check on the first run):
 Code: `src/simtest/equiv.py`. Tests: `tests/test_equiv.py` (mocked servers, including one whose
 numbers drift with the number of requests in flight).
 
-## The simulator's quantization: fp8 or fp8_per_channel
+## The simulator's quantization: fp8_per_channel
 
-The simulator ships bf16 weights, and vLLM quantizes them at load. The scheme is chosen
-before the pilot (LOG.md, 02-11-2026): it changes the simulator in every condition, so the pilot
-and N3 must use the same one. The rule is to adopt `fp8_per_channel` only if it is no worse.
+The simulator ships bf16 weights, and vLLM quantizes them at load. It runs `fp8_per_channel` in
+every condition and phase from the pilot on: episodes (`EAGER=1` too), vectors, steering and
+readings (Victor, LOG.md, 02-11-2026). Every session before the pilot ran `fp8`, and those numbers
+stay labelled as development. The agent doesn't change: it is its own FP8 checkpoint.
 
 **What each one does** (vLLM v0.32.0 source, checked 02-11-2026; paths under `vllm/`):
 
-| | `fp8` (default) | `fp8_per_channel` |
+| | `fp8` (every session before the pilot) | `fp8_per_channel` (from the pilot on; `serve.sh`'s default) |
 | --- | --- | --- |
 | Name | deprecated alias of `fp8_per_tensor` (`model_executor/model_loader/weight_utils.py:351-358`) | an online shorthand (`config/quantization.py:201-206`) |
 | Dense layers (attention `qkv_proj`, `o_proj`; GDN `in_proj_qkvz`, `in_proj_ba`, `out_proj`; the shared expert) | one weight scale for the whole merged projection; activations per token (`model_executor/layers/quantization/online/fp8.py:204-262`) | one weight scale per output channel; activations per token (`online/fp8.py:391-454`) |
@@ -174,79 +179,145 @@ and N3 must use the same one. The rule is to adopt `fp8_per_channel` only if it 
 - No seed is sent, at temperature 0.6, so a rerun samples other tokens anyway.
 
 What `fp8_per_channel` removes is the systematic part: under `fp8`, a bigger batch has a larger
-maximum, so every token's MoE activations are rounded to a coarser grid.
+maximum, so every token's MoE activations are rounded to a coarser grid. Its expected cost, from the
+source and not measured: about the same speed (same kernels and tile settings, only the scale loads
+differ), and about 0.12 GB of scales.
 
-### The measurement, in the pilot session's first hour
+### The setup check, before a run's first episode
 
-On the reference G4, before any episode, one setting after the other (both simulators don't fit
-next to the agent). `fp8` goes first: if `fp8_per_channel` is adopted, no restart is needed.
+`explore/sim_quant.py` checks that the session really serves the final scheme and that it works. It
+isn't a comparison: no `fp8` pass runs. `session.sh`'s `setup` step and `run_chunks.sh` run it on the
+laptop, through the tunnel, before any episode, in this order:
+
+1. **The server's scheme lines.** `serve.sh` writes them to `$WORK/probe/server.txt`: the GPU, the
+   simulator's served line, and what vLLM says it quantized and which MoE kernel it chose. They come
+   first, so a wrong server costs no GPU time.
+2. **The noise floors.** `simtest equiv score --concurrency 1 12`, both models, the 30 contexts of
+   sessions 4 and 5.
+3. **One forced bake-off pass at 12 at once.** Each of the 84 recorded steps is predicted from the
+   real history (LOG.md, 26-10-2026), with `bakeoff_score.py`'s scores. While it runs, the server's
+   `/metrics` gives the tokens per second with 12 running and none waiting. The graded fidelity
+   (`simtest.post.fidelity`) is reported, and is not in the rule.
+4. **The rule.** `sim_quant.py check` writes `check.json`. Exit 0 PASS, 1 FAIL, 2 INCOMPLETE.
+
+Before each `simtest run`, on every VM and every Hopper job, `sim_quant.py gate` runs the last check.
+A PASS on this commit must exist, this server's own lines must show the scheme, and its GPU must be
+the check's. Then it appends one line to the run's record, `logs/<name>/backend.jsonl`: the scheme,
+the served line, the GPU, the commit and the check's numbers. If the gate refuses, no episode starts.
 
 ```bash
 # before the session, on the laptop (offline): the contexts from sessions 4 and 5
 uv run simtest equiv contexts logs/colab-g4-s5-c3r logs/colab-g4-s5-c3b2 logs/colab-g4-s4-flows --out logs/equiv/contexts.jsonl
-mkdir -p logs/simquant/fp8 logs/simquant/fp8_per_channel
-# the session's usual setup: serve.sh with MIX=c3 (fp8), the tunnel; no episodes yet
-SIM_LINES="grep -h -E \"Quantizing|Fp8 MoE backend|Selected .* for Fp8\" /content/probe/simulator.log; grep -- \"--served-model-name simulator\" /content/probe/versions.txt | tail -1"
-# 1. fp8: the server's lines, the noise floor of both models, fidelity and speed
-eval "$SSH '$SIM_LINES'" > logs/simquant/fp8/server.txt
-uv run simtest equiv score logs/equiv/contexts.jsonl --agent-url http://localhost:18000/v1 \
-    --simulator-url http://localhost:18001/v1 --concurrency 1 12 --out logs/simquant/equiv/fp8 --label "G4, session N, fp8"
-uv run python -I explore/sim_quant.py fidelity fp8
-# 2. fp8_per_channel: restart the simulator alone (the agent keeps serving), then the same
-eval "$SSH 'MIX=c3 SIM_QUANT=fp8_per_channel SIM_ONLY=1 bash -s'" < explore/colab_probe/serve.sh
-eval "$SSH '$SIM_LINES'" > logs/simquant/fp8_per_channel/server.txt
-uv run simtest equiv score logs/equiv/contexts.jsonl --simulator-url http://localhost:18001/v1 \
-    --concurrency 1 12 --out logs/simquant/equiv/fp8_per_channel --label "G4, session N, fp8_per_channel"
-uv run python -I explore/sim_quant.py fidelity fp8_per_channel
-# 3. the rule; if it keeps fp8 (KEEP or INCOMPLETE), restart the simulator as fp8 before the episodes
-uv run python -I explore/sim_quant.py decide
-eval "$SSH 'MIX=c3 SIM_ONLY=1 bash -s'" < explore/colab_probe/serve.sh
+# the session runs the check itself, then the episodes
+MIX=c3 ADMIT_FOR=14 explore/colab_probe/session.sh configs/coding/pilot.yaml 180 2>&1 | tee /tmp/session.log
 ```
 
-- **Fidelity:** the bake-off's forced mode (LOG.md, 26-10-2026): each of the 84 recorded steps
-  predicted from the real history, one sample each, 12 requests at once. `sim_quant.py` scores it
-  with `bakeoff_score.py`, and with the graded fidelity (`simtest.post.fidelity`) if the checkout
-  has it; that one is reported, not in the rule.
-- **Batching noise:** `simtest equiv`'s noise floor of the simulator, 1 against 12 at once, for each
-  setting. The agent's floor under `fp8` is kept too: it is the reference for a later move to Hopper.
-- **Speed:** generation tokens per second with 12 running and none waiting, from the server's
-  `/metrics`, during each fidelity pass. The agent is idle then, so episodes will be slower.
-- **Cost:** about 45 minutes of the G4, so about 7.5 units at 10.05 an hour (7–9): two forced
-  passes of 14–18 minutes each (the 29-10 pass's 339K generated tokens replayed through 12 slots at
-  400–500 tokens a second), a few minutes of `equiv` per setting, about 4 minutes per simulator
-  restart, and 4 more if it reverts to `fp8`. An `equiv` request that runs a server out of memory
-  (above) adds a restart of both servers, about 1 unit.
-- **Not covered:** the noise floor batches prefills only, and decoding is where `fp8`'s shared scale
-  differs most between 1 and 12 at once, so the measured reduction is a lower bound. One sample
-  per step can catch a broken quantization, not a difference of a few thousandths. Triton's
-  per-channel path has never run on our sm_120: the first startup is its test.
+It needs `logs/equiv/contexts.jsonl` and the pinned recording in `logs/bakeoff/`; the scripts refuse
+to start without them. Its files stay in `logs/setup/<name>-<backend>-<commit>/` (`SETUP_DIR`), so a
+pass is never used for another commit or another backend, and a resumed session doesn't pay for it
+twice.
 
-**Decision rule (DRAFT, 02-11-2026; frozen in LOG.md before the run).** `fp8_per_channel` is
-adopted for the pilot and N3, in every condition and phase, if all of these hold. Otherwise `fp8`
-is kept.
-1. **Fidelity:** on the 81 deterministic forced steps, its mean similarity is at least `fp8`'s
-   minus 0.02, and at most 3 of its 84 steps hit the 16K cap (the 29-10-2026 rule). 0.02 is about
-   2 standard errors of the paired difference between two forced passes: 0.0097, from the MLX
-   (26-10) and G4 (29-10) runs. That pair also differed in quantization and engine, so it is an
-   upper bound on the run-to-run spread.
-2. **Batching noise:** the simulator's mean |difference in log-prob|, 1 against 12 at once, is lower
-   than under `fp8`, with the 95% paired bootstrap interval of the difference below zero, and its
-   top-1 agreement is no lower.
-3. **Complete evidence:** both passes predicted the bake-off's recording (pinned by its hash) and
-   scored exactly its 84 steps, none with an error; the four score files come from the simulator
-   server on vLLM 0.32.0, each `--label` ends with its setting, and they cover the same simulator
-   contexts with the same token IDs; each server shows its scheme on every quantized layer and the
-   Triton MoE. Otherwise the verdict is INCOMPLETE, and the pilot keeps `fp8`.
+**Cost:** about 25 minutes of the G4, so about 4 units at 10.05 an hour: 14–18 minutes for the forced
+pass (the 29-10 pass's 339K generated tokens through 12 slots at 400–500 tokens a second) and a few
+minutes of `equiv`. This is an estimate, not a measurement. An `equiv` request that runs a server out
+of memory (above) stops the session; run the check alone with `STEPS=setup AGENT_MEM=... SIM_MEM=...`,
+then `STEPS=run`.
 
-Speed never decides. If `fp8_per_channel` is adopted at under 0.9 of `fp8`'s tokens per second
-(or its speed is missing), the rescaled budget is confirmed before the episodes.
+**The rule (frozen in LOG.md before the pilot).** No `fp8` pass runs in the session, so the bars are
+fixed numbers from earlier sessions. PASS needs all four:
 
-**The pin at 12, under each outcome:**
-- `fp8` kept: 12 at once for every condition and session, as now.
-- `fp8_per_channel` adopted: still 12 for the pilot and N3 (the batch dependence above remains).
-  Another number at once, for example on Hopper, needs a `simtest equiv` check recorded in LOG.md
-  first: the noise floor at 1 against N no larger than at 1 against 12, for both models. Under
-  `fp8` that check isn't offered: a bigger batch coarsens the simulator's MoE.
+1. **Scheme.** The served line says `--quantization fp8_per_channel --moe-backend triton`, every
+   quantized layer kind says `fp8_per_channel_static`, and the MoE kernel is `TRITON`.
+2. **Fidelity.** On the 81 deterministic forced steps, the mean similarity is at least 0.892. That is
+   0.912 (the G4's forced pass of 29-10-2026, on `fp8`, 8 at once) minus 0.02, about 2 standard errors
+   of the paired difference between two forced passes (0.0097). That pair also differed in backend,
+   so it is an upper bound on the run-to-run spread.
+3. **Truncation.** At most 3 of the 84 steps hit the 16K cap (the 29-10-2026 rule; that pass had 0).
+4. **Complete evidence.** The pass predicted the bake-off's recording (pinned by its hash) and scored
+   exactly its 84 steps, none with an error. Both `equiv` files exist, come from the agent and
+   simulator servers on vLLM 0.32.0, have a label ending in the scheme, used the same contexts file at
+   1 and at 12 at once, and score every context of both models on identical token IDs. The server's
+   lines are all there.
 
-Code: `explore/sim_quant.py`. Tests: `tests/test_sim_quant.py`, and the options in
-`tests/test_serve_script.py`.
+The verdicts:
+- **FAIL:** a line shows another scheme or kernel, or bar 2 or 3 is missed.
+- **INCOMPLETE:** bar 4 is missed, so the evidence isn't there.
+- Either way **no episode runs, and the session stops**: `session.sh` stops the VM, and `run_chunks.sh`
+  cancels every job.
+
+The noise floors have no bar on their size. The old bar was "lower than under `fp8`", and no `fp8`
+floor was ever measured, so there is nothing to hold them against. They are recorded as this
+backend's reference. A broken quantization shows in bars 1 and 2.
+
+Speed never decides. Under 405 tokens per second at 12 at once, or with no speed at all, the episodes
+wait until Victor confirms the rescaled budget. 405 is 0.9 of 450, the middle of the 400–500 the
+02-11 estimate used for this pass. After he confirms, the same command with `SPEED_OK=1` starts them,
+and the record keeps that. `KEEP=1` keeps the VM or the jobs for that restart.
+
+**On a failure:**
+- **It never falls back to `fp8`.** Going back would be a new decision in LOG.md, with the thesis's
+  chapter 4 and the OSF text following it.
+- **INCOMPLETE:** fix what is missing and run the same command. The floors are scored again, and the
+  forced pass keeps its finished steps.
+- **FAIL:** Victor decides. The check stays where it is, and the scripts refuse to run on it. A new
+  check, after a fix, runs on the new commit or in a new `SETUP_DIR`, and both are reported.
+- **No re-sampling past a bar.** Bar 2 is about 2 standard errors, so about 1 clean setup in 40 misses
+  it by chance. With clean lines and no cause found, Victor may ask for one more pass, reported beside
+  the first.
+
+**The pin:** `max_connections` stays 12 in the pilot and N3, on every backend. Another number at once
+would be a new decision, with a `simtest equiv` check recorded in LOG.md first: the noise floor at 1
+against N no larger than at 1 against 12, for both models.
+
+**What it can't show:**
+- That `fp8_per_channel` lowered the batch noise. There is no `fp8` floor, so that claim rests on the
+  source (no batch-wide maximum is left), not on a measurement.
+- The noise floor batches prefills only, and decoding is where `fp8`'s shared scale differed most.
+- One sample per step can catch a broken quantization, not a difference of a few thousandths.
+- That fidelity equals `fp8`'s. Bar 2 crosses schemes and 8 against 12 at once: it is a floor against
+  a broken setup.
+- The episodes' speed. The forced prompts are short and the agent is idle, so episodes will be
+  slower. 405 is a rough bar.
+- Triton's per-channel path has never run on our sm_120 or sm_90: the first startup is its test.
+
+### Hopper, and what a check against the G4 can claim
+
+Everything above runs the same way on Hopper, with these differences:
+- The first usable job runs the check; every job has its own gate. A job on another GPU model than
+  the check's is refused, because that is another backend.
+- The check takes about 25 minutes from the first job. `run_chunks.sh` works out the admission window
+  after it, so the room for the longest episode stays. Add it to that job's `SETUP_HOURS` if you can.
+- Bar 2 and the 405 tokens per second are G4 numbers. The first is a floor, as above. The second is
+  about the plan: `simtest plan --durations` uses the G4's durations, so a lower rate means the
+  chunks are optimistic, and Victor confirms a new plan.
+- The MoE kernel on the H100 is read from the source and has never run (table above). If its log line
+  differs from the G4's, the check says INCOMPLETE or FAIL, and nothing is lost but the job's time.
+
+**What exists to compare with.** `simtest equiv` has never run on a GPU, so the G4 has no score files
+on any scheme. The simulator's G4 numbers (the forced pass, the rates, session 4's vectors, the episodes)
+are all on `fp8`. So a check of Hopper's simulator against them crosses the scheme as well as the
+hardware.
+
+| What the check is | What it can claim | What it can't claim |
+| --- | --- | --- |
+| Hopper's setup check alone | This backend serves the final scheme on the kernels named, fidelity isn't below the floor, and these are its own noise floors | That it computes what the G4 computes |
+| Bar 2 against the G4's 0.912 | Hardware and scheme together didn't break the simulator by more than about 0.02, at one sample per step | Which of the two moved it, or that either moved it by nothing. A miss doesn't say which either |
+| Token IDs on the same contexts | The same rendering (tokenizer and chat template), since this doesn't depend on the scheme | Anything about the arithmetic |
+| `equiv compare`, simulator, Hopper `fp8_per_channel` against any G4 `fp8` file | Nothing as a backend check. The gap includes the scheme by construction, because the weights are rounded differently. A pass would be weak too: the bar would be `fp8`'s noise, which we expect to be the larger | That the hardware is equivalent |
+| `equiv compare`, agent, Hopper against the G4 | The agent's scheme doesn't change, so this is a clean hardware check, once G4 scores exist. The near-zero floor caveat above still holds | Anything about the simulator |
+| `equiv compare`, simulator, both on `fp8_per_channel` | A clean hardware check, under the pass rule above | |
+
+**What each use needs:**
+- **The pilot and N3 on Hopper, all conditions:** no G4 comparison. Every condition runs on one
+  backend, so Hopper is the reference, and its setup check gives the floors. The pilot counts either
+  way.
+- **The simulator's G4 numbers:** none carry over. Session 4's vectors aren't reused (LOG.md,
+  02-11-2026), and the development numbers keep their "development" label.
+- **The agent's G4 numbers and vectors:** they carry over only after the clean agent check, which
+  needs G4 scores that don't exist yet.
+- **Moving work between the G4 and Hopper** (a pilot on one and N3 on the other): first score both
+  backends on `fp8_per_channel`. `STEPS=setup` on a G4 is about 25 minutes plus the VM's setup, so about
+  6 units (an estimate). It spends units, so it needs Victor's OK and a reason in the log.
+
+Code: `explore/sim_quant.py`. Tests: `tests/test_sim_quant.py`, and the scheme and the steps in
+`tests/test_serve_script.py`, `tests/test_session_script.py` and `tests/test_hopper_scripts.py`.

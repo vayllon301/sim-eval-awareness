@@ -67,7 +67,7 @@ CONFIGS = {
     # The chosen simulator on vLLM (Colab probe, N0): official weights, FP8 at load, served as "simulator".
     # One request per sequence at a time, all 8 sequences in parallel.
     "agentworld-think-vllm": dict(model="simulator", fmt="common", max_tokens=16384, params=AW, parallel=8),
-    # The same at 12 at once, the pilot's concurrency: fp8 against fp8_per_channel (N2, explore/sim_quant.py).
+    # The same at 12 at once, the pilot's concurrency: the simulator's setup check (explore/sim_quant.py).
     "agentworld-think-vllm12": dict(model="simulator", fmt="common", max_tokens=16384, params=AW, parallel=12),
 }
 REPO = "/home/dev/pricing-service"

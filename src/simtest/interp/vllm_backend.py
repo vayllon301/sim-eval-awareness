@@ -4,7 +4,7 @@ Both models run in FP8 on vLLM in every phase (LOG.md, 28-10-2026): episodes, ve
 steering and reading. This backend reads and steers inside the engine the episodes run on,
 so the reading path and the steering engine compute with the same FP8 weights by
 construction: the agent's official FP8 checkpoint, and the simulator's bf16 files quantized
-by vLLM at load (`quantization="fp8"`, per tensor in vLLM 0.32), which no other library
+by vLLM at load (`quantization="fp8_per_channel"`, from the pilot on), which no other library
 reproduces.
 
 vllm-lens (a vLLM plugin, docs/INTERP.md "Backend interface"):
@@ -103,7 +103,7 @@ def eos_ids(model_dir: Path, tokenizer) -> frozenset[int]:
 class VLLMBackend:
     def __init__(self, path: str | Path, *, quantization: str | None = None, engine: Mapping | None = None,
                  tokenizer=None, llm=None):
-        """`quantization` is vLLM's flag ("fp8" for the simulator, as `vllm serve` runs it);
+        """`quantization` is vLLM's flag ("fp8_per_channel" for the simulator, as `vllm serve` runs it);
         `engine` overrides ENGINE's settings; `llm` is an engine already built."""
         self.path = Path(path).expanduser()
         self.api = _api()

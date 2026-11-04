@@ -1,5 +1,6 @@
 # N2 pilot: the flows dev set (3 pairs) in C0, C3 and C2, 3 epochs, so 18 episodes per condition
-# and 54 in all, on the reference backend (vLLM 0.32.0, both models FP8; explore/colab_probe/serve.sh).
+# and 54 in all, on the reference backend (vLLM 0.32.0, both models FP8, the simulator quantized at
+# load as fp8_per_channel; explore/colab_probe/serve.sh).
 # Pilot episodes calibrate N3 (rates, the power calculation, the monitors). They are never evidence
 # for a comparison.
 #
@@ -17,6 +18,10 @@
 #   reported. An episode still unfinished runs on the next `simtest run` of this config.
 # - The harness from 17bddf1 on: role-confusion resampling, the HTTP client timeout, shielded
 #   cleanup. None of it has run on the reference backend.
+# - The simulator's scheme: fp8_per_channel in every condition (LOG.md, 02-11-2026), where session 5
+#   ran fp8. It is serve.sh's default; session.sh and submit_chunks.sh refuse fp8 for this run. The
+#   setup check (docs/BACKENDS.md) runs before any episode, and the gate writes the scheme to
+#   logs/n2-pilot/backend.jsonl.
 # - Serving: on a G4, MIX=c3 (agent 0.42, simulator 0.52). Session 5 ran 0.47 / 0.47, and the
 #   simulator's KV cache filled at about 13 at once (3 timeouts, all rerun). C0 episodes are short,
 #   so at any time most of the 12 in flight are C2 or C3 (C0 holds about 5% of the slot time); the
@@ -27,17 +32,19 @@
 #
 # 12 in flight in total: max_connections is the number of episodes running at once, over every
 # condition, and each model's connection limit. It is pinned at 12, session 5's concurrency
-# (flows_dev_c3.yaml), for every session of this experiment. The simulator's FP8 MoE scales its
-# activations per tensor over the whole batch (docs/INTERP.md), so its output depends on what else is
-# in the batch, and how many calls share a batch is part of the backend. With one queue every
-# condition shares the same batch mix: no condition runs in a batch environment of its own.
+# (flows_dev_c3.yaml), for every session of this experiment. fp8_per_channel removes the MoE's
+# batch-wide activation scale, but other batch dependence remains (Triton MoE tiles, attention splits,
+# prefill chunk boundaries; docs/BACKENDS.md), so how many calls share a batch is part of the backend.
+# With one queue every condition shares the same batch mix: no condition runs in a batch environment
+# of its own.
 # queue.jsonl in the log directory records the episodes running at each start, so this can be
 # checked per condition. 12 flows worlds also fit Docker on the laptop (3.7 of 7.7 GiB, measured
 # 31-10-2026).
 #
 # Before the GPU session: `simtest preflight configs/coding/pilot.yaml` runs all 54 episodes offline
 # (mock models, the real images and the same queue), and explore/colab_probe/session.sh refuses to
-# start a VM unless it passed on the current commit.
+# start a VM unless it passed on the current commit. The setup check needs logs/equiv/contexts.jsonl
+# and the bake-off's recording in logs/bakeoff/ on the laptop (docs/BACKENDS.md).
 #
 # Why 3 epochs: 18 per condition is "about 20". Cost on a G4, estimated with `simtest plan
 # configs/coding/pilot.yaml --durations explore/colab_probe/durations-g4.json --compare` (20,000
@@ -51,7 +58,9 @@
 #   161 units, as the 02-11 estimate (about 160).
 # - If 15% of attempts fail part way and are re-run (session 5's rate on the fixed timeouts: 3 of
 #   20), one queue takes about 14.4 h and 145 units (128-164); the old order took 25 h and 253.
-# - Hopper: no units; its hours are unmeasured (the first hour's simulator tokens per second tells).
+# - The setup check adds about 25 minutes, about 4 units (an estimate), once per commit and backend.
+#   It is not in the numbers above.
+# - Hopper: no units; its hours are unmeasured (the setup check's tokens per second tells).
 #   `simtest plan --time-limit H` splits the run into jobs of whole epochs.
 # The budget stop is set before the run (explore/colab_probe/watchdog.sh enforces it).
 #
@@ -110,9 +119,10 @@
 #   settings) needs a new kappa pass on the hand labels before it reads the pilot.
 # - The second judge's errors are reported the same way, with no gate.
 #
-# Equivalence: on a backend other than the G4, run simtest equiv in the same session, before the
-# episodes (docs/BACKENDS.md). It decides whether the G4's vectors and numbers carry over, not
-# whether the pilot counts: every pilot condition runs on one backend.
+# Equivalence: the setup check scores simtest equiv in the same session, before the episodes, on any
+# backend (docs/BACKENDS.md). On a backend other than the G4, it decides whether the agent's G4
+# vectors and numbers carry over, once G4 scores exist, not whether the pilot counts: every pilot
+# condition runs on one backend. The simulator's G4 numbers are on fp8, so none of them carry over.
 family: coding
 name: n2-pilot
 scenarios: [flows_audit, flows_audit_benign, flows_gitsync, flows_gitsync_benign, flows_cron, flows_cron_benign]

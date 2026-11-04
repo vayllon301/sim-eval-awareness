@@ -1,46 +1,55 @@
-"""Exploratory (N2): is the simulator served as fp8_per_channel no worse than as fp8 (per tensor)?
+"""Exploratory (N2): the simulator's setup check, on fp8_per_channel, before a run's first episode.
 
-Not part of the testbed, and not evidence for any comparison. The measurement for the first hour
-of the pilot session, before its episodes (docs/BACKENDS.md, "The simulator's quantization";
-LOG.md, 02-11-2026). It runs on the laptop through the tunnel, one setting after the other on the
-same GPU: serve.sh starts the simulator as fp8, and SIM_ONLY=1 SIM_QUANT=fp8_per_channel restarts it.
+Not part of the testbed, and not evidence for any comparison. The simulator runs fp8_per_channel in
+every condition and phase from the pilot on (LOG.md, 02-11-2026), and this checks that the session
+really serves it and that it works: docs/BACKENDS.md, "The setup check". session.sh and run_chunks.sh
+run it on the laptop, through the tunnel, before any episode:
 
-  fidelity SETTING   the bake-off's forced mode (explore/bakeoff_simulate.py, config
+  lines              the server's scheme lines, before any GPU time goes on the rest.
+  fidelity           the bake-off's forced mode (explore/bakeoff_simulate.py, config
                      agentworld-think-vllm12): each of the 84 steps predicted from the real history,
-                     12 requests at once, on the simulator now serving. Meanwhile it reads the
-                     server's /metrics every few seconds, for the generation speed at 12 at once.
-                     Then explore/bakeoff_score.py. Re-running resumes the missing or errored steps.
-  decide             reads both settings' fidelity, speed, `simtest equiv` noise floors and the
-                     servers' own lines, applies the DRAFT rule below, and writes decision.json.
+                     12 requests at once. Meanwhile it reads the server's /metrics every few seconds,
+                     for the generation speed at 12 at once. Then explore/bakeoff_score.py. Re-running
+                     resumes the missing or errored steps.
+  check              applies the rule below to the server's lines, the pass, the speed and the
+                     `simtest equiv` noise floors, and writes check.json. Exit: 0 PASS, 1 FAIL,
+                     2 INCOMPLETE.
+  gate               the last check before each `simtest run`: a PASS on this commit and these
+                     lines on this very server. Then it appends the scheme to the run's record,
+                     logs/<name>/backend.jsonl. Refused: exit 1, and no episode starts.
+  recording          whether the bake-off's recording is the pinned one (before a VM exists).
 
-    uv run python -I explore/sim_quant.py fidelity fp8 --out logs/simquant
-    uv run python -I explore/sim_quant.py decide --out logs/simquant
+    uv run python -I explore/sim_quant.py fidelity --out logs/setup/<dir>
+    uv run python -I explore/sim_quant.py check --out logs/setup/<dir>
 
-Files under --out (logs/ is not in git):
-  <setting>/real.jsonl, snapshot.txt   copies of logs/bakeoff/'s (the bake-off's recording, 26-10-2026)
-  <setting>/sim-agentworld-think-vllm12-forced.jsonl, scores.jsonl, scores.md   the pass and its scores
-  <setting>/speed.jsonl                /metrics samples
-  <setting>/server.txt                 from the VM: the simulator's served command line (versions.txt)
-                                       and its log's "Quantizing" and "Fp8 MoE backend" lines
-  equiv/<setting>-c1.jsonl, equiv/<setting>-c12.jsonl   `simtest equiv score --concurrency 1 12`
+Files under --out, one commit's check on one backend (logs/ is not in git):
+  server.txt                     serve.sh's lines: the GPU, the simulator's served line, what vLLM
+                                 says it quantized and the MoE kernel it chose
+  equiv-c1.jsonl, equiv-c12.jsonl    `simtest equiv score --concurrency 1 12`, both models
+  real.jsonl, snapshot.txt       copies of logs/bakeoff/'s (the bake-off's recording, 26-10-2026)
+  sim-agentworld-think-vllm12-forced.jsonl, scores.jsonl, scores.md   the pass and its scores
+  speed.jsonl                    /metrics samples
+  check.json                     the verdict, its numbers and the commit
 
-DRAFT decision rule (02-11-2026, written before any data; frozen in LOG.md before the run).
-fp8_per_channel is adopted for the pilot and N3 if all of these hold, and fp8 is kept otherwise:
-1. Fidelity: on the 81 deterministic forced steps, its mean similarity is at least fp8's minus 0.02,
-   and at most 3 of its 84 steps hit the 16K cap (the 29-10-2026 equivalence rule). 0.02 is about
-   2 standard errors of the paired difference between two forced passes: 0.0097, from the MLX
-   (26-10) and G4 (29-10) runs, an upper bound since those also differ in quantization and engine.
-2. Batching noise: the simulator's `simtest equiv` noise floor (1 against 12 at once) has a lower
-   mean |difference in log-prob| than fp8's, with the 95% paired bootstrap interval of the
-   difference (per channel minus per tensor, over contexts) below zero, and its top-1 agreement
-   is no lower.
-3. Complete evidence: both passes predicted the pinned bake-off recording and scored exactly its
-   steps, none with an error; the four score files come from the simulator server on vLLM 0.32.0,
-   are labelled with their setting, and cover the same simulator contexts with the same token IDs;
-   each server's lines show its scheme on every quantized layer and the Triton MoE kernel. If not,
-   the verdict is INCOMPLETE and the pilot keeps fp8.
-Speed never decides. If fp8_per_channel is adopted and makes fewer than 0.9 of fp8's tokens per
-second at 12 at once (or its speed is missing), the rescaled budget is confirmed first.
+The rule (LOG.md, frozen before the pilot; the same text is in docs/BACKENDS.md). No fp8 pass runs in
+the session, so the bars are fixed numbers from earlier sessions. PASS needs all of these:
+1. Scheme: the served line says --quantization fp8_per_channel --moe-backend triton, every quantized
+   layer kind says fp8_per_channel_static, and the MoE kernel is TRITON.
+2. Fidelity: on the 81 deterministic forced steps, the mean similarity is at least 0.892: 0.912 (the
+   G4's 29-10-2026 pass, on fp8) minus 0.02, about 2 standard errors of the paired difference between
+   two forced passes (0.0097). That pair also differed in backend, so it is an upper bound.
+3. Truncation: at most 3 of the 84 steps hit the 16K cap (the 29-10-2026 rule; that pass had 0).
+4. Complete evidence: the pass predicted the pinned bake-off recording and scored exactly its steps,
+   none with an error; both `equiv` files are from vLLM 0.32.0 on the right servers, labelled with the
+   scheme, on the same contexts file, at 1 and 12 at once, for both models, every context on identical
+   token IDs; the server's lines are all there.
+FAIL: a line shows another scheme or kernel, or bar 2 or 3 is missed. INCOMPLETE: 4 is missed.
+Either way no episode runs, and the simulator never falls back to fp8 by itself.
+The noise floors have no bar on their size: no fp8 floor was ever measured, so there is nothing to
+hold them against. They are recorded as this backend's reference.
+Speed never decides. Under 405 tokens per second at 12 at once (0.9 of 450, the middle of the rates
+behind the 02-11 estimate), or with no speed at all, the episodes wait until Victor confirms the
+rescaled budget (SPEED_OK=1).
 """
 from __future__ import annotations
 
@@ -48,7 +57,6 @@ import argparse
 import hashlib
 import importlib
 import json
-import math
 import os
 import re
 import shutil
@@ -63,28 +71,33 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CONFIG = "agentworld-think-vllm12"     # explore/bakeoff_simulate.py: the G4 bake-off config at 12 at once
-SETTINGS = ("fp8", "fp8_per_channel")  # serve.sh's SIM_QUANT
+SCHEME = "fp8_per_channel"             # serve.sh's default: the only one episodes run on, from the pilot on
 AT_ONCE = 12                           # the pilot's max_connections
 VLLM_VERSION = "0.32.0"                # serve.sh's pin
+MODELS = ("agent", "simulator")
 # The bake-off's recording (logs/bakeoff/, 26-10-2026: 84 steps, 81 deterministic), which every
-# forced pass so far predicted: both settings must predict exactly it.
+# forced pass so far predicted.
 RECORDING = {"real.jsonl": "c5fe28a1c815d83ca5515dd2bb15c1747bbb316bc0ceaaedbe24f83f422a6f46",
              "snapshot.txt": "2bfe511a49d10e4a1b4d52e897a94263662d1bb8a84c30fb2dfd95f53457e6b0"}
+# The bars. logs/bakeoff-g4/ (29-10-2026; fp8, 8 at once): mean similarity 0.9124 on the 81
+# deterministic steps, 0 steps at the cap, 0 errors.
+REFERENCE_SIM = 0.912
 SIM_TOLERANCE = 0.02
+SIM_FLOOR = round(REFERENCE_SIM - SIM_TOLERANCE, 6)
 MAX_TRUNCATED = 3
+REFERENCE_TOK_S = 450.0                # the middle of the 400-500 the 02-11 estimate used for this pass
 SPEED_CONFIRM = 0.90
 
-# What each setting's server must show: its served line, the scheme of every quantized layer, the MoE kernel.
-EXPECT = {
-    "fp8": {"flag": re.compile(r"--quantization fp8(?=\s|$)"), "scheme": "fp8_per_tensor_static"},
-    "fp8_per_channel": {"flag": re.compile(r"--quantization fp8_per_channel --moe-backend triton(?=\s|$)"),
-                        "scheme": "fp8_per_channel_static"},
-}
+# What the server must show: its served line, the scheme of every quantized layer, the MoE kernel.
+_FLAG = re.compile(r"--quantization fp8_per_channel --moe-backend triton(?=\s|$)")
+_LAYER_SCHEME = "fp8_per_channel_static"
 _QUANTIZING = re.compile(r"Quantizing (\d+) layers of types: (.*)")
 _SCHEME = re.compile(r"\(from (?:linear|moe|targets): (?:[^,)]*, )?([A-Za-z0-9_]+)\)")
+_MOE = re.compile(r"Using (\w+) Fp8 MoE backend")
+_GPU = re.compile(r"^gpu: (.+)$", re.M)
 
 
-# --- the servers' own lines -----------------------------------------------------------------------
+# --- the server's own lines -----------------------------------------------------------------------
 
 
 def layer_count(text: str) -> int | None:
@@ -92,25 +105,41 @@ def layer_count(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def server_check(text: str, setting: str) -> list[str]:
-    """Problems with a setting's server.txt: the simulator's served line, the scheme vLLM reports
-    for every quantized layer kind, and the MoE kernel it chose."""
-    want, problems = EXPECT[setting], []
+def gpu_name(text: str) -> str | None:
+    m = _GPU.search(text)
+    return m.group(1).strip() if m else None
+
+
+def served_line(text: str) -> str | None:
     served = [x for x in text.splitlines() if "--served-model-name simulator" in x]
-    if not served:
-        problems.append(f"{setting}: no simulator command line in server.txt")
-    elif not want["flag"].search(served[-1]):
-        problems.append(f"{setting}: the served simulator line is not {want['flag'].pattern.split('(?=')[0]}")
+    return served[-1] if served else None
+
+
+def server_check(text: str) -> tuple[list[str], list[str]]:
+    """(missing, wrong) from server.txt: the simulator's served line, the scheme vLLM reports for
+    every quantized layer kind, the MoE kernel it chose, and the GPU. Missing is a line that isn't
+    there; wrong is a line that shows something else."""
+    missing, wrong = [], []
+    served = served_line(text)
+    if served is None:
+        missing.append("no simulator command line in server.txt")
+    elif not _FLAG.search(served):
+        wrong.append(f"the served simulator line is not --quantization {SCHEME} --moe-backend triton")
     m = _QUANTIZING.search(text)
     if not m:
-        problems.append(f"{setting}: no 'Quantizing ... layers' line from the simulator's log")
+        missing.append("no 'Quantizing ... layers' line from the simulator's log")
     else:
         schemes = _SCHEME.findall(m.group(2))
-        if not schemes or set(schemes) != {want["scheme"]}:
-            problems.append(f"{setting}: layers quantized as {sorted(set(schemes))}, not only {want['scheme']}")
-    if "Using TRITON Fp8 MoE backend" not in text:
-        problems.append(f"{setting}: the simulator's MoE kernel is not TRITON")
-    return problems
+        if not schemes or set(schemes) != {_LAYER_SCHEME}:
+            wrong.append(f"layers quantized as {sorted(set(schemes))}, not only {_LAYER_SCHEME}")
+    moe = _MOE.findall(text)
+    if not moe:
+        missing.append("no MoE backend line from the simulator's log")
+    elif set(moe) != {"TRITON"}:
+        wrong.append(f"the simulator's MoE kernel is {sorted(set(moe))}, not TRITON")
+    if gpu_name(text) is None:
+        missing.append("no GPU line in server.txt")
+    return missing, wrong
 
 
 # --- speed (vLLM's /metrics) -----------------------------------------------------------------------
@@ -153,9 +182,9 @@ def speed(samples: list[dict], at: int = AT_ONCE, interval: float = 5.0) -> dict
             "overall_tok_s": total_tokens / total_time if total_time else None}
 
 
-def _poll(url: str, path: Path, interval: float, stop: threading.Event, setting: str) -> None:
+def _poll(url: str, path: Path, interval: float, stop: threading.Event, scheme: str) -> None:
     with path.open("a") as f:
-        f.write(json.dumps({"t": time.time(), "start": True, "setting": setting, "url": url}) + "\n")
+        f.write(json.dumps({"t": time.time(), "start": True, "scheme": scheme, "url": url}) + "\n")
         while True:
             try:
                 with urllib.request.urlopen(f"{url.rstrip('/')}/metrics", timeout=10) as r:
@@ -175,15 +204,15 @@ def _ours(rows: list[dict]) -> dict:
     return {(r["seq"], r["step"]): r for r in rows if r.get("config") == CONFIG and r.get("mode") == "forced"}
 
 
-def recording_check(d: Path, setting: str) -> list[str]:
-    """Problems if a setting's copy of the recording isn't the pinned bake-off recording."""
+def recording_check(d: Path) -> list[str]:
+    """Problems if a directory's copy of the recording isn't the pinned bake-off recording."""
     problems = []
     for name, sha in RECORDING.items():
         path = d / name
         if not path.exists():
-            problems.append(f"{setting}: {name} is missing")
+            problems.append(f"{path}: {name} is missing")
         elif hashlib.sha256(path.read_bytes()).hexdigest() != sha:
-            problems.append(f"{setting}: {name} is not the bake-off's recording (sha256 {sha[:12]}...)")
+            problems.append(f"{path}: {name} is not the bake-off's recording (sha256 {sha[:12]}...)")
     return problems
 
 
@@ -209,49 +238,37 @@ def fidelity_summary(rows: list[dict], real_keys: list[tuple]) -> dict:
             "steps_with_tells": sum(bool(r.get("tells")) for r in mine)}
 
 
-def paired(rows_a: list[dict], rows_b: list[dict]) -> dict:
-    """b minus a, per deterministic step both scored: mean and standard error."""
-    a, b = _ours(rows_a), _ours(rows_b)
-    d = [b[k]["sim"] - a[k]["sim"] for k in a if k in b and not a[k].get("nondet")]
-    return {"n": len(d), "mean": statistics.fmean(d) if d else None,
-            "se": statistics.stdev(d) / math.sqrt(len(d)) if len(d) > 1 else None}
-
-
-def graded_fidelity(out: Path) -> dict:
-    """The graded per-step fidelity (simtest.post.fidelity, branch n2-fidelity) on both passes, if
-    this checkout has it. Reported, not part of the rule. In forced mode the simulator was given the
-    snapshot and every earlier real output, so those count as given."""
+def graded_fidelity(d: Path) -> dict:
+    """The graded per-step fidelity (simtest.post.fidelity) of the pass. Reported, not part of the
+    rule. In forced mode the simulator was given the snapshot and every earlier real output, so
+    those count as given."""
     try:
         fid = importlib.import_module("simtest.post.fidelity")
         sys.path.insert(0, str(HERE))
         import bakeoff_simulate as bs
-        result = {"available": True}
-        for s in SETTINGS:
-            d = out / s
-            real = _lines(d / "real.jsonl")
-            sims = _ours(_lines(d / f"sim-{CONFIG}-forced.jsonl"))       # the last attempt of a step, as scored
-            nondet = {k for k, r in _ours(_lines(d / "scores.jsonl")).items() if r.get("nondet")}
-            system = bs.system_prompt("common", (d / "snapshot.txt").read_text())
-            by_seq: dict[str, list[dict]] = {}
-            for r in real:
-                by_seq.setdefault(r["seq"], []).append(r)
-            grades = []
-            for seq, steps in by_seq.items():
-                for i, r in enumerate(steps):
-                    key = (seq, r["step"])
-                    if key in nondet or key not in sims:
-                        continue
-                    sim = sims[key]
-                    seen = "" if sim.get("error") or sim.get("finish") == "length" else sim["output"]
-                    ctx = fid.Context(system + "".join("\n" + e["output"] for e in steps[:i]), "C3")
-                    for e in steps[:i]:
-                        ctx.add(e["command"], "")
-                    grades.append(fid.grade_step(r["command"], r["output"], seen,
-                                                 ctx.for_step(r["command"], r["output"]))["grade"])
-            result[s] = {"n": len(grades), "counts": dict(Counter(grades)),
-                         "faithful": sum(g in fid.FAITHFUL for g in grades) / len(grades) if grades else None}
-        return result
-    except Exception as exc:    # not on this branch, or its interface changed: reported as unavailable
+        real = _lines(d / "real.jsonl")
+        sims = _ours(_lines(d / f"sim-{CONFIG}-forced.jsonl"))       # the last attempt of a step, as scored
+        nondet = {k for k, r in _ours(_lines(d / "scores.jsonl")).items() if r.get("nondet")}
+        system = bs.system_prompt("common", (d / "snapshot.txt").read_text())
+        by_seq: dict[str, list[dict]] = {}
+        for r in real:
+            by_seq.setdefault(r["seq"], []).append(r)
+        grades = []
+        for seq, steps in by_seq.items():
+            for i, r in enumerate(steps):
+                key = (seq, r["step"])
+                if key in nondet or key not in sims:
+                    continue
+                sim = sims[key]
+                seen = "" if sim.get("error") or sim.get("finish") == "length" else sim["output"]
+                ctx = fid.Context(system + "".join("\n" + e["output"] for e in steps[:i]), "C3")
+                for e in steps[:i]:
+                    ctx.add(e["command"], "")
+                grades.append(fid.grade_step(r["command"], r["output"], seen,
+                                             ctx.for_step(r["command"], r["output"]))["grade"])
+        return {"available": True, "n": len(grades), "counts": dict(Counter(grades)),
+                "faithful": sum(g in fid.FAITHFUL for g in grades) / len(grades) if grades else None}
+    except Exception as exc:    # its interface changed, or nothing to grade: reported as unavailable
         return {"available": False, "why": f"{type(exc).__name__}: {exc}"[:300]}
 
 
@@ -267,88 +284,96 @@ def _floor(g: dict | None) -> dict | None:
 
 
 def noise(out: Path) -> dict:
-    """The simulator's noise floor (1 against 12 at once) under each setting, from the four
-    `simtest equiv score` files; the gap between the settings at 1 at once; fp8's agent floor."""
+    """Each model's noise floor (1 against 12 at once), from the two `simtest equiv score` files."""
     from simtest import equiv as Q
 
-    paths = {(s, c): out / "equiv" / f"{s}-c{c}.jsonl" for s in SETTINGS for c in (1, AT_ONCE)}
+    paths = {c: out / f"equiv-c{c}.jsonl" for c in (1, AT_ONCE)}
     missing = [f"{p.name}: missing" for p in paths.values() if not p.exists()]
     if missing:
         return {"problems": missing}
-    files = {k: Q.read_scores(p) for k, p in paths.items()}
+    files = {c: Q.read_scores(p) for c, p in paths.items()}
     problems = []
     for key in ("contexts_sha256", "top_k", "max_tokens"):
         if len({json.dumps(h.get(key)) for h, _ in files.values()}) > 1:
             problems.append("the files were scored on different contexts files" if key == "contexts_sha256"
                             else f"the files were scored with different {key}")
-    for (s, c), (h, _) in files.items():
-        name, srv = paths[(s, c)].name, (h.get("servers") or {}).get("simulator") or {}
+    for c, (h, _) in files.items():
+        name = paths[c].name
         if h.get("concurrency") != c:
             problems.append(f"{name}: scored at concurrency {h.get('concurrency')}, not {c}")
-        if srv.get("served_model") != "simulator" or "simulator" not in (srv.get("models") or []):
-            problems.append(f"{name}: the server scored as the simulator served {srv.get('models')}")
-        if srv.get("version") != VLLM_VERSION:
-            problems.append(f"{name}: scored on vLLM {srv.get('version')}, not {VLLM_VERSION}")
         label = h.get("label") or ""
-        if label != s and not label.endswith(f", {s}"):
-            problems.append(f"{name}: its label {label!r} doesn't end with the setting ({s})")
-    sim = {k: [r for r in rows if r.get("model") == "simulator"] for k, (_, rows) in files.items()}
-    if len({frozenset(r["id"] for r in rows) for rows in sim.values()}) > 1:
-        problems.append("the files score different simulator contexts")
-    gaps = {"fp8": Q.gap(sim[("fp8", 1)], sim[("fp8", AT_ONCE)]).get("simulator"),
-            "fp8_per_channel": Q.gap(sim[("fp8_per_channel", 1)], sim[("fp8_per_channel", AT_ONCE)]).get("simulator"),
-            "cross_c1": Q.gap(sim[("fp8", 1)], sim[("fp8_per_channel", 1)]).get("simulator")}
-    for name, g in gaps.items():
+        if label != SCHEME and not label.endswith(f", {SCHEME}"):
+            problems.append(f"{name}: its label {label!r} doesn't end with the scheme ({SCHEME})")
+        for m in MODELS:
+            srv = (h.get("servers") or {}).get(m) or {}
+            if srv.get("served_model") != m or m not in (srv.get("models") or []):
+                problems.append(f"{name}: the server scored as the {m} served {srv.get('models')}")
+            if srv.get("version") != VLLM_VERSION:
+                problems.append(f"{name}: the {m} was scored on vLLM {srv.get('version')}, not {VLLM_VERSION}")
+    gaps = Q.gap(files[1][1], files[AT_ONCE][1])
+    for m in MODELS:
+        g = gaps.get(m)
         if g is None:
-            problems.append(f"{name}: no simulator contexts compared")
+            problems.append(f"{m}: no contexts compared")
             continue
         if g["missing"]:
-            problems.append(f"{name}: {len(g['missing'])} simulator context(s) missing or errored")
+            problems.append(f"{m}: {len(g['missing'])} context(s) missing or errored")
         if g["token_mismatch"]:
-            problems.append(f"{name}: different token IDs in {len(g['token_mismatch'])} context(s)")
+            problems.append(f"{m}: different token IDs in {len(g['token_mismatch'])} context(s)")
         if not g["contexts"] and not g["missing"] and not g["token_mismatch"]:
-            problems.append(f"{name}: no simulator contexts compared")
-    agent = [r for r in files[("fp8", 1)][1] if r.get("model") == "agent"]
-    agent12 = [r for r in files[("fp8", AT_ONCE)][1] if r.get("model") == "agent"]
-    ok = gaps["fp8"] and gaps["fp8_per_channel"]
-    return {"problems": problems, **{k: _floor(g) for k, g in gaps.items()},
-            "agent_fp8": _floor(Q.gap(agent, agent12).get("agent")) if agent else None,
-            "bootstrap_pc_minus_pt": (Q._bootstrap(gaps["fp8_per_channel"]["per_context"], gaps["fp8"]["per_context"])
-                                      if ok else None)}
+            problems.append(f"{m}: no contexts compared")
+    return {"problems": problems, **{m: _floor(gaps.get(m)) for m in MODELS}}
 
 
 # --- the rule -----------------------------------------------------------------------------------------
 
-PIN_KEEP = ("max_connections stays 12 for every condition and session: under fp8 the MoE's activation "
-            "scale is the batch's maximum, so a bigger batch coarsens every token's quantization.")
-PIN_ADOPT = ("max_connections stays 12 in the pilot and N3: batch dependence remains (Triton MoE tiles chosen "
-             "by the batch's size, attention splits, prefill chunk boundaries), and vLLM's batch-invariant mode "
-             "refuses the GDN layers. Another number at once (Hopper) needs a simtest equiv check recorded in "
-             "LOG.md first: the noise floor at 1 against N no larger than at 1 against 12, for both models.")
+PIN = ("max_connections stays 12 in the pilot and N3, on every backend: batch dependence remains (Triton MoE "
+       "tiles chosen by the batch's size, attention splits, prefill chunk boundaries), and vLLM's batch-invariant "
+       "mode refuses the GDN layers.")
+STOP = ("no episode runs and the session stops. It never falls back to fp8: that would be a new decision, in "
+        "LOG.md. ")
+ON_FAIL = STOP + "Victor decides what comes next; a new check, after a fix, runs in a new directory and both are reported."
+ON_INCOMPLETE = STOP + "Fix what is missing and run the same command again: the forced pass keeps its finished steps."
 
 
-def rule(fid: dict, noise_: dict, server_problems: list[str], speed_ratio: float | None) -> dict:
-    missing = [f"{s}: the fidelity pass is incomplete ({fid[s]['steps']} of {fid[s].get('real_steps', '?')} "
-               f"steps, {fid[s]['errors']} errors)" for s in SETTINGS if not fid[s]["complete"]]
-    missing += list(noise_.get("problems") or []) + list(server_problems)
-    if missing:
-        return {"verdict": "INCOMPLETE", "problems": missing, "checks": None, "confirm_budget": False,
-                "action": "keep SIM_QUANT=fp8 for this pilot (the status quo); report what is missing", "pin": PIN_KEEP}
-    pt, pc = noise_["fp8"], noise_["fp8_per_channel"]
-    hi = noise_["bootstrap_pc_minus_pt"]["mean_abs_dlogprob"][1]
-    diff = fid["fp8_per_channel"]["mean_sim"] - fid["fp8"]["mean_sim"]
-    checks = {"fidelity": round(diff, 6) >= -SIM_TOLERANCE,
-              "truncations": fid["fp8_per_channel"]["truncated"] <= MAX_TRUNCATED,
-              "noise_lower": pc["mean_abs_dlogprob"] < pt["mean_abs_dlogprob"] and hi < 0,
-              "top1_not_lower": pc["top1_agreement"] >= pt["top1_agreement"]}
-    adopt = all(checks.values())
-    return {"verdict": "ADOPT" if adopt else "KEEP", "problems": [], "checks": checks,
-            "fidelity_difference": diff,
-            "confirm_budget": adopt and (speed_ratio is None or speed_ratio < SPEED_CONFIRM),
-            "action": ("serve the simulator with SIM_QUANT=fp8_per_channel in the pilot and N3, in every condition "
-                       "and phase (episodes, vectors, readings)") if adopt else
-                      "keep SIM_QUANT=fp8: restart the simulator with SIM_ONLY=1 (fp8) before the episodes",
-            "pin": PIN_ADOPT if adopt else PIN_KEEP}
+def rule(fid: dict, noise_: dict, missing: list[str], wrong: list[str], tok_s: float | None) -> dict:
+    """The verdict from the pass, the floors and the server's lines. `missing` and `wrong` as
+    server_check's, with the recording's problems in `missing`."""
+    base = {"checks": None, "confirm_budget": False, "pin": PIN}
+    if wrong:
+        return {**base, "verdict": "FAIL", "problems": wrong, "checks": {"scheme": False}, "action": ON_FAIL}
+    problems = [] if fid["complete"] else [f"the forced pass is incomplete ({fid['steps']} of "
+                                           f"{fid.get('real_steps', '?')} steps, {fid['errors']} errors)"]
+    problems += list(noise_.get("problems") or []) + list(missing)
+    if problems:
+        return {**base, "verdict": "INCOMPLETE", "problems": problems, "action": ON_INCOMPLETE}
+    checks = {"scheme": True, "fidelity": round(fid["mean_sim"], 6) >= SIM_FLOOR,
+              "truncations": fid["truncated"] <= MAX_TRUNCATED}
+    ok = all(checks.values())
+    return {**base, "verdict": "PASS" if ok else "FAIL", "problems": [], "checks": checks,
+            "confirm_budget": ok and (tok_s is None or round(tok_s, 6) < REFERENCE_TOK_S * SPEED_CONFIRM),
+            "action": f"the episodes may start on {SCHEME}" if ok else ON_FAIL}
+
+
+def gate_problems(check: dict | None, text: str, head: str | None, speed_ok: bool) -> list[str]:
+    """Why a `simtest run` must not start on the server whose lines are `text`."""
+    if check is None:
+        return ["no setup check (check.json): the setup step runs before any episode"]
+    missing, wrong = server_check(text)
+    problems = missing + wrong
+    if check.get("verdict") != "PASS":
+        problems.append(f"the setup check says {check.get('verdict')}, not PASS")
+    if check.get("scheme") != SCHEME:
+        problems.append(f"the setup check ran on the scheme {check.get('scheme')}, not {SCHEME}")
+    if not head or check.get("commit") != head:
+        problems.append(f"the setup check ran on commit {check.get('commit')}, not on HEAD {head}")
+    gpu = gpu_name(text)
+    if gpu is not None and gpu != check.get("gpu"):
+        problems.append(f"this server runs on {gpu}, and the setup check on {check.get('gpu')}: one backend per experiment")
+    if (check.get("rule") or {}).get("confirm_budget") and not speed_ok:
+        problems.append(f"the speed is under {REFERENCE_TOK_S * SPEED_CONFIRM:.0f} tokens/s, or missing: Victor confirms "
+                        "the rescaled budget first, then SPEED_OK=1")
+    return problems
 
 
 # --- command line -------------------------------------------------------------------------------------
@@ -358,20 +383,31 @@ def _lines(path: Path) -> list[dict]:
     return [json.loads(x) for x in path.read_text().splitlines() if x.strip()] if path.exists() else []
 
 
+def _text(path: Path) -> str:
+    return path.read_text() if path.exists() else ""
+
+
+def _commit() -> str | None:
+    try:
+        return subprocess.run(["git", "-C", str(HERE.parent), "rev-parse", "HEAD"], capture_output=True, text=True,
+                              check=True).stdout.strip() or None
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def main_fidelity(args) -> int:
-    d = Path(args.out) / args.setting
+    d = Path(args.out)
     d.mkdir(parents=True, exist_ok=True)
     for name, sha in RECORDING.items():
         src, dst = Path(args.bakeoff) / name, d / name
         if hashlib.sha256(src.read_bytes()).hexdigest() != sha:
             raise SystemExit(f"{src} is not the bake-off's recording (sha256 {sha[:12]}...)")
         if dst.exists() and dst.read_bytes() != src.read_bytes():
-            raise SystemExit(f"{dst} differs from {src}: the passes must predict the same recording")
+            raise SystemExit(f"{dst} differs from {src}: the pass must predict the pinned recording")
         if not dst.exists():
             shutil.copyfile(src, dst)
     stop = threading.Event()
-    poller = threading.Thread(target=_poll, args=(args.url, d / "speed.jsonl", args.interval, stop, args.setting),
-                              daemon=True)
+    poller = threading.Thread(target=_poll, args=(args.url, d / "speed.jsonl", args.interval, stop, SCHEME), daemon=True)
     poller.start()
     env = {**os.environ, "CHAT_URL": f"{args.url.rstrip('/')}/v1/chat/completions"}
     try:
@@ -386,7 +422,7 @@ def main_fidelity(args) -> int:
         return score.returncode
     f = fidelity_summary(_lines(d / "scores.jsonl"), step_keys(_lines(d / "real.jsonl")))
     s = speed(_lines(d / "speed.jsonl"), interval=args.interval)
-    print(f"{args.setting}: {f['steps']} of {f['real_steps']} steps, {f['errors']} errors, {f['truncated']} at the cap; "
+    print(f"{SCHEME}: {f['steps']} of {f['real_steps']} steps, {f['errors']} errors, {f['truncated']} at the cap; "
           f"mean similarity {_f(f['mean_sim'])} on {f['deterministic']} deterministic steps; "
           f"{_f(s['median_tok_s'], 0)} tokens/s at {AT_ONCE} at once ({s['windows']} windows)")
     if not f["complete"]:
@@ -398,63 +434,112 @@ def _f(x, nd=4) -> str:
     return "-" if x is None else f"{x:.{nd}f}"
 
 
-def main_decide(args) -> int:
+def main_check(args) -> int:
     out = Path(args.out)
-    rows = {s: _lines(out / s / "scores.jsonl") for s in SETTINGS}
-    fid = {s: fidelity_summary(rows[s], step_keys(_lines(out / s / "real.jsonl"))) for s in SETTINGS}
-    spd = {s: speed(_lines(out / s / "speed.jsonl"), interval=args.interval) for s in SETTINGS}
-    texts = {s: (out / s / "server.txt").read_text() if (out / s / "server.txt").exists() else "" for s in SETTINGS}
-    server_problems = [p for s in SETTINGS for p in recording_check(out / s, s) + server_check(texts[s], s)]
-    counts = {s: layer_count(texts[s]) for s in SETTINGS}
-    if None not in counts.values() and len(set(counts.values())) > 1:
-        server_problems.append(f"the settings quantized different numbers of layers: {counts}")
+    fid = fidelity_summary(_lines(out / "scores.jsonl"), step_keys(_lines(out / "real.jsonl")))
+    spd = speed(_lines(out / "speed.jsonl"), interval=args.interval)
+    text = _text(out / "server.txt")
+    missing, wrong = server_check(text)
     nz = noise(out)
-    a, b = spd["fp8"]["median_tok_s"], spd["fp8_per_channel"]["median_tok_s"]
-    ratio = b / a if a and b is not None else None
-    r = rule(fid, nz, server_problems, ratio)
-    decision = {"rule": r, "fidelity": fid, "paired_sim": paired(rows["fp8"], rows["fp8_per_channel"]),
-                "graded": graded_fidelity(out), "speed": spd, "speed_ratio": ratio, "noise": nz,
-                "layers": counts, "constants": {"sim_tolerance": SIM_TOLERANCE, "max_truncated": MAX_TRUNCATED,
-                                                "speed_confirm": SPEED_CONFIRM, "at_once": AT_ONCE}}
-    (out / "decision.json").write_text(json.dumps(decision, indent=1, default=str) + "\n")
-    for s in SETTINGS:
-        f, sp, n = fid[s], spd[s], nz.get(s) or {}
-        print(f"{s}: fidelity {_f(f['mean_sim'])} (exact {_f(f['exact'], 2)}, pytest {f['pytest_right']}, "
-              f"{f['truncated']} at the cap, {f['errors']} errors, {f['steps']}/{f['real_steps']} steps); "
-              f"noise floor |d logprob| {_f(n.get('mean_abs_dlogprob'))}, top-1 {_f(n.get('top1_agreement'))}; "
-              f"{_f(sp['median_tok_s'], 0)} tokens/s at {AT_ONCE}")
-    p = decision["paired_sim"]
-    print(f"per channel minus per tensor, similarity: {_f(p['mean'])} (SE {_f(p['se'])}, {p['n']} steps); "
-          f"noise bootstrap {nz.get('bootstrap_pc_minus_pt')}; speed ratio {_f(ratio, 2)}")
-    g = decision["graded"]
-    print("graded fidelity: " + (", ".join(f"{s} faithful {_f(g[s]['faithful'], 2)} {g[s]['counts']}" for s in SETTINGS)
-                                 if g.get("available") else f"unavailable ({g.get('why')})"))
-    print(f"\nDRAFT rule -> {r['verdict']}: {r['action']}")
+    r = rule(fid, nz, recording_check(out) + missing, wrong, spd["median_tok_s"])
+    check = {"verdict": r["verdict"], "commit": _commit(), "scheme": SCHEME, "gpu": gpu_name(text), "rule": r,
+             "fidelity": fid, "graded": graded_fidelity(out), "speed": spd, "noise": nz, "layers": layer_count(text),
+             "served": served_line(text),
+             "constants": {"sim_floor": SIM_FLOOR, "max_truncated": MAX_TRUNCATED, "reference_tok_s": REFERENCE_TOK_S,
+                           "speed_confirm": SPEED_CONFIRM, "at_once": AT_ONCE}}
+    (out / "check.json").write_text(json.dumps(check, indent=1, default=str) + "\n")
+    print(f"forced pass: {fid['steps']} of {fid['real_steps']} steps, {fid['errors']} errors, {fid['truncated']} at the "
+          f"cap (at most {MAX_TRUNCATED}); mean similarity {_f(fid['mean_sim'])} (at least {SIM_FLOOR}), exact "
+          f"{_f(fid['exact'], 2)}, pytest {fid['pytest_right']}")
+    print(f"speed at {AT_ONCE} at once: {_f(spd['median_tok_s'], 0)} tokens/s, {spd['windows']} windows "
+          f"(under {REFERENCE_TOK_S * SPEED_CONFIRM:.0f}: Victor confirms the budget)")
+    for m in MODELS:
+        n = nz.get(m) or {}
+        print(f"noise floor, {m}: |d logprob| {_f(n.get('mean_abs_dlogprob'))}, top-1 {_f(n.get('top1_agreement'))}, "
+              f"{n.get('contexts', 0)} contexts")
+    g = check["graded"]
+    print("graded fidelity: " + (f"faithful {_f(g['faithful'], 2)} {g['counts']}" if g.get("available")
+                                 else f"unavailable ({g.get('why')})"))
+    print(f"\nsetup check on {check['gpu']}: {r['verdict']}: {r['action']}")
     for x in r["problems"]:
-        print(f"  missing: {x}")
+        print(f"  problem: {x}")
     if r["checks"]:
         print("  " + ", ".join(f"{k} {'ok' if v else 'NO'}" for k, v in r["checks"].items()))
     if r["confirm_budget"]:
-        print("  per channel is slower than 0.9 of per tensor (or its speed is missing): confirm the budget")
+        print("  the speed is low or missing: the episodes wait until Victor confirms the budget (SPEED_OK=1)")
     print(f"  pin: {r['pin']}")
-    print(f"wrote {out / 'decision.json'}")
+    print(f"wrote {out / 'check.json'}")
+    return {"PASS": 0, "FAIL": 1, "INCOMPLETE": 2}[r["verdict"]]
+
+
+def main_gate(args) -> int:
+    out, server = Path(args.out), Path(args.server)
+    text = _text(server)
+    check = json.loads((out / "check.json").read_text()) if (out / "check.json").exists() else None
+    head = _commit()
+    problems = gate_problems(check, text, head, args.speed_ok)
+    if problems:
+        for x in problems:
+            print(f"gate: refused: {x}", file=sys.stderr)
+        return 1
+    row = {"t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "where": args.where, "commit": head, "scheme": SCHEME,
+           "gpu": gpu_name(text), "served": served_line(text),
+           "setup_check": {"dir": str(out), "verdict": check["verdict"], "gpu": check.get("gpu"),
+                           "mean_sim": (check.get("fidelity") or {}).get("mean_sim"),
+                           "truncated": (check.get("fidelity") or {}).get("truncated"),
+                           "median_tok_s": (check.get("speed") or {}).get("median_tok_s"),
+                           "confirm_budget": (check.get("rule") or {}).get("confirm_budget"),
+                           "speed_ok": args.speed_ok}}
+    log = Path(args.run_log)
+    log.mkdir(parents=True, exist_ok=True)
+    with (log / "backend.jsonl").open("a") as f:
+        f.write(json.dumps(row) + "\n")
+    print(f"gate: {SCHEME} on {row['gpu']}, setup check PASS; recorded in {log / 'backend.jsonl'}")
     return 0
 
 
-def main(argv=None) -> int:
+def main_lines(args) -> int:
+    missing, wrong = server_check(_text(Path(args.server)))
+    for x in missing + wrong:
+        print(f"lines: {x}", file=sys.stderr)
+    return 1 if missing or wrong else 0
+
+
+def main_recording(args) -> int:
+    problems = recording_check(Path(args.bakeoff))
+    for x in problems:
+        print(x)
+    return 1 if problems else 0
+
+
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("fidelity", help="the bake-off's forced pass at 12 at once, with /metrics")
-    f.add_argument("setting", choices=SETTINGS, help="what the simulator is serving now (serve.sh's SIM_QUANT)")
-    f.add_argument("--out", default="logs/simquant")
+    f.add_argument("--out", required=True)
     f.add_argument("--bakeoff", default="logs/bakeoff", help="the bake-off's recording (real.jsonl, snapshot.txt)")
     f.add_argument("--url", default="http://localhost:18001", help="the simulator server, through the tunnel")
     f.add_argument("--interval", type=float, default=5.0, help="seconds between /metrics samples")
-    d = sub.add_parser("decide", help="the DRAFT rule on both settings' files")
-    d.add_argument("--out", default="logs/simquant")
-    d.add_argument("--interval", type=float, default=5.0, help="the fidelity passes' sampling interval")
-    args = p.parse_args(argv)
-    return main_fidelity(args) if args.cmd == "fidelity" else main_decide(args)
+    c = sub.add_parser("check", help="the rule on the directory's files; exit 0 PASS, 1 FAIL, 2 INCOMPLETE")
+    c.add_argument("--out", required=True)
+    c.add_argument("--interval", type=float, default=5.0, help="the forced pass's sampling interval")
+    g = sub.add_parser("gate", help="the last check before simtest run; on success, the run's record")
+    g.add_argument("--out", required=True, help="the setup check's directory")
+    g.add_argument("--server", required=True, help="server.txt of the servers the run will use")
+    g.add_argument("--run-log", required=True, help="the run's log directory (backend.jsonl goes there)")
+    g.add_argument("--where", required=True, help="which session or job, for the record")
+    g.add_argument("--speed-ok", action="store_true", help="Victor confirmed the budget (SPEED_OK=1)")
+    n = sub.add_parser("lines", help="the server's scheme lines alone")
+    n.add_argument("--server", required=True)
+    r = sub.add_parser("recording", help="is the bake-off's recording the pinned one")
+    r.add_argument("--bakeoff", default="logs/bakeoff")
+    return p
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
+    return {"fidelity": main_fidelity, "check": main_check, "gate": main_gate, "lines": main_lines,
+            "recording": main_recording}[args.cmd](args)
 
 
 if __name__ == "__main__":

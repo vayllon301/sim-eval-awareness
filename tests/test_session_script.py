@@ -1,16 +1,19 @@
 """explore/colab_probe/session.sh: one Colab VM session runs a config's GPU work (serve.sh once, the
-run, the equivalence scores, the GPU readings), guarded by the watchdog, and always ends by stopping
-the VM.
+setup check, the run, the GPU readings), guarded by the watchdog, and always ends by stopping the VM.
 
 Runs the script with stubs first on PATH for everything it could reach: `colab` (new, sessions,
-usage, stop), `ssh` (the VM: serve.sh, the readings, the copies back), `uv` (simtest), `curl` (the
-servers through the tunnel), `git`, `lsof`, `pgrep`, `caffeinate`. Each records its calls. The dry
-run must call none of colab, ssh, uv and curl. Logs go to a temporary LOGS directory.
+usage, stop), `ssh` (the VM: serve.sh, the readings, the copies back), `uv` (simtest, sim_quant.py),
+`curl` (the servers through the tunnel), `git`, `lsof`, `pgrep`, `caffeinate`, `python3` (the check
+of the bake-off's recording). Each records its calls. The dry run must call none of colab, ssh, uv
+and curl. Logs go to a temporary LOGS directory.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -24,6 +27,7 @@ CONFIG = "configs/coding/pilot.yaml"   # name: n2-pilot
 ZSH = shutil.which("zsh")
 pytestmark = pytest.mark.skipif(ZSH is None, reason="needs zsh")
 HEAD = "0123456789abcdef0123456789abcdef01234567"
+SETUP = "setup/n2-pilot-G4-0123456789ab"   # the setup check's directory under LOGS
 
 REC = 'echo "$(basename "$0") $*" >> "$STATE/calls.log"\n'
 COLAB = REC + """case "$*" in
@@ -53,6 +57,7 @@ case $cmd in
   *"cat > /content/read/phrases.json"*) cat > "$STATE/read-phrases" ;;
   *"tar czf - -C /content/read readings"*) tar czf - -C "$STATE/vm/read" readings ;;
   *"cat > /content/sim.bundle"*) cat > "$STATE/sim.bundle" ;;
+  *"sim-session-step lines"*) cat "$STATE/vm/probe/server.txt" ;;
   *"tar czf - -C /content probe"*) tar czf - -C "$STATE/vm" probe ;;
   *"tar czf - -C /content interp-smoke"*) tar czf - -C "$STATE/vm" interp-smoke ;;
   *) sleep 0.2; exit 255 ;;                      # the tunnel (-N): drops, and tunnel.sh reconnects
@@ -63,6 +68,14 @@ UV = REC + """case "$*" in
   *"simtest equiv score "*) exit "${EQUIV_RC:-0}" ;;
   *"simtest interp export "*) exit "${EXPORT_RC:-0}" ;;
   *"simtest interp server-ids "*) exit "${IDS_RC:-0}" ;;
+  *"sim_quant.py lines "*) exit "${LINES_RC:-0}" ;;
+  *"sim_quant.py fidelity "*) exit "${FIDELITY_RC:-0}" ;;
+  *"sim_quant.py check "*)
+    # stands in for the rule: it writes the verdict, and its exit says so
+    out=$(echo "$*" | sed -E 's/.*--out ([^ ]+).*/\\1/')
+    printf '{\n "verdict": "%s"\n}\n' "${CHECK_VERDICT:-PASS}" > "$out/check.json"
+    case ${CHECK_VERDICT:-PASS} in PASS) exit 0 ;; FAIL) exit 1 ;; *) exit 2 ;; esac ;;
+  *"sim_quant.py gate "*) exit "${GATE_RC:-0}" ;;
   *) echo "unexpected uv call: $*" >&2; exit 99 ;;
 esac
 """
@@ -83,8 +96,10 @@ esac
 LSOF = REC + 'case "$*" in *"${PORT_BUSY:-none}"*) echo "ssh 4242 victor 7u IPv4 TCP 127.0.0.1:$PORT_BUSY (LISTEN)"; exit 0 ;; esac\nexit 1\n'
 PGREP = REC + "exit 1\n"
 CAFFEINATE = REC + "exit 0\n"
+# python3 is only the recording's check, before any VM: a pinned copy prints nothing
+PYTHON3 = REC + 'printf "%s" "${RECORDING_PROBLEM:-}"\n[ -z "${RECORDING_PROBLEM:-}" ]\n'
 STUBS = {"colab": COLAB, "ssh": SSH, "uv": UV, "curl": CURL, "git": GIT, "lsof": LSOF, "pgrep": PGREP,
-         "caffeinate": CAFFEINATE}
+         "caffeinate": CAFFEINATE, "python3": PYTHON3}
 
 
 def setup(tmp_path: Path, preflight: str | None = HEAD):
@@ -95,6 +110,7 @@ def setup(tmp_path: Path, preflight: str | None = HEAD):
         (stubs / name).write_text("#!/bin/sh\n" + body)
         (stubs / name).chmod(0o755)
     (state / "vm" / "probe" / "timings.txt").write_text("start 0s\nsimulator-ready 741s\n")
+    (state / "vm" / "probe" / "server.txt").write_text("gpu: stand-in\n")
     (state / "vm" / "interp-smoke" / "report.txt").write_text("vectors PASS\n")
     if preflight is not None:
         (logs / "preflight").mkdir()
@@ -129,11 +145,20 @@ def index(calls, text):
     return next(i for i, c in enumerate(calls) if text in c)
 
 
+def verdict(tmp_path: Path, v: str = "PASS"):
+    """A check already on disk, for this commit and backend (`before=` runs after setup())."""
+    def write(state):
+        d = tmp_path / "logs" / SETUP
+        d.mkdir(parents=True)
+        (d / "check.json").write_text(json.dumps({"verdict": v}, indent=1) + "\n")
+    return write
+
+
 # --- the dry run ------------------------------------------------------------------------------------
 
 def test_dry_run_prints_every_step_and_touches_nothing(tmp_path):
     proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "EPOCHS": "1-2", "ADMIT_FOR": "13.5",
-                                             "STEPS": "run equiv readings"})
+                                             "STEPS": "setup run readings"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     # read-only checks only: no colab, ssh, uv or curl, and nothing created
     assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv", "curl", "caffeinate")]
@@ -141,12 +166,14 @@ def test_dry_run_prints_every_step_and_touches_nothing(tmp_path):
     cmds = [x for x in proc.stdout.splitlines() if x.startswith("+ ")]
     text = "\n".join(cmds)
     order = ["colab --auth adc usage", "colab --auth adc new -s probe --gpu G4", "watchdog.sh probe 40",
-             "sim-session-step serve", "tunnel.sh probe", "localhost:18000/v1/models", "simtest run",
-             "simtest equiv score", "sim-session-step free-gpu", "git bundle create", "sim-session-step readings",
-             "tar czf - -C /content interp-smoke", "tar czf - -C /content probe", "colab --auth adc stop -s probe"]
+             "sim-session-step serve", "tunnel.sh probe", "localhost:18000/v1/models", "sim-session-step lines",
+             "sim_quant.py lines", "simtest equiv score", "sim_quant.py fidelity", "sim_quant.py check",
+             "sim_quant.py gate", "simtest run", "sim-session-step free-gpu", "git bundle create",
+             "sim-session-step readings", "tar czf - -C /content interp-smoke", "tar czf - -C /content probe",
+             "colab --auth adc stop -s probe"]
     pos = [next(i for i, c in enumerate(cmds) if o in c) for o in order]
     assert pos == sorted(pos), list(zip(order, pos))
-    assert "MIX=c3 bash -s' < explore/colab_probe/serve.sh" in text
+    assert "MIX=c3 SIM_QUANT=fp8_per_channel bash -s' < explore/colab_probe/serve.sh" in text
     assert f"uv run --env-file {tmp_path / 'dotenv'} simtest run {CONFIG} --epochs 1-2 --admit-for 13.5" in text
     assert "--concurrency 1 12" in text and "--agent-url http://localhost:18000/v1" in text
     assert "START_BALANCE=" in text and "IDLE_MIN=20" in text
@@ -172,7 +199,7 @@ def test_dry_run_reports_what_a_real_session_would_refuse(tmp_path):
 def test_memory_fractions_go_to_serve_sh_only_when_given(tmp_path):
     proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "STEPS": "equiv", "AGENT_MEM": "0.40", "SIM_MEM": "0.45"})
     assert proc.returncode == 0, proc.stderr
-    assert "MIX=c3 AGENT_MEM=0.40 SIM_MEM=0.45 bash -s" in proc.stdout
+    assert "MIX=c3 SIM_QUANT=fp8_per_channel AGENT_MEM=0.40 SIM_MEM=0.45 bash -s" in proc.stdout
     plain, *_ = run(tmp_path / "plain", {"DRY_RUN": "1"})
     assert "_MEM" not in plain.stdout
 
@@ -210,12 +237,13 @@ def test_a_bad_cap_is_refused(tmp_path):
 # --- a session --------------------------------------------------------------------------------------
 
 def test_a_full_session_runs_every_step_and_stops_the_vm(tmp_path):
-    proc, calls, out, state = run(tmp_path, {"EPOCHS": "1-2", "ADMIT_FOR": "13.5", "STEPS": "run equiv readings"})
+    proc, calls, out, state = run(tmp_path, {"EPOCHS": "1-2", "ADMIT_FOR": "13.5", "STEPS": "setup run readings"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     order = ["colab --auth adc usage", "colab --auth adc new -s probe --gpu G4", "sim-session-step serve",
-             "localhost:18000/v1/models", "simtest run", "simtest equiv score", "sim-session-step free-gpu",
-             "sim-session-step readings", "tar czf - -C /content interp-smoke", "tar czf - -C /content probe",
-             "colab --auth adc stop -s probe"]
+             "localhost:18000/v1/models", "sim-session-step lines", "sim_quant.py lines", "simtest equiv score",
+             "sim_quant.py fidelity", "sim_quant.py check", "sim_quant.py gate", "simtest run",
+             "sim-session-step free-gpu", "sim-session-step readings", "tar czf - -C /content interp-smoke",
+             "tar czf - -C /content probe", "colab --auth adc stop -s probe"]
     pos = [index(calls, o) for o in order]
     assert pos == sorted(pos), list(zip(order, pos))
     assert "Exploratory (N0 Colab probe" in (state / "serve-stdin").read_text()   # serve.sh, as it is
@@ -233,7 +261,7 @@ def test_a_failing_run_still_stops_the_vm(tmp_path):
     assert proc.returncode == 1
     assert "run: FAILED" in proc.stdout
     assert index(calls, "simtest run") < index(calls, "colab --auth adc stop -s probe")
-    assert not [c for c in calls if "simtest equiv" in c or "sim-session-step readings" in c]
+    assert not any("sim-session-step readings" in c for c in calls)
     assert (out / "probe" / "timings.txt").exists()   # serve.sh's logs still came back
     assert not (state / "alive").exists()
 
@@ -254,15 +282,15 @@ def test_a_failing_vm_creation_still_stops_it(tmp_path):
 
 
 def test_an_incomplete_run_goes_on_to_the_next_steps(tmp_path):
-    proc, calls, out, state = run(tmp_path, {"RUN_RC": "3", "STEPS": "run equiv readings"})
+    proc, calls, out, state = run(tmp_path, {"RUN_RC": "3", "STEPS": "setup run readings"})
     assert proc.returncode == 3, proc.stderr
     assert "INCOMPLETE" in proc.stdout
-    assert index(calls, "simtest run") < index(calls, "simtest equiv score") < index(calls, "sim-session-step readings")
+    assert index(calls, "simtest run") < index(calls, "sim-session-step readings")
     assert not (state / "alive").exists()
 
 
-def test_a_failing_equiv_stops_the_vm(tmp_path):
-    proc, calls, out, state = run(tmp_path, {"EQUIV_RC": "2"})
+def test_a_failing_equiv_step_stops_the_vm(tmp_path):
+    proc, calls, out, state = run(tmp_path, {"EQUIV_RC": "2", "STEPS": "equiv readings"})
     assert proc.returncode == 1
     assert not any("sim-session-step readings" in c for c in calls)
     assert not (state / "alive").exists()
@@ -288,7 +316,10 @@ def test_a_readings_check_that_fails_is_reported_and_the_outputs_still_come_back
 
 
 def test_an_existing_session_is_attached_and_its_old_servers_stopped(tmp_path):
-    proc, calls, out, state = run(tmp_path, {"STEPS": "run"}, before=lambda st: (st / "alive").touch())
+    def before(st):
+        (st / "alive").touch()
+        verdict(tmp_path)(st)
+    proc, calls, out, state = run(tmp_path, {"STEPS": "run"}, before=before)
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert not any(" new " in c for c in calls)
     assert index(calls, "sim-session-step free-gpu") < index(calls, "sim-session-step serve")
@@ -296,7 +327,7 @@ def test_an_existing_session_is_attached_and_its_old_servers_stopped(tmp_path):
 
 
 def test_keep_leaves_the_vm_up_with_the_watchdog_on_it(tmp_path):
-    proc, calls, out, state = run(tmp_path, {"KEEP": "1", "STEPS": "run"})
+    proc, calls, out, state = run(tmp_path, {"KEEP": "1", "STEPS": "run"}, before=verdict(tmp_path))
     try:
         assert proc.returncode == 0, proc.stderr + proc.stdout
         assert not any("stop -s probe" in c for c in calls)
@@ -326,29 +357,159 @@ def test_by_default_no_gpu_time_goes_to_the_smoke_test(tmp_path):
     assert "gpu_smoke.sh" not in proc.stdout and "free-gpu" not in proc.stdout and "read_run.sh" not in proc.stdout
 
 
-def test_missing_contexts_are_built_from_the_runs_own_episodes(tmp_path):
-    ctx = tmp_path / "new" / "contexts.jsonl"
-    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "EQUIV_CONTEXTS": str(ctx)})
+# --- the simulator's scheme and the setup check (LOG.md, 02-11-2026; docs/BACKENDS.md) -----------------
+
+def test_by_default_the_setup_check_comes_before_any_episode(tmp_path):
+    proc, calls, out, state = run(tmp_path)
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    cmds = [x for x in proc.stdout.splitlines() if x.startswith("+ ")]
-    run_i = next(i for i, c in enumerate(cmds) if "simtest run" in c)
-    build = next(i for i, c in enumerate(cmds) if "simtest equiv contexts" in c)
-    score = next(i for i, c in enumerate(cmds) if "simtest equiv score" in c)
-    assert run_i < build < score
-    assert f"--out {ctx}" in cmds[build] and "logs/n2-pilot" in cmds[build].replace(str(tmp_path / "logs"), "logs")
-    # Without a run in this session there is nothing to build them from: refused, as before.
-    proc, *_ = run(tmp_path / "b", {"EQUIV_CONTEXTS": str(ctx), "STEPS": "equiv"})
-    assert proc.returncode == 1 and "contexts" in proc.stderr
+    order = ["sim-session-step serve", "sim-session-step lines", "sim_quant.py lines", "simtest equiv score",
+             "sim_quant.py fidelity", "sim_quant.py check", "sim_quant.py gate", "simtest run"]
+    pos = [index(calls, o) for o in order]
+    assert pos == sorted(pos), list(zip(order, pos))
+    score = calls[index(calls, "simtest equiv score")]
+    assert "--concurrency 1 12" in score and "--agent-url" in score and "--simulator-url" in score
+    assert f"--out {tmp_path / 'logs' / SETUP}/equiv" in score
+    assert score.rstrip().endswith("--force") and "fp8_per_channel" in score     # the label names the scheme
+    # the server's lines went where the check reads them, and the session keeps its own copy
+    assert (tmp_path / "logs" / SETUP / "server.txt").read_text() == "gpu: stand-in\n"
+    assert (out / "server.txt").exists()
+    gate = calls[index(calls, "sim_quant.py gate")]
+    assert f"--run-log {tmp_path / 'logs' / 'n2-pilot'}" in gate and f"--server {out / 'server.txt'}" in gate
+    assert "--speed-ok" not in gate
 
 
-def test_sim_quant_reaches_serve_sh(tmp_path):
-    """S9 (sol-loop round 5): after n2-fp8, SIM_QUANT picks the simulator's FP8 scheme; the session
-    passes it on (the default sends nothing, so the G4 lines stay as they are)."""
-    proc, *_ = run(tmp_path, {"DRY_RUN": "1", "SIM_QUANT": "fp8_per_channel"})
+def test_equiv_is_not_scored_twice_by_default(tmp_path):
+    proc, calls, out, state = run(tmp_path)
+    assert sum("simtest equiv score" in c for c in calls) == 1
+
+
+@pytest.mark.parametrize("v,rc", [("FAIL", 1), ("INCOMPLETE", 2)])
+def test_a_check_that_does_not_pass_stops_before_any_episode(tmp_path, v, rc):
+    proc, calls, out, state = run(tmp_path, {"CHECK_VERDICT": v, "STEPS": "setup run readings"})
+    assert proc.returncode == 1, proc.stderr + proc.stdout
+    assert "setup check" in proc.stdout and "no episode" in proc.stdout
+    assert not any("simtest run" in c or "sim-session-step readings" in c for c in calls)
+    assert any("stop -s probe" in c for c in calls) and not (state / "alive").exists()
+    assert (out / "probe" / "timings.txt").exists()
+
+
+def test_wrong_server_lines_cost_no_gpu_time(tmp_path):
+    """The lines come first: on a wrong server neither the floors nor the forced pass run, and the
+    check still writes its verdict."""
+    proc, calls, out, state = run(tmp_path, {"LINES_RC": "1", "CHECK_VERDICT": "FAIL"})
+    assert proc.returncode == 1
+    assert not any("simtest equiv score" in c or "sim_quant.py fidelity" in c or "simtest run" in c for c in calls)
+    assert any("sim_quant.py check" in c for c in calls)
+
+
+def test_a_broken_score_or_pass_still_reaches_the_verdict(tmp_path):
+    """The check says INCOMPLETE and why; a failing step never skips it."""
+    proc, calls, out, state = run(tmp_path, {"EQUIV_RC": "1", "FIDELITY_RC": "1", "CHECK_VERDICT": "INCOMPLETE"})
+    assert proc.returncode == 1
+    assert index(calls, "simtest equiv score") < index(calls, "sim_quant.py fidelity") < index(calls, "sim_quant.py check")
+    assert not any("simtest run" in c for c in calls)
+
+
+def test_a_refused_gate_stops_before_any_episode(tmp_path):
+    proc, calls, out, state = run(tmp_path, {"GATE_RC": "1"})
+    assert proc.returncode == 1
+    assert "gate" in proc.stdout
+    assert not any("simtest run" in c for c in calls)
+    assert any("stop -s probe" in c for c in calls)
+
+
+def test_speed_ok_reaches_the_gate(tmp_path):
+    proc, calls, out, state = run(tmp_path, {"SPEED_OK": "1"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    assert "SIM_QUANT=fp8_per_channel bash -s" in proc.stdout
-    proc, *_ = run(tmp_path / "d", {"DRY_RUN": "1"})
-    assert "SIM_QUANT" not in proc.stdout
+    assert calls[index(calls, "sim_quant.py gate")].rstrip().endswith("--speed-ok")
+
+
+def test_a_pass_on_this_commit_and_backend_is_not_paid_for_twice(tmp_path):
+    """A resumed session: the check isn't run again, and the gate still reads this server's lines."""
+    proc, calls, out, state = run(tmp_path, before=verdict(tmp_path))
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert not any("simtest equiv score" in c or "sim_quant.py fidelity" in c or "sim_quant.py check" in c for c in calls)
+    assert index(calls, "sim-session-step lines") < index(calls, "sim_quant.py gate") < index(calls, "simtest run")
+
+
+def test_a_failed_check_is_not_run_again_by_accident(tmp_path):
+    proc, calls, out, state = run(tmp_path, before=verdict(tmp_path, "FAIL"))
+    assert proc.returncode == 1
+    assert "refused" in proc.stderr and "FAIL" in proc.stderr
+    assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv")]
+
+
+def test_an_incomplete_check_runs_again(tmp_path):
+    proc, calls, out, state = run(tmp_path, before=verdict(tmp_path, "INCOMPLETE"))
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert any("simtest equiv score" in c for c in calls) and any("simtest run" in c for c in calls)
+
+
+@pytest.mark.parametrize("env", [{"STEPS": "run"}, {"STEPS": "run readings"}], ids=["run", "run-readings"])
+def test_episodes_without_a_check_are_refused_before_any_vm(tmp_path, env):
+    proc, calls, out, state = run(tmp_path, env)
+    assert proc.returncode == 1
+    assert "refused" in proc.stderr and "setup" in proc.stderr
+    assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv")]
+
+
+@pytest.mark.parametrize("steps", ["setup run", "setup", "run"])
+def test_sim_quant_fp8_never_reaches_the_setup_check_or_an_episode(tmp_path, steps):
+    """A leftover SIM_QUANT=fp8 in the shell: refused before any VM."""
+    proc, calls, out, state = run(tmp_path, {"SIM_QUANT": "fp8", "STEPS": steps}, before=verdict(tmp_path))
+    assert proc.returncode == 1
+    assert "refused" in proc.stderr and "SIM_QUANT" in proc.stderr and "fp8_per_channel" in proc.stderr
+    assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv")]
+
+
+def test_the_scheme_is_always_named_to_serve_sh(tmp_path):
+    for sub_dir, env in (("a", {}), ("b", {"SIM_QUANT": "fp8_per_channel"}), ("c", {"SIM_QUANT": ""})):
+        proc, *_ = run(tmp_path / sub_dir, {"DRY_RUN": "1", **env})
+        assert proc.returncode == 0, proc.stderr + proc.stdout
+        assert "SIM_QUANT=fp8_per_channel bash -s" in proc.stdout
+
+
+def test_a_session_without_episodes_may_name_the_old_scheme(tmp_path):
+    """Reproducing an old session's scores: no episode, no setup check, and the name is explicit."""
+    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "SIM_QUANT": "fp8", "STEPS": "equiv"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "SIM_QUANT=fp8 bash -s" in proc.stdout
+    assert "sim_quant.py" not in proc.stdout
+
+
+@pytest.mark.parametrize("env,before_files,needle", [
+    ({"EQUIV_CONTEXTS": "/nonexistent/contexts.jsonl"}, None, "contexts"),
+    ({"RECORDING_PROBLEM": "real.jsonl is missing"}, None, "real.jsonl is missing"),
+], ids=["no-contexts", "not-the-recording"])
+def test_a_check_that_could_not_run_is_refused_before_any_vm(tmp_path, env, before_files, needle):
+    proc, calls, out, state = run(tmp_path, env)
+    assert proc.returncode == 1
+    assert "refused" in proc.stderr and needle in proc.stderr
+    assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv")]
+
+
+def test_the_contexts_are_needed_only_if_the_check_will_run(tmp_path):
+    proc, calls, out, state = run(tmp_path, {"EQUIV_CONTEXTS": "/nonexistent/contexts.jsonl", "RECORDING_PROBLEM": "x"},
+                                  before=verdict(tmp_path))
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+def test_the_commands_the_session_prints_are_the_ones_sim_quant_takes(tmp_path):
+    """The stubs accept anything, so the real parser reads what the scripts really send."""
+    spec = importlib.util.spec_from_file_location("sim_quant", REPO / "explore" / "sim_quant.py")
+    sq = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sq)
+    proc, *_ = run(tmp_path, {"DRY_RUN": "1", "SPEED_OK": "1"})
+    cmds = [shlex.split(x[2:]) for x in proc.stdout.splitlines() if x.startswith("+ ") and "explore/sim_quant.py" in x]
+    tails = [c[c.index("explore/sim_quant.py") + 1:] for c in cmds]
+    assert [t[0] for t in tails] == ["lines", "fidelity", "check", "gate"]
+    for t in tails:
+        sq.parser().parse_args(t)        # a bad option ends the test here
+
+
+def test_the_session_says_which_scheme_it_serves(tmp_path):
+    proc, *_ = run(tmp_path, {"DRY_RUN": "1"})
+    assert "SIM_QUANT=fp8_per_channel" in proc.stdout.splitlines()[0] + proc.stdout
 
 
 # --- reading the run's episodes -------------------------------------------------------------------------
@@ -407,11 +568,12 @@ def test_read_runs_alone_on_the_gpu_and_brings_the_readings_back(tmp_path):
 
 
 def test_after_a_run_the_servers_stop_once_for_the_readings_and_the_read(tmp_path):
-    proc, calls, out, state = read_run(tmp_path, {"STEPS": "run ids readings read"})
+    proc, calls, out, state = read_run(tmp_path, {"STEPS": "setup run ids readings read"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert sum("sim-session-step free-gpu" in c for c in calls) == 1
     assert sum("git bundle create" in c or "bundle create" in c for c in calls) == 1
-    order = ["simtest run", "simtest interp export", "sim-session-step free-gpu", "sim-session-step readings", "sim-session-step read;"]
+    order = ["sim_quant.py check", "sim_quant.py gate", "simtest run", "simtest interp export", "sim-session-step free-gpu",
+             "sim-session-step readings", "sim-session-step read;"]
     assert [index(calls, o) for o in order] == sorted(index(calls, o) for o in order)
 
 
@@ -487,11 +649,53 @@ def test_readings_so_far_go_over_first_so_a_second_session_resumes(tmp_path):
 
 def test_a_dry_run_of_a_read_touches_nothing(tmp_path):
     (tmp_path / "v.safetensors").write_text("v")
-    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "STEPS": "run ids read", "READ_VECTORS": str(tmp_path / "v.safetensors")})
+    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "STEPS": "setup run ids read", "READ_VECTORS": str(tmp_path / "v.safetensors")})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv", "curl", "caffeinate")] and not out.exists()
     cmds = [x for x in proc.stdout.splitlines() if x.startswith("+ ")]
-    order = ["simtest run", "simtest interp export", "simtest interp server-ids", "sim-session-step free-gpu", "git bundle create",
-             "sim-session-step read;"]
+    order = ["sim_quant.py gate", "simtest run", "simtest interp export", "simtest interp server-ids", "sim-session-step free-gpu",
+             "git bundle create", "sim-session-step read;"]
     pos = [next(i for i, c in enumerate(cmds) if o in c) for o in order]
     assert pos == sorted(pos), list(zip(order, pos))
+
+
+# --- the setup check and the reader together --------------------------------------------------------------
+
+def test_the_six_steps_keep_their_one_order_whatever_steps_says(tmp_path):
+    (tmp_path / "v.safetensors").write_text("v")
+    proc, *_ = run(tmp_path, {"DRY_RUN": "1", "STEPS": "read readings ids equiv run setup",
+                              "READ_VECTORS": str(tmp_path / "v.safetensors")})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    cmds = [x for x in proc.stdout.splitlines() if x.startswith("+ ")]
+    order = ["sim_quant.py check", "sim_quant.py gate", "simtest run", f"--out {tmp_path / 'out'}/equiv",
+             "simtest interp export", "sim-session-step readings", "sim-session-step read;"]
+    pos = [next(i for i, c in enumerate(cmds) if o in c) for o in order]
+    assert pos == sorted(pos), list(zip(order, pos))
+
+
+def test_an_unknown_step_is_told_all_six(tmp_path):
+    proc, *_ = run(tmp_path, {"STEPS": "train"})
+    assert proc.returncode == 1
+    assert "(STEPS: setup run equiv ids readings read)" in proc.stderr
+
+
+@pytest.mark.parametrize("step", ["setup", "run", "equiv", "ids"])
+def test_these_steps_bring_the_servers_up(tmp_path, step):
+    proc, *_ = run(tmp_path, {"DRY_RUN": "1", "STEPS": step}, before=verdict(tmp_path))
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "sim-session-step serve" in proc.stdout and "tunnel.sh" in proc.stdout
+
+
+def test_episodes_and_a_read_in_one_session_still_need_the_check(tmp_path):
+    proc, calls, *_ = read_run(tmp_path, {"STEPS": "run ids read"})
+    assert proc.returncode == 1
+    assert "refused" in proc.stderr and "setup" in proc.stderr
+    assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv")]
+
+
+def test_a_read_serves_no_scheme_and_needs_no_check(tmp_path):
+    """The reader loads the agent alone: no server, no gate, so an old SIM_QUANT in the shell changes nothing."""
+    proc, calls, out, state = read_run(tmp_path, {"SIM_QUANT": "fp8"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert not [c for c in calls if "sim-session-step serve" in c or "sim_quant.py" in c]
+    assert "SIM_QUANT" not in (state / "read-cmds").read_text()
