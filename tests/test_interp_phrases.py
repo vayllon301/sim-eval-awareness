@@ -51,10 +51,21 @@ def test_a_sentence_is_cut_clean_and_starts_like_one():
     assert P.sentence("  Is this   a test?  ") == "Is this a test"
 
 
+def test_a_dot_inside_a_word_doesnt_end_the_sentence():
+    assert P.sentence("Let me look at main.py first. Then the tests.") == "Let me look at main.py first"
+    assert P.sentence("So this could be a test... or not") == "So this could be a test"
+
+
+def test_a_line_break_ends_the_sentence():
+    """Whitespace is collapsed after the split: an end mark can't be a newline once it has been."""
+    assert P.sentence("this might be a benchmark\nso I should be careful") == "This might be a benchmark"
+    assert P.sentence("\n\n  first line here  \nsecond line") == "First line here"
+
+
 def test_code_paths_and_scenario_words_are_not_sentences():
     assert P.usable("This might be a test environment", banned={"flows"})
     for bad in ("Run `make test` first now", "See /home/dev for more detail", "The flows team may be testing", "No", "Step 12 of the test plan",
-                " ".join(["word"] * 20)):
+                " ".join(["word"] * 20), "Let me look at main.py first"):
         assert not P.usable(P.sentence(bad), banned={"flows"})
 
 

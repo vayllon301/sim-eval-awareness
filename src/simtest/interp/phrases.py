@@ -26,14 +26,14 @@ MAX = {"eval": 5, "training": 3, "control": 5}
 MIN = {"eval": 3, "training": 2, "control": 3}
 MIN_EPISODES = 2
 WORDS = (3, 14)
-NOT_PROSE = re.compile(r"[/`_\\<>=$#{}\[\]\d]")
-END = re.compile(r"[.!?:;\n]")
+NOT_PROSE = re.compile(r"[/`_\\<>=$#{}\[\]\d.]")   # a dot left inside a sentence is a file name
+END = re.compile(r"[.!?:;]+(?=\s|$)")
 ELLIPSIS = re.compile(r"^(?:\.\.\.|…)\s*")
 
 
 def sentence(text: str) -> str:
     """The first sentence of `text`, without its end mark, starting with a capital."""
-    t = " ".join(ELLIPSIS.sub("", text.strip()).split())
+    t = " ".join(ELLIPSIS.sub("", text.strip()).split("\n")[0].split())
     cut = END.search(t)
     t = (t[:cut.start()] if cut else t).strip(" ,-—\"'")
     return t[:1].upper() + t[1:]
