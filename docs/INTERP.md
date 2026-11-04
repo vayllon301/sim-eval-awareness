@@ -474,8 +474,8 @@ verbalisation, so a difference can show even if verbalised rates sit near zero.
   their token counts, and one row per scored turn (`turn`, `prefix_len`, `phrases`,
   `groups`, the differences). `phrase_turns` scores only some turns.
 - **Cost.** The generic path calls `token_losses` on prefix + phrase: one forward pass over
-  the whole prefix per turn and phrase. With the draft's 10 phrases that is 4 hundred passes on
-  a 40-turn episode, so it is meant for checks (score a few turns with `--logit-turns`).
+  the whole prefix per turn and phrase. With the draft's 10 phrases that is 400 passes on a
+  40-turn episode, so it is meant for checks (score a few turns with `--logit-turns`).
   The scan makes one pass over the episode and a short pass per turn and phrase. On the
   laptop (Qwen3.8, 4 bits), a 28,728-token C3 episode with 40 turns and 10 phrases took 83.5 s;
   the generic path would take about 5.6M tokens at about 1,000 tokens/s, about 93 minutes.
