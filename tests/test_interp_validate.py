@@ -936,6 +936,19 @@ def test_additive_readings_leave_no_residual_on_any_layout(case):
     assert all(abs(v) < 1e-9 for c in V.centred_curves(rows, "m", stop).values() for v in c.values())
 
 
+def test_a_monitor_the_fit_removes_has_no_correlation_to_report():
+    """What's left is the arithmetic's dust, and ranking that gave a Spearman of 0.961 between two monitors
+    with nothing in them."""
+    rep = build(*additive(*N1))
+    assert rep["disagreements"]["correlations"] and all(v is None for v in rep["disagreements"]["correlations"].values())
+
+
+def test_a_difference_under_the_dust_is_a_tie_in_a_correlation_too():
+    a = [1.0, 2.0, 3.0, 4.0]
+    tied = V._spearman([1.0, 1.0, 3.0, 4.0], a)
+    assert tied != V._spearman([1.0, 1.1, 3.0, 4.0], a) and V._spearman([1.0, 1.0 + 1e-12, 3.0, 4.0], a) == tied
+
+
 def test_a_true_signal_still_scores_high_on_pilot_shapes():
     rep = build(*uneven(0.3, signal=1.0))
     for m in (LOGIT, PROMPT, TOKENS):

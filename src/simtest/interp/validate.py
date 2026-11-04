@@ -563,11 +563,11 @@ def _curve_means(rows: list[dict], monitor: str) -> dict:
 
 def _rank(xs: list[float]) -> np.ndarray:
     x = np.asarray(xs, dtype=np.float64)
-    return np.array([(x < v).sum() + 0.5 * ((x == v).sum() - 1) for v in x])
+    return np.array([(x < v - DUST).sum() + 0.5 * ((np.abs(x - v) <= DUST).sum() - 1) for v in x])
 
 
 def _spearman(a: list[float], b: list[float]) -> float | None:
-    if len(a) < 3 or len(set(a)) < 2 or len(set(b)) < 2:
+    if len(a) < 3 or np.ptp(a) <= DUST or np.ptp(b) <= DUST:
         return None
     return float(np.corrcoef(_rank(a), _rank(b))[0, 1])
 
