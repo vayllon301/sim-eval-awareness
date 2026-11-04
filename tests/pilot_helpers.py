@@ -67,7 +67,8 @@ def verdict(key, positive=True, label="eval_awareness", judge="v3", backend="ins
     r = {"key": f"{key}-{label}", "label": label, "episode": {"key": key}, "value": value, "positive": positive,
          "error": None, "verdict_raw": str(value), "prompt_version": judge, "prompt_sha256": f"sha-{label}",
          "backend": backend, "model": model, "settings": {"temperature": None}, "render_version": 1,
-         "transcript_sha256": "h", "attempts": [{"stop_reason": "stop"}], "alt_values": None}
+         "transcript_sha256": "h", "attempts": [{"stop_reason": "stop"}], "alt_values": None,
+         "scout": {"stop_reason": "stop"} if backend == "scout" else None}
     r.update(over)
     return r
 

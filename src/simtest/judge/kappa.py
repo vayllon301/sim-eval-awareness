@@ -417,8 +417,10 @@ def _differences(recorded: dict, judge: dict) -> list[str]:
 
 def pass_state(path: Path | None, judge: dict) -> dict:
     """{"valid", "reason", "kappa", "ci95", "n", "file"} for this judge against a recorded pass."""
-    no = lambda why, **kw: {"valid": False, "reason": why, "kappa": None, "ci95": None, "n": None,  # noqa: E731
-                            "file": None if path is None else str(path), **kw}
+    def no(why: str, **seen) -> dict:
+        return {"valid": False, "reason": why, "kappa": None, "ci95": None, "n": None,
+                "file": None if path is None else str(path), **seen}
+
     if path is None or not Path(path).is_file():
         return no("no kappa pass recorded: give --kappa <file> (simtest judge kappa ... --record <file>)")
     try:

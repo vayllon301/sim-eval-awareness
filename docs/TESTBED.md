@@ -1662,6 +1662,8 @@ once against the hand labels (kappa).
   - `simtest judge run <manifest.json> --model openrouter/... --prompts <v> --out <file>
     --yes`: the test set, on `inspect` only, with a frozen prompt version (a `FROZEN` file
     in its directory) and no uncommitted change under `prompts/`.
+  - `simtest judge run logs/<run> ... --kappa <pass.json> --yes`: the same, on a run's scored
+    episodes (see [The pilot report](#the-pilot-report-pilotpy)).
   - Any paid call (`inspect` with a model other than `mockllm`) needs `--yes`. Without it
     the command prints the plan (calls, cached, prompt tokens) and stops.
   - `--no-prompt-cache` (`tune` and `run`, `inspect` only): each prompt goes as one string,
@@ -1677,7 +1679,7 @@ once against the hand labels (kappa).
     a disagreement: against the hand label when there is one, else against the judge's value,
     else (neither side has one) whichever way lowers kappa. The
     onset is compared two ways: the eval-awareness onset, and the earliest onset over all
-    labels.
+    labels. `--record <pass.json>` writes the outcome.
   - `simtest judge show <results.jsonl>`: verdict counts, errors and quote failures.
 
 ### Prompt caching (added 03-11-2026)
@@ -1867,6 +1869,8 @@ kappa.
   and stops, and doesn't need the API key. `mockllm/...` runs without `--yes`. Options:
   `--temperature` (default `none`), `--max-tokens`, `--reasoning-effort`, `--seed`,
   `--model-args` (JSON), `--budget`, `--concurrency`.
+- `simtest judge scout logs/<run> ...`: the same, on a run's scored episodes (see
+  [The pilot report](#the-pilot-report-pilotpy)).
 - `simtest judge kappa scout.jsonl labels.jsonl --manifest <manifest.json>`: against the hand labels. The report has
   the primary label only, with a `sensitivity (unsure_as_real)` line under it. No pass line:
   kappa ≥ 0.6 is the primary judge's rule, not this one's.
@@ -1957,6 +1961,95 @@ primary test, and power by simulation for this test.
       `--budget`, it also prints the cheapest design over the budget that does.
     - N3, with the Colab G4 costs (C1's is a guess until measured):
       `uv run simtest power --c0 0.1 --c3 0.35 --cost C0=0.4 C1=4 C2=4 C3=4 --exclusion 0.1`.
+
+## The pilot report (`pilot.py`)
+
+`simtest pilot` turns a run's log directory and the judges' results into the numbers the frozen
+decision rule asks for. The header of [`configs/coding/pilot.yaml`](../configs/coding/pilot.yaml)
+is the spec. The report calls no model, and it lives outside `coding/`, so a change to it never
+changes a run's fingerprint.
+
+After the κ pass and the GPU session, from `experiment/`:
+
+```bash
+# 1. Record the κ pass: the outcome, totals only, with the judge it belongs to.
+uv run simtest judge kappa <kappa.jsonl> <labels.jsonl> --manifest <manifest.json> --record <pass.json>
+
+# 2. The frozen judge on the run's scored episodes, with the κ pass's settings. Without --yes it
+#    prints the plan (calls, cached, prompt tokens) and stops. Rerunning resumes from the cache.
+uv run --env-file ../.env simtest judge run logs/n2-pilot --kappa <pass.json> --out logs/n2-pilot-judge.jsonl \
+  --model openrouter/anthropic/claude-haiku-5.5 --prompts v3 --reasoning-effort high --temperature none \
+  --model-args '{"provider": {"order": ["anthropic"], "allow_fallbacks": false}}'
+
+# 3. The second judge on the same episodes (no κ record: it has no pass line).
+uv run --env-file ../.env simtest judge scout logs/n2-pilot --out logs/n2-pilot-scout.jsonl \
+  --model openrouter/deepseek/deepseek-v4.1-flash-1017 --reasoning-effort high \
+  --model-args '{"provider": {"order": ["deepinfra/fp8"], "allow_fallbacks": false, "data_collection": "deny"}}'
+
+# 4. The report. --units is the session's spend, from the watchdog's log.
+uv run simtest pilot logs/n2-pilot --judge logs/n2-pilot-judge.jsonl --scout logs/n2-pilot-scout.jsonl \
+  --kappa <pass.json> [--units 140] [--json]
+```
+
+- **Judging a log directory** (`judge/episodes.py`, `scored_episodes`). The episodes come from
+  `load_run`, as `simtest summarize` counts them: a sample run once, from its newest log, with a
+  valid end. Unscored ones aren't judged, and the command says how many it left out. An episode's
+  key is `<run>::<sample uuid>`, so a resumed run that copies a finished sample into a newer log
+  keeps its cache. The prompts, the rendering, the results' shape, the cost plan and `--yes` are the
+  test set's.
+- **The κ pass** (`judge/kappa.py`). `--record` needs the hand labels and the manifest, and writes
+  pass or no pass, κ, its interval, n, the hashes of the three files and the judge: prompt version,
+  each label's prompt hash, backend, model, settings and renderer. A pass needs a complete comparison
+  and κ ≥ 0.6, on the primary label. A paid `judge run` on a log directory refuses without a record
+  for that same judge, so another model, prompt or setting needs a new κ pass. `simtest pilot`
+  prints a judge with no such record as **NOT VALID**, marks its tables, and holds the power
+  calculation. The second judge needs no record.
+- **Rates and differences.** Per condition and per scenario, over scored episodes with a verdict,
+  with Wilson 95% intervals. A Wilson interval is for one rate, so a difference gets Newcombe's
+  interval, built from the two rates' Wilson intervals (1998, method 10). `all` is the pooled rate.
+  The pilot's differences are reported only; no test runs on them.
+- **Judge errors.** A scored episode with no verdict is a judge error, whatever the cause: a
+  refusal, a content filter, a second unusable answer, `too_long`, a backend error or cut answer
+  not yet retried, or no result at all (`not judged`). The last three are not final: rerun the
+  judge's command. Errors are counted per condition, label and cause and left out of the rates.
+  Beside each rate and difference are two bounds, as the rule words them: every error EVAL, and
+  every error REAL, in both conditions of a difference alike. The second judge is reported the same
+  way, with its strict reading on one line.
+- **The gate.** 2 or more of a condition's scored episodes with no primary verdict hold the power
+  calculation: its inputs aren't printed. Scout's errors have no gate.
+- **The inputs to `simtest power`**, from a condition's per-scenario rates:
+  - On the logit scale a rate of 0 or 1 takes half an episode, (k + 0.5) / (n + 1), and no other
+    rate changes. A scenario with no verdict is left out.
+  - `--c0`: the median of the logit rates, back on the rate scale. With an even number of scenarios
+    that is the midpoint on the logit scale. It is 0 if C0 sits at zero: no EVAL in any scenario,
+    the sense `stats/power.py` gives it.
+  - `--spread`: the sample SD of the logit rates, never below 0.5.
+  - `--c3 = --c0 + 0.10`, `--effect-spread 0.25`, 10,000 simulated runs, power counted only for
+    C3 > C0. The tables at 0 and 0.5 are printed, labelled as not used for the decision.
+  - The same again with C2 in place of C0, for H2.
+  - N3's repeats per number of scenarios, and the planned repeats at the higher exclusion rate of
+    the two conditions. A condition's exclusion rate is its designed episodes not scored.
+  - The inputs are rounded to 4 decimals before the simulation, so the printed command gives the
+    same tables.
+- **The failure conditions**, each `pass`, `FAIL` or `not available`: scored episodes per condition
+  (the 5-of-6 rule; `not available` while enough episodes are still to run), the floor (power at 16
+  scenarios and 30 repeats), the fix (a kept command line in under 1% of C3's bash steps), and C2's
+  divergent-step rate against C3's. That last rule reads the crude rate of `simtest summarize`; the
+  graded ratio is printed beside it. Then what follows, in the rule's words.
+- **Exclusions.** Flagged episodes by end reason. Infrastructure errors by cause (the error's last
+  line), as reruns when their episode has a final attempt, otherwise as errors with no final attempt.
+  An interrupted attempt known only from `queue.jsonl` counts the same way. Every episode has a line
+  at the end, attempts included.
+- **Reused:** `coding.analysis` (exclusions, notes, warnings, the summary tables, the divergent-step
+  rate), `post/fidelity.py` (the graded tables), `runqueue` (the batch mix), `stats/power.py`.
+- **Read here:** minutes per episode from `queue.jsonl` (the time each finished attempt held its
+  slot), simulator tokens per call and the resampling counts from the step records
+  (`CodingEpisode:simulator_calls`). Resampled steps per bash step and the rate before resampling are
+  one number: a step is resampled when its first reply was rejected.
+- **Not available:** KV use and preemptions (the servers' metrics aren't in the log directory), the
+  plausibility of `needs_judgement` steps (`simtest fidelity --judge-model`, a paid step), and units
+  per episode unless `--units` gives the session's spend. With it, units are shared out by the time
+  each condition held the slots, failed attempts included.
 
 ## Post-episode measures (`post/`)
 
@@ -2121,7 +2214,10 @@ labels: the transcript strips the bookkeeping and shows C3's simulated output
 saving and resuming labels through the server (`test_judge_labels`). The judge: strict JSON and one
 retry, quotes checked against the rendering, ambiguous read as the negative, the test set
 refused for tuning, cache keys, the budget, the codex command and events, and kappa on known
-examples (`test_judge_judge`). Prompt caching (`test_judge_cache`): the request Inspect's
+examples (`test_judge_judge`). The judges on a log directory and the recorded κ pass (`test_judge_logdir`).
+The pilot report (`test_pilot_report`): the bounds' arithmetic, the gate, a mix of causes, the
+logit scale, each failure condition, and the whole command on a real run with fake machines.
+Prompt caching (`test_judge_cache`): the request Inspect's
 OpenRouter provider would send, captured offline, holds two blocks that join to the exact
 prompt with `cache_control` on the prefix only; other models and `--no-prompt-cache` send one
 string; the settings and the cache key; the CLI flag; and the order of the calls (each

@@ -50,6 +50,7 @@ DEFAULT_SCENARIOS = (8, 10, 12, 14, 16)
 DEFAULT_REPEATS = (5, 10, 15, 20, 25, 30)
 DEFAULT_TARGET = 0.8
 DEFAULT_MIN_SCENARIOS = 8
+DEFAULT_SEED = 20261102
 DIRECTIONS = ("any", "greater", "less")    # which rejections count: "greater" is C3 above C0
 
 
@@ -384,7 +385,7 @@ def add_parser(sub) -> None:
                    help="the rejections power counts: default C3 > C0 (greater) for the two-sided test, the test's "
                         "own side when one-sided; any counts a reversed effect too")
     p.add_argument("--reps", type=int, default=10_000, help="simulated runs per cell")
-    p.add_argument("--seed", type=int, default=20261102)
+    p.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p.add_argument("--label", default=None, help='printed on every table, e.g. "development, not the pilot"')
     p.add_argument("--json", action="store_true")
     g = p.add_argument_group("cheapest design", "with --cost, rank the grid's designs that reach --target by cost")

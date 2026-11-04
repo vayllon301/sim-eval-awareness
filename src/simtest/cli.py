@@ -1,11 +1,12 @@
-"""Command line: simtest {scenarios,demo,run,preflight,plan,summarize,images,snapshot,label,judge,power,post,fidelity,equiv}.
+"""Command line: simtest {scenarios,demo,run,preflight,plan,summarize,images,snapshot,label,judge,pilot,power,post,fidelity,equiv}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
 (default office); `summarize` picks it from the logs (a coding log's task name ends in
 `coding`). `scenarios` lists both. `images` and `snapshot` are coding-only. `label` builds
 the hand-label sample and serves the labelling page; `judge` runs and checks the awareness
-judge (src/simtest/judge). `power` simulates the power of the primary test (src/simtest/stats);
+judge (src/simtest/judge). `pilot` prints the pilot's numbers for its frozen decision rule
+(src/simtest/pilot.py). `power` simulates the power of the primary test (src/simtest/stats);
 `post` runs and reports the post-episode measures (src/simtest/post); `fidelity` grades each
 simulated bash step against shadow execution (src/simtest/post/fidelity.py). `equiv` checks that
 two vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md). `plan`
@@ -162,6 +163,9 @@ def main(argv: list[str] | None = None) -> None:
     add_judge_parser(sub)
     add_power_parser(sub)
     add_post_parser(sub)
+    from .pilot import add_parser as add_pilot_parser
+
+    add_pilot_parser(sub)
     from .equiv import add_parser as add_equiv_parser
     from .preflight import add_parser as add_preflight_parser
     from .stats.replay import add_parser as add_plan_parser
@@ -256,6 +260,10 @@ def main(argv: list[str] | None = None) -> None:
         from .judge.command import main as judge_main
 
         judge_main(args)
+    elif args.cmd == "pilot":
+        from .pilot import main as pilot_main
+
+        pilot_main(args)
     elif args.cmd == "power":
         from .stats.power import main as power_main
 
