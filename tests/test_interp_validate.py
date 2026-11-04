@@ -56,6 +56,7 @@ def make(signal=1.0, aware=lambda e: e["condition"] == "C3" and e["epoch"] < 3, 
 
 
 def build(eps, res, read, kappa=KAPPA_OK, **kw):
+    kw.setdefault("phrases", V.phrase_state(read, {"status": "draft", "groups": {}}, "p" * 64, "n2-pilot"))
     return V.build(eps, DESIGN, res, read, layer=LAYER, kappa=kappa, **kw)
 
 
@@ -433,6 +434,126 @@ def test_a_sentence_from_this_world_alone_isnt_scored_on_this_world():
     assert V._curves(reading, None, provenance=prov, scenario="a_benign")["logit:eval"][1] == pytest.approx(0.0)
     assert V._curves(reading, None, provenance=prov, scenario="b")["logit:eval"][1] == pytest.approx(0.5)
     assert V._curves(reading, None)["logit:eval"][1] == pytest.approx(0.5)
+
+
+def test_a_sentence_isnt_scored_on_its_own_episodes():
+    prov = {"Picked": {"group": "eval", "source": "pilot", "episodes": 2, "pairs": ["a", "b"], "uuids": ["u", "w"]},
+            "Other": {"group": "eval", "source": "pilot", "episodes": 2, "pairs": ["a", "b"], "uuids": ["w", "x"]},
+            "Ctl": {"group": "control", "source": "pilot", "episodes": 9, "pairs": ["a", "b"], "uuids": ["w", "x"]}}
+    reading = {"summary": None, "logit": two_phrases("u")}
+    assert V._curves(reading, None, provenance=prov, scenario="b", uuid="u")["logit:eval"][1] == pytest.approx(0.0)
+    assert V._curves(reading, None, provenance=prov, scenario="b", uuid="z")["logit:eval"][1] == pytest.approx(0.5)
+
+
+def test_a_control_isnt_scored_on_its_own_episodes_either():
+    prov = {"Picked": {"group": "eval", "source": "draft", "episodes": 0, "pairs": [], "uuids": []},
+            "Other": {"group": "eval", "source": "draft", "episodes": 0, "pairs": [], "uuids": []},
+            "Ctl": {"group": "control", "source": "pilot", "episodes": 9, "pairs": ["a", "b"], "uuids": ["u"]}}
+    assert V._curves({"summary": None, "logit": two_phrases("u")}, None, provenance=prov, scenario="a", uuid="u")["logit:eval"] == {}
+
+
+def phrases_reading(uuid, levels, turns=6):
+    """A logit reading of sentences {text: (group, level)}, no awareness signal anywhere."""
+    rows = list(levels.items())
+    return {"summary": None, "logit": {"episode": {"uuid": uuid}, "logit_monitor": {
+        "status": "c", "path": "continuation_scan", "phrases_sha256": "p" * 64,
+        "phrases": [{"group": g, "text": s, "n_tokens": 2} for s, (g, _) in rows],
+        "by_turn": [{"turn": t, "prefix_len": 1, "phrases": [{"logprob": 0.0, "mean": v} for _, (_, v) in rows],
+                     "groups": {}, "eval_minus_control": {"logprob": 0.0, "mean": 0.0}} for t in range(turns)]}}}
+
+
+def cross_fitted(prov, doc_run="n2-pilot"):
+    return {"state": "picked on this run", "cross_fitted": True, "provenance": prov, "file_sha256": "p" * 64, "readings_sha256": ["p" * 64]}
+
+
+def test_leaving_a_sentence_out_of_its_episodes_doesnt_shift_them_by_its_level():
+    """The sentences come from EVAL episodes, so those are the ones that lose them. A sentence's level
+    says nothing about awareness, and read on the group mean it would pass for a signal: the EVAL
+    episodes here would read lower only because the likely sentence is gone."""
+    eps = full()
+    aware = [e for e in eps if e["condition"] == "C3" and e["epoch"] < 3]
+    levels = {"Likely": ("eval", -1.0), "Unlikely": ("eval", -7.0), "Ctl": ("control", -4.0)}
+    prov = {"Likely": {"group": "eval", "source": "pilot", "episodes": len(aware), "pairs": ["a", "b", "c"], "uuids": sorted(e["uuid"] for e in aware)},
+            "Unlikely": {"group": "eval", "source": "draft", "episodes": 0, "pairs": [], "uuids": []},
+            "Ctl": {"group": "control", "source": "draft", "episodes": 0, "pairs": [], "uuids": []}}
+    read = {e["uuid"]: phrases_reading(e["uuid"], levels) for e in eps}
+    res = []
+    for e in eps:
+        pos = e in aware
+        res.append(verdict(e["judge_key"], positive=pos, onset="t4" if pos else "none", first_step="t4" if pos else "none"))
+    r = build(eps, res, read, phrases=cross_fitted(prov))["monitors"]["logit:eval"]["labels"]["eval_awareness"]
+    assert r["n_pos"] == 12 and r["auroc"] == pytest.approx(0.5)
+
+
+def test_an_episode_left_with_no_sentence_is_counted():
+    """18 of 54 vanished with no_window 0 and errors 0: one world pair's whole group came from it."""
+    eps = full()
+    levels = {"Here": ("eval", -1.0), "Ctl": ("control", -4.0)}
+    prov = {"Here": {"group": "eval", "source": "pilot", "episodes": 2, "pairs": ["a"], "uuids": ["C3-a-1", "C3-a-2"]},
+            "Ctl": {"group": "control", "source": "draft", "episodes": 0, "pairs": [], "uuids": []}}
+    read = {e["uuid"]: phrases_reading(e["uuid"], levels) for e in eps}
+    res = [verdict(e["judge_key"], positive=e["epoch"] == 1, onset="t4" if e["epoch"] == 1 else "none",
+                   first_step="t4" if e["epoch"] == 1 else "none") for e in eps]
+    r = build(eps, res, read, phrases=cross_fitted(prov))["monitors"]["logit:eval"]["labels"]["eval_awareness"]
+    assert r["no_curve"] == 18 and r["n_pos"] + r["n_neg"] == 36 and r["no_window"] == 0 and r["errors"] == 0
+
+
+def state_of(read, doc=None, sha=None, run="n2-pilot"):
+    return V.phrase_state(read, doc, sha, run)
+
+
+PICKED = {"status": V.PICKED + "eval 3 from the pilot", "run": "n2-pilot", "groups": {},
+          "provenance": {"Picked": {"group": "eval", "source": "pilot", "episodes": 2, "pairs": ["a", "b"], "uuids": ["x", "y"]}}}
+
+
+def test_readings_of_another_phrase_file_are_refused():
+    _, _, read = make()
+    with pytest.raises(V.PhraseError, match="other"):
+        state_of(read, PICKED, "q" * 64)
+
+
+def test_readings_of_two_phrase_files_are_refused():
+    eps, _, read = make()
+    read[eps[0]["uuid"]]["logit"]["logit_monitor"]["phrases_sha256"] = "q" * 64
+    with pytest.raises(V.PhraseError, match="mix"):
+        state_of(read, PICKED, "p" * 64)
+
+
+def test_readings_of_picked_sentences_need_their_file():
+    eps, _, read = make()
+    for r in read.values():
+        r["logit"]["logit_monitor"]["status"] = PICKED["status"]
+    with pytest.raises(V.PhraseError, match="--phrases"):
+        state_of(read)
+    assert state_of(read, PICKED, "p" * 64)["cross_fitted"] is True
+
+
+def test_the_file_of_another_run_scores_everywhere_and_isnt_called_cross_fitted():
+    _, _, read = make()
+    s = state_of(read, {**PICKED, "run": "n3"}, "p" * 64)
+    assert s["state"] == "picked on another run" and s["cross_fitted"] is False and s["provenance"] is None
+
+
+def test_a_draft_file_has_nothing_to_cross_fit():
+    _, _, read = make()
+    s = state_of(read, {"status": "draft", "groups": {}}, "p" * 64)
+    assert s["state"] == "draft sentences" and s["cross_fitted"] is False
+
+
+def test_without_a_phrase_file_the_report_says_so_and_chooses_nothing():
+    eps, res, read = make(signal=1.5)
+    rep = build(eps, res, read, phrases=state_of(read))
+    assert rep["rule"]["chosen"] is None and rep["rule"]["status"] == "no phrase file" and rep["cross_fitted"] is False
+    assert "NO PHRASE FILE" in V.format_report(rep)
+
+
+def test_without_logit_readings_the_rule_chooses_nothing():
+    """A rival would win by default, against a monitor nobody read."""
+    eps, res, read = make(signal=1.5)
+    for r in read.values():
+        r["logit"] = None
+    rep = build(eps, res, read, phrases=state_of(read))
+    assert rep["rule"]["chosen"] is None and rep["rule"]["status"] == "no logit readings"
 
 
 def test_a_draft_sentence_is_scored_everywhere():

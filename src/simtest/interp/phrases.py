@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from typing import Callable, Iterable
 
-from .validate import pair_of
+from .validate import PICKED, pair_of
 
 MAX = {"eval": 5, "training": 3, "control": 5}
 MIN = {"eval": 3, "training": 2, "control": 3}
@@ -104,7 +104,7 @@ def pick(results: list[dict], episodes: list[dict], turn_texts: Callable[[str], 
                 groups[group].append(t)
                 provenance.setdefault(t, {"group": group, "source": "draft", "episodes": 0, "pairs": [], "uuids": []})
     counts = {g: [sum(provenance[t]["source"] == where for t in groups[g]) for where in ("pilot", "draft")] for g in MAX}
-    return {"status": "DRAFT rule, not frozen: " + "; ".join(f"{g} {p} from the pilot, {d} from the draft file"
+    return {"status": PICKED + "; ".join(f"{g} {p} from the pilot, {d} from the draft file"
                                                              for g, (p, d) in counts.items()),
             "source": f"The frozen judge's verified quotes on {run or 'the pilot'} (simtest interp phrases, docs/INTERP.md), "
                       "filled from the draft file where a group is short.",

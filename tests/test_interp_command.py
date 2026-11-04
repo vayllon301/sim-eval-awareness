@@ -9,6 +9,7 @@ import pytest
 from pilot_helpers import DESIGN, full, verdict
 from simtest.cli import main
 from simtest.interp import command as C
+from simtest.interp.meta import file_sha256
 from test_interp_validate import KAPPA_OK, logit, make, summary
 
 
@@ -34,13 +35,16 @@ def test_the_report_prints_from_its_files(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(C, "_run", lambda d: (eps, DESIGN))
     monkeypatch.setattr(C, "_judge", lambda j, k: (res, KAPPA_OK))
     (tmp_path / "r").mkdir()
+    file = tmp_path / "p.json"
+    file.write_text(json.dumps({"status": "draft", "groups": {}}))
     for u, r in read.items():
+        r["logit"]["logit_monitor"]["phrases_sha256"] = file_sha256(file)
         (tmp_path / "r" / f"{u}.summary.json").write_text(json.dumps(r["summary"]))
         (tmp_path / "r" / f"{u}.logit.json").write_text(json.dumps(r["logit"]))
-    C.main(report_args(tmp_path, judge=tmp_path / "j", kappa=tmp_path / "k"))
+    C.main(report_args(tmp_path, judge=tmp_path / "j", kappa=tmp_path / "k", phrases=file))
     out = capsys.readouterr().out
     assert "layer 42" in out and "logit:eval" in out and "DRAFT rule" in out and "chosen:" in out
-    C.main(report_args(tmp_path, judge=tmp_path / "j", kappa=tmp_path / "k", json=True))
+    C.main(report_args(tmp_path, judge=tmp_path / "j", kappa=tmp_path / "k", phrases=file, json=True))
     assert json.loads(capsys.readouterr().out)["rule"]["status"] == "chosen"
 
 
@@ -62,6 +66,32 @@ def test_sentences_come_only_from_a_judge_that_passed(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="NOT VALID"):
         C.main(args)
     assert not (tmp_path / "p.json").exists()
+
+
+def test_a_report_refuses_a_phrase_file_that_isnt_the_readings(tmp_path, monkeypatch, capsys):
+    eps = full()
+    monkeypatch.setattr(C, "_run", lambda log_dir: (eps, DESIGN))
+    (tmp_path / "r").mkdir()
+    for e in eps:
+        (tmp_path / "r" / f"{e['uuid']}.logit.json").write_text(json.dumps(logit(e["uuid"], {1: 0.5})))
+    other = tmp_path / "p.json"
+    other.write_text(json.dumps({"status": "draft", "groups": {}}))
+    with pytest.raises(SystemExit, match="other"):
+        C.main(report_args(tmp_path, phrases=other))
+
+
+def test_a_report_reads_the_phrase_files_hash(tmp_path, monkeypatch, capsys):
+    eps = full()
+    monkeypatch.setattr(C, "_run", lambda log_dir: (eps, DESIGN))
+    (tmp_path / "r").mkdir()
+    good = tmp_path / "p.json"
+    good.write_text(json.dumps({"status": "draft", "groups": {}}))
+    for e in eps:
+        reading = logit(e["uuid"], {1: 0.5})
+        reading["logit_monitor"]["phrases_sha256"] = file_sha256(good)
+        (tmp_path / "r" / f"{e['uuid']}.logit.json").write_text(json.dumps(reading))
+    C.main(report_args(tmp_path, phrases=good))
+    assert "the draft file" in capsys.readouterr().out
 
 
 def test_phrases_write_a_file_the_reader_can_take(tmp_path, monkeypatch):

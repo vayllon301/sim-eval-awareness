@@ -37,7 +37,7 @@ def add_parser(sub) -> None:
     r.add_argument("log_dir", type=Path)
     r.add_argument("--readings", type=Path, default=None, help="default: logs/read/<name>/readings")
     r.add_argument("--judge", type=Path, default=None), r.add_argument("--kappa", type=Path, default=None)
-    r.add_argument("--phrases", type=Path, default=None, help="the phrase file, when its sentences were picked on this run")
+    r.add_argument("--phrases", type=Path, default=None, help="the phrase file the logit readings used: its hash must be theirs")
     r.add_argument("--layer", type=int, default=None), r.add_argument("--json", action="store_true")
 
 
@@ -99,14 +99,19 @@ def main(args) -> None:
         print(f"wrote {args.out}: " + ", ".join(f"{g} {len(v)}" for g, v in doc["groups"].items()))
     elif cmd == "report":
         from . import validate as V
+        from .meta import file_sha256
 
         episodes, design = _run(args.log_dir)
         readings = V.load_readings(args.readings or default_dir(args.log_dir, "readings"))
         results, kappa = _judge(args.judge, args.kappa) if args.judge else (None, None)
-        provenance = json.loads(args.phrases.read_text()).get("provenance") if args.phrases else None
+        doc = json.loads(args.phrases.read_text()) if args.phrases else None
+        try:
+            phrases = V.phrase_state(readings, doc, file_sha256(args.phrases) if args.phrases else None, args.log_dir.name)
+        except V.PhraseError as exc:
+            raise SystemExit(str(exc)) from exc
         layers = V.reading_layers(readings)
         if args.layer is None and len(layers) > 1:
             raise SystemExit(f"these readings hold layers {layers}: give --layer (the vector file's chosen layer)")
         rep = V.build(episodes, design, results, readings, layer=args.layer or (layers[0] if layers else None), kappa=kappa,
-                      run=args.log_dir.name, provenance=provenance)
+                      run=args.log_dir.name, phrases=phrases)
         print(V.dumps(rep) if args.json else V.format_report(rep))

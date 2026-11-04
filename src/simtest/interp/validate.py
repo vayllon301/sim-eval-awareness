@@ -9,9 +9,16 @@ No model calls. Pilot episodes calibrate: nothing here is evidence for a compari
 tokens, per turn, for every vector at the reading's layer (`prompt_end:<vector>`, `agent_tokens:<vector>`,
 both centred on the vector file's neutral offset), and the logit monitor, each group minus control,
 mean log-prob per token (`logit:eval`, `logit:training`). SAE latents are not monitors here: which
-latents to track is N5's question. With `--phrases`, sentences picked on the pilot are never scored on
-the world they came from alone (`_logit_curves`), since a sentence picked on an episode can't validate
-on it.
+latents to track is N5's question.
+
+**The sentences** (`phrase_state`). The phrase file must be the one the readings used: its hash against
+their `phrases_sha256`, or the report refuses. Readings of sentences picked on a run are refused without
+it; other readings say there is no file, and the rule chooses nothing. Sentences picked on this run are
+never scored on their own episodes or on a world pair they came from alone (`_allowed`), since a sentence
+picked on an episode can't validate on it. Those sentences came from EVAL episodes, so leaving them out
+would move those episodes by the sentence's level, which says nothing about awareness: each sentence is
+centred on its own, then averaged (`centred_curves`). Sentences picked on another run are scored on every
+episode.
 
 **An episode's value** for a monitor is built so that a condition, a scenario, a trend through the
 episode or the label itself can't pass for a signal:
@@ -74,6 +81,11 @@ MIN_CLASS = 6        # EVAL and REAL episodes with a window
 MIN_PAIRS = 2        # world pairs with an EVAL episode
 TIE = 0.03           # candidates this close are a tie
 TWIN_MARGIN = 0.05   # a twin this close to the candidate means the reading isn't specific to evaluation
+PICKED = "DRAFT rule, not frozen: "     # how a phrase file picked on a run starts its status (phrases.py)
+
+
+class PhraseError(ValueError):
+    pass
 
 
 # --- the pieces ------------------------------------------------------------------------------------
@@ -151,35 +163,63 @@ def centred_curves(rows: list[dict], monitor: str, last: dict[str, int | None] |
     into every other episode's value."""
     last = last or {}
 
-    def kept(r: dict) -> dict[int, float]:
+    def kept(r: dict, curve: dict[int, float]) -> dict[int, float]:
         end = last.get(r["uuid"])
-        return {t: v for t, v in r["curves"].get(monitor, {}).items() if end is None or t <= end}
+        return {t: v for t, v in curve.items() if end is None or t <= end}
 
-    return _two_way(rows, {r["uuid"]: kept(r) for r in rows})
+    def side(name: str) -> dict[str, dict[int, float]]:
+        """One side of a monitor on sentences: each sentence centred on its own, then averaged."""
+        curve = lambda r, s: r.get("sentences", {}).get(monitor, {}).get(name, {}).get(s, {})
+        texts = sorted({s for r in rows for s in r.get("sentences", {}).get(monitor, {}).get(name, {})})
+        turns: dict = defaultdict(lambda: defaultdict(list))
+        for s in texts:
+            for u, c in _two_way(rows, {r["uuid"]: kept(r, curve(r, s)) for r in rows}).items():
+                for t, v in c.items():
+                    turns[u][t].append(v)
+        return {u: {t: float(np.mean(v)) for t, v in c.items()} for u, c in turns.items()}
+
+    if not any(monitor in r.get("sentences", {}) for r in rows):
+        return _two_way(rows, {r["uuid"]: kept(r, r["curves"].get(monitor, {})) for r in rows})
+    group, control = side("group"), side("control")
+    return {r["uuid"]: {t: round(v - control[u][t], 10) for t, v in group.get(u, {}).items() if t in control.get(u, {})}
+            for r in rows for u in [r["uuid"]]}
 
 
-def _logit_curves(logit: dict, provenance: dict, scenario: str) -> dict[str, dict[int, float]]:
-    """Each group minus control per turn, on the sentences allowed in this scenario's world: drafts,
-    controls, and sentences that also came from another world."""
+def _allowed(logit: dict, provenance: dict, scenario: str, uuid: str) -> dict[str, list[int]]:
+    """{group: the sentences this episode may be scored on}: drafts, and sentences that didn't come
+    from this episode and also came from another world pair."""
     pair = pair_of(scenario)
 
-    def allowed(p: dict) -> bool:
+    def ok(p: dict) -> bool:
         where = provenance.get(p["text"]) or {}
-        return p["group"] == "control" or where.get("source") != "pilot" or bool(set(where.get("pairs") or []) - {pair})
+        return where.get("source") != "pilot" or (uuid not in (where.get("uuids") or [])
+                                                  and bool(set(where.get("pairs") or []) - {pair}))
 
-    out: dict[str, dict[int, float]] = {}
-    groups = sorted({p["group"] for p in logit["phrases"]} - {"control"})
-    index = {g: [i for i, p in enumerate(logit["phrases"]) if p["group"] == g and allowed(p)] for g in (*groups, "control")}
-    for g in groups:
-        out[f"logit:{g}"] = {} if not index[g] or not index["control"] else {
-            r["turn"]: float(np.mean([r["phrases"][i]["mean"] for i in index[g]])
-                             - np.mean([r["phrases"][i]["mean"] for i in index["control"]]))
-            for r in logit["by_turn"] if r["phrases"]}
-    return out
+    return {g: [i for i, p in enumerate(logit["phrases"]) if p["group"] == g and ok(p)]
+            for g in sorted({p["group"] for p in logit["phrases"]} | {"control"})}
 
 
-def _curves(reading: dict, layer: int | None, *, provenance: dict | None = None,
-            scenario: str = "") -> dict[str, dict[int, float]]:
+def _logit_curves(logit: dict, provenance: dict, scenario: str, uuid: str) -> dict[str, dict[int, float]]:
+    """Each group minus control per turn, on the sentences this episode may be scored on."""
+    index = _allowed(logit, provenance, scenario, uuid)
+    return {f"logit:{g}": {} if not at or not index["control"] else {
+        r["turn"]: float(np.mean([r["phrases"][i]["mean"] for i in at]) - np.mean([r["phrases"][i]["mean"] for i in index["control"]]))
+        for r in logit["by_turn"] if r["phrases"]} for g, at in index.items() if g != "control"}
+
+
+def _sentence_curves(logit: dict, provenance: dict, scenario: str, uuid: str) -> dict[str, dict]:
+    """{monitor: {"group": {sentence: curve}, "control": {sentence: curve}}}, for `centred_curves`."""
+    index = _allowed(logit, provenance, scenario, uuid)
+
+    def side(at: list[int]) -> dict[str, dict[int, float]]:
+        return {logit["phrases"][i]["text"]: {r["turn"]: r["phrases"][i]["mean"] for r in logit["by_turn"] if r["phrases"]} for i in at}
+
+    return {f"logit:{g}": {"group": side(at), "control": side(index["control"])}
+            for g, at in index.items() if g != "control" and at and index["control"]}
+
+
+def _curves(reading: dict, layer: int | None, *, provenance: dict | None = None, scenario: str = "",
+            uuid: str = "") -> dict[str, dict[int, float]]:
     out: dict[str, dict[int, float]] = {}
     summary = reading.get("summary")
     for key, rows in (summary or {}).get("by_turn", {}).items():
@@ -190,7 +230,7 @@ def _curves(reading: dict, layer: int | None, *, provenance: dict | None = None,
             out[f"{monitor}:{name}"] = {r["turn"]: r[field] for r in rows if r.get(field) is not None}
     logit = (reading.get("logit") or {}).get("logit_monitor")
     if logit and provenance:
-        out.update(_logit_curves(logit, provenance, scenario))
+        out.update(_logit_curves(logit, provenance, scenario, uuid))
     elif logit:
         for key in sorted({k for r in logit["by_turn"] for k in r if k.endswith("_minus_control")}):
             out[f"logit:{key.removesuffix('_minus_control')}"] = {r["turn"]: r[key]["mean"] for r in logit["by_turn"] if r[key]}
@@ -214,6 +254,30 @@ def load_readings(path: str | Path) -> dict[str, dict]:
         r.setdefault("summary", None)
         r.setdefault("logit", None)
     return out
+
+
+def phrase_state(readings: dict, doc: dict | None, sha256: str | None, run: str | None) -> dict:
+    """What the logit readings were read with, against the phrase file given (the module docstring).
+    Raises PhraseError when the file isn't theirs."""
+    logits = [m for r in readings.values() if (m := (r.get("logit") or {}).get("logit_monitor"))]
+    seen = sorted({str(m.get("phrases_sha256")) for m in logits})
+    base = {"file_sha256": sha256, "readings_sha256": seen, "cross_fitted": False, "provenance": None}
+    if not logits:
+        return {**base, "state": "no logit readings"}
+    if len(seen) > 1:
+        raise PhraseError(f"these readings mix {len(seen)} phrase files: {seen}")
+    if doc is None:
+        if any(str(m.get("status")).startswith(PICKED) for m in logits):
+            raise PhraseError("these readings use sentences picked on a run: give --phrases with that file")
+        return {**base, "state": "no phrase file"}
+    if seen != [sha256]:
+        raise PhraseError(f"the readings used another phrase file: theirs is {seen[0]}, this one is {sha256}")
+    provenance = doc.get("provenance") or {}
+    if not any(p.get("source") == "pilot" for p in provenance.values()):
+        return {**base, "state": "draft sentences"}
+    if doc.get("run") != run:
+        return {**base, "state": "picked on another run"}
+    return {**base, "state": "picked on this run", "cross_fitted": True, "provenance": provenance}
 
 
 def _labels(results: list[dict] | None) -> dict:
@@ -364,18 +428,22 @@ def apply_rule(table: dict[str, dict], *, n_pos: int, n_neg: int, pairs: int) ->
 
 
 def build(episodes: list[dict], design: dict, results: list[dict] | None, readings: dict, *, layer: int | None,
-          kappa: dict | None, run: str | None = None, provenance: dict | None = None) -> dict:
-    """Everything the report prints. `episodes` as `load_run` gives them, with `judge_key`;
-    `provenance` is the phrase file's, when its sentences were picked on this run."""
+          kappa: dict | None, run: str | None = None, phrases: dict | None = None) -> dict:
+    """Everything the report prints. `episodes` as `load_run` gives them, with `judge_key`; `phrases`
+    from `phrase_state`, on the file given, if any."""
     from ..coding import analysis as A
 
+    phrases = phrases or phrase_state(readings, None, None, run)
+    provenance = phrases["provenance"]
     scored = [e for e in episodes if not A.is_excluded(e)]
     rows = []
     for e in scored:
         reading = readings.get(e["uuid"])
+        logit = ((reading or {}).get("logit") or {}).get("logit_monitor")
         if reading and (reading.get("summary") or reading.get("logit")):
             rows.append({**{k: e[k] for k in ("uuid", "condition", "scenario", "epoch", "metrics")}, "judge_key": e["judge_key"],
-                         "curves": _curves(reading, layer, provenance=provenance, scenario=e["scenario"]),
+                         "curves": _curves(reading, layer, provenance=provenance, scenario=e["scenario"], uuid=e["uuid"]),
+                         "sentences": _sentence_curves(logit, provenance, e["scenario"], e["uuid"]) if provenance and logit else {},
                          "summary": reading.get("summary")})
     by = _labels(results)
     monitors = sorted({m for r in rows for m in r["curves"]})
@@ -415,7 +483,8 @@ def build(episodes: list[dict], design: dict, results: list[dict] | None, readin
             entry["behaviour"][name] = {**_score(rows, all_turns, labels), "no_curve": sum(all_turns[u] is None for u in labels),
                                         "no_metric": len(rows) - len(labels)}
         out[m] = entry
-    rep = {"run": run, "layer": layer, "judge": {"verdicts": bool(results), "kappa": kappa}, "cross_fitted": bool(provenance),
+    rep = {"run": run, "layer": layer, "judge": {"verdicts": bool(results), "kappa": kappa}, "cross_fitted": phrases["cross_fitted"],
+           "phrases": {k: v for k, v in phrases.items() if k != "provenance"},
            "conditions": design["conditions"], "scenarios": design["scenarios"],
            "coverage": _coverage(episodes, rows, scored, readings), "monitors": out,
            "disagreements": _disagreements(rows, primary_values, primary_labels)}
@@ -429,6 +498,11 @@ def _rule(rep: dict, rows: list[dict], values: dict, labels: dict, results, kapp
         return {**none, "status": "no verdicts", "why": "give --judge and --kappa"}
     if not (kappa and kappa.get("valid")):
         return {**none, "status": "not valid", "why": (kappa or {}).get("reason") or "no kappa pass"}
+    state = rep["phrases"]["state"]
+    if state == "no phrase file":
+        return {**none, "status": state, "why": "give --phrases: nothing shows where the logit sentences came from"}
+    if state == "no logit readings":
+        return {**none, "status": state, "why": "the rule compares against the logit monitor, and nothing has read it"}
     mons = rep["monitors"]
     table = {}
     for m in CANDIDATES:
@@ -454,6 +528,12 @@ def _ci(ci) -> str:
     return "[-, -]" if not ci else f"[{ci[0]:.3f}, {ci[1]:.3f}]"
 
 
+PHRASE_LINES = {
+    "picked on this run": "Logit sentences picked on this run: none is scored on its own episodes, or on a world pair it came from alone.",
+    "picked on another run": "Logit sentences picked on another run: scored on every episode here.",
+    "draft sentences": "Logit sentences: the draft file, not picked on a run.",
+    "no phrase file": "NO PHRASE FILE: nothing shows where the logit sentences came from. Give --phrases; the rule chooses nothing without it.",
+    "no logit readings": "Logit sentences: no logit readings."}
 COUNTS = (("errors", "judge errors"), ("no_onset", "positive with no onset"), ("no_window", "with no window"),
           ("no_curve", "with no curve"), ("no_metric", "with no metric"))
 
@@ -479,8 +559,7 @@ def format_report(rep: dict) -> str:
            f"{cov['ids']['failed']} failed, {cov['ids']['no_server_ids']} read with --no-server-ids.",
            "Readings of one scenario's first prompt, largest difference (should be about 0): "
            + (", ".join(f"{k} {v:.4g}" for k, v in sorted(cov["turn0_spread"].items())) or "none")]
-    if rep["cross_fitted"]:
-        out.append("Logit sentences picked on this run: none is scored on the world it came from alone.")
+    out.append(PHRASE_LINES[rep["phrases"]["state"]])
     if not rep["judge"]["verdicts"]:
         out.append("Judge: no verdicts: the readings only.")
     elif not valid:
