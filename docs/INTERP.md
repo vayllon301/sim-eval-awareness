@@ -63,7 +63,8 @@ model path, weights fingerprint, revision, quantization, the sha256 of the token
 and of the chat template in effect, and the versions of the engine, transformers and
 tokenizers) goes into the metadata of every vector file and reading. A vector file only
 reads and steers the model it was built on: the reader and `steering.resolve` refuse
-vectors whose weights fingerprint differs from the backend's.
+vectors whose weights fingerprint differs from the backend's. The reader also refuses vectors
+built on another card (`model.device`), since two cards load the same files.
 
 ```python
 class Backend(Protocol):
@@ -666,7 +667,8 @@ latents, `sae_transfer.py` and `report` on the laptop's 8-bit weights, with no f
 up: that flow now needs `--no-server-ids`). Prompt lengths all
 equal, 122 of 124 generated turns equal, and readings of one scenario's first prompt identical. FP8
 vectors with the training twin exist from session 4 (`logs/interp/gpu-smoke-s4/`: layers 36 to 48,
-chosen layer 36); the laptop's older files have no twin.
+chosen layer 36); the laptop's older files have no twin. Vectors are built on the backend that runs the
+episodes, so that file reads G4 episodes only (BACKENDS.md, "What each use needs").
 
 **Exported episodes** are plain JSON (`reader.save_episode`), since the GPU venv has no Inspect. Keys
 keep their order: the template prints tools and arguments in it, so sorted keys change the tokens
@@ -703,8 +705,8 @@ takes the IDs on the last job.
   `prompt_end_centred`, `agent`, `agent_centred` and `tool_output`.
 - **`logit`:** the logit monitor, `<uuid>.logit.json`, with its `ids_check`.
 - **Ties:** every output names its episode (uuid and the sha256 of the export), the vector file's
-  sha256, the phrases' sha256 and the backend. `read.json` holds the run's settings; other settings
-  are refused in the same directory.
+  sha256 and `chosen_layer`, the phrases' sha256 and the backend. `read.json` holds the run's settings;
+  other settings are refused in the same directory.
 - **Resuming:** a finished file is never redone, and a file gets its name only when complete. The
   longest episode goes first, so a memory failure shows at once. A failed episode is listed and tried
   again next time; 3 failures in a row stop the run. `--budget-min` stops between episodes.

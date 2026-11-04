@@ -461,6 +461,14 @@ def test_a_twin_that_does_as_well_is_named_not_disqualified():
     assert V.apply_rule({LOGIT: row(0.8, 0.6, 0.5)}, {})["specific"] is True
 
 
+def test_a_comparison_on_the_line_isnt_decided_by_the_arithmetics_dust():
+    """0.8 - 0.05 and 0.1 + 0.2 aren't what they read as."""
+    assert V.apply_rule({LOGIT: row(0.8, 0.6, 0.75)}, {})["specific"] is False           # exactly 0.05 under: within it
+    assert V.apply_rule({LOGIT: row(0.8, 0.5 + 1e-12)}, {})["status"] == "default, unvalidated"   # on chance: not above it
+    t = {LOGIT: row(0.7, 0.55), PROMPT: row(0.85, 0.7)}
+    assert V.apply_rule(t, versus(PROMPT, 1e-12))["chosen"] == LOGIT                     # on 0: not above it
+
+
 def test_the_reports_counts_are_each_candidates_own():
     """Aware at t2: prompt end and logit read turn 1, and the agent's own tokens have no window at all.
     Summed over monitors, the agent's tokens would pass on the others' episodes."""

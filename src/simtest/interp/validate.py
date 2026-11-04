@@ -82,6 +82,7 @@ MIN_PAIRS = 2        # world pairs holding...
 MIN_PER_PAIR = 2     # ...at least this many EVAL episodes
 TIE = 0.10           # two rivals this close are a tie
 TWIN_MARGIN = 0.05   # a twin this close to the candidate means the reading isn't specific to evaluation
+ROUND = 6            # decimals every comparison with one of these numbers keeps
 PICKED = "DRAFT rule, not frozen: "     # how a phrase file picked on a run starts its status (phrases.py)
 
 
@@ -464,9 +465,9 @@ def _higher(rivals: list[str], clear: dict[str, dict], paired: dict) -> tuple[st
     if len(rivals) == 1:
         return rivals[0], f"{rivals[0]} is the only rival left"
     a, b = rivals
-    gap = clear[b]["auroc"] - clear[a]["auroc"]
+    gap = round(clear[b]["auroc"] - clear[a]["auroc"], ROUND)
     ci = (paired.get(f"{a} vs {b}") or {}).get("ci")
-    if round(abs(gap), 6) <= TIE or not ci or ci[0] <= 0 <= ci[1]:
+    if abs(gap) <= TIE or not ci or round(ci[0], ROUND) <= 0 <= round(ci[1], ROUND):
         return a, f"{a} and {b} tie, so it goes to {a}"
     return (b if gap > 0 else a), f"{b if gap > 0 else a} is the higher rival"
 
@@ -484,19 +485,19 @@ def apply_rule(table: dict[str, dict], paired: dict[str, dict]) -> dict:
     enough = {m: t for m, t in table.items() if m not in dropped}
     if not enough:
         return default("no candidate has enough episodes")
-    clear = {m: t for m, t in enough.items() if t["auroc"] is not None and t["ci"] and t["ci"][0] > 0.5}
+    clear = {m: t for m, t in enough.items() if t["auroc"] is not None and t["ci"] and round(t["ci"][0], ROUND) > 0.5}
     if not clear:
         return default("no candidate's interval clears chance")
     rivals = [m for m in RIVALS if m in clear]
     if DEFAULT in clear:
-        beat = [m for m in rivals if ((paired.get(f"{m} vs {DEFAULT}") or {}).get("ci") or [0])[0] > 0]
+        beat = [m for m in rivals if round(((paired.get(f"{m} vs {DEFAULT}") or {}).get("ci") or [0])[0], ROUND) > 0]
         chosen, why = _higher(beat, clear, paired) if beat else (DEFAULT, "logit clears chance and no rival's paired interval is above 0")
         why = f"{why}; {len(beat)} rival(s) beat logit" if beat else why
     else:
         chosen, why = _higher(rivals, clear, paired)
         why = f"logit doesn't clear chance; {why}"
     twin = clear[chosen].get("twin")
-    return {"status": "chosen", "chosen": chosen, "specific": None if twin is None else twin < clear[chosen]["auroc"] - TWIN_MARGIN,
+    return {"status": "chosen", "chosen": chosen, "specific": None if twin is None else round(clear[chosen]["auroc"] - twin, ROUND) > TWIN_MARGIN,
             "dropped": dropped, "why": why + said}
 
 
