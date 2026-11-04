@@ -302,12 +302,15 @@ def test_a_failed_submission_cancels_the_jobs_already_submitted(tmp_path):
     ({"SETUP_HOURS": None}, HEAD, "SETUP_HOURS"),
     ({"WORK": None}, HEAD, "WORK"),
     ({"WORK": "scratch/sim"}, HEAD, "absolute"),
+    ({"WORK": "/scratch/v,w/sim"}, HEAD, "comma"),
+    ({"REMOTE_DIR": "sim,session"}, HEAD, "comma"),
     ({}, None, "preflight"),
     ({"GIT_DIRTY": "?? x\n"}, HEAD, "dirty"),
     ({"SIM_QUANT": "fp8"}, HEAD, "SIM_QUANT"),                        # a leftover in the shell
     ({"EQUIV_CONTEXTS": "/nonexistent/c.jsonl"}, HEAD, "contexts"),   # the check couldn't run on the first job
     ({"RECORDING_PROBLEM": "real.jsonl is missing"}, HEAD, "real.jsonl is missing"),
-], ids=["login", "time", "setup", "work", "relative-work", "preflight", "dirty", "old-scheme", "no-contexts", "no-recording"])
+], ids=["login", "time", "setup", "work", "relative-work", "comma-work", "comma-remote-dir", "preflight", "dirty", "old-scheme",
+       "no-contexts", "no-recording"])
 def test_submission_refusals(tmp_path, env, preflight, needle):
     proc, state, logs = submit(tmp_path, env, preflight)
     assert proc.returncode == 1

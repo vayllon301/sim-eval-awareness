@@ -55,7 +55,9 @@ problems=()
 if ! [[ ${TIME_LIMIT:-} =~ $NUM ]]; then problems+=("set TIME_LIMIT to the hours each job may run (Hopper's limit)"); fi
 if ! [[ ${SETUP_HOURS:-} =~ $NUM ]]; then problems+=("set SETUP_HOURS to the hours a job takes before its servers answer"); fi
 if [[ -z ${WORK:-} ]]; then problems+=("set WORK to a scratch directory on the nodes (about 110 GB free)")
-elif [[ $WORK != /* ]]; then problems+=("WORK must be an absolute path on the nodes (got $WORK)"); fi
+elif [[ $WORK != /* ]]; then problems+=("WORK must be an absolute path on the nodes (got $WORK)")
+elif [[ $WORK == *,* ]]; then problems+=("WORK can't hold a comma: sbatch --export splits on commas (got $WORK)"); fi
+[[ $REMOTE_DIR != *,* ]] || problems+=("REMOTE_DIR can't hold a comma: sbatch --export splits on commas (got $REMOTE_DIR)")
 [[ ! -f $CONFIG ]] || problems+=(${(f)"$(preflight_problems $CONFIG)"})
 [[ $SIM_QUANT == $SIM_SCHEME ]] \
   || problems+=("SIM_QUANT=$SIM_QUANT: episodes run $SIM_SCHEME only (LOG.md, 02-11-2026); old sessions' episodes are reproduced at their own commit")

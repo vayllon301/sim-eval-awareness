@@ -424,3 +424,40 @@ def test_submit_dry_run_touches_nothing(tmp_path):
 def test_the_scripts_are_executable():
     for p in (SCRIPT, SLURM, SUBMIT):
         assert os.access(p, os.X_OK), p
+
+
+# --- what crosses sbatch --export ------------------------------------------------------------------
+
+def as_slurm(calls) -> dict:
+    """The variables sbatch sets from a call's --export: it splits on commas, so a piece with no = is a
+    name to pass on from the environment, whatever came before it."""
+    value = next(w for c in calls for w in c.split() if w.startswith("--export=")).removeprefix("--export=")
+    return dict(piece.split("=", 1) for piece in value.split(",") if "=" in piece)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_layer_lists_survive_sbatchs_export_and_reach_the_reader_whole(tmp_path):
+    laptop, node = tmp_path / "laptop", tmp_path / "node"
+    laptop.mkdir(), node.mkdir()
+    proc, calls, _ = submit(laptop, {"LAYERS": "30,42,48", "SAE_LAYERS": "32,42,48", "NO_SERVER_IDS": "1"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    job = as_slurm(calls)
+    assert set(job) >= {"WORK", "PARTS", "CHUNK_MIN", "LAYERS", "SAE_LAYERS", "NO_SERVER_IDS"}
+    env = {k: job[k] for k in ("PARTS", "CHUNK_MIN", "LAYERS", "SAE_LAYERS", "NO_SERVER_IDS")}
+    proc, calls, _ = run(node, env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    call = next(c for c in calls if "read_run.py" in c)
+    assert "--layers 30,42,48 " in call and "--sae-layers 32,42,48 " in call
+
+
+def test_a_list_given_with_commas_on_colab_still_works(tmp_path):
+    proc, calls, _ = run(tmp_path, {"LAYERS": "30,42,48", "SAE_LAYERS": "32,42,48"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    call = next(c for c in calls if "read_run.py" in c)
+    assert "--layers 30,42,48 " in call and "--sae-layers 32,42,48 " in call
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_path_with_a_comma_cant_cross_sbatchs_export(tmp_path):
+    proc, calls, _ = submit(tmp_path, {"WORK": "/scratch/v,w/sim"})
+    assert proc.returncode == 1 and "comma" in proc.stderr and not any(c.startswith("ssh") for c in calls)

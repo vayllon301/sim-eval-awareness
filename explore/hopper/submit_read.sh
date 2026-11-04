@@ -38,7 +38,8 @@ problems=()
 [[ -n ${LOGIN:-} ]] || problems+=("set LOGIN to the login host (user@host)")
 if ! [[ ${TIME_LIMIT:-} =~ $NUM ]]; then problems+=("set TIME_LIMIT to the hours the job may run (Hopper's limit)"); fi
 if [[ -z ${WORK:-} ]]; then problems+=("set WORK to a scratch directory on the nodes (about 110 GB free)")
-elif [[ $WORK != /* ]]; then problems+=("WORK must be an absolute path on the nodes (got $WORK)"); fi
+elif [[ $WORK != /* ]]; then problems+=("WORK must be an absolute path on the nodes (got $WORK)")
+elif [[ $WORK == *,* ]]; then problems+=("WORK can't hold a comma: sbatch --export splits on commas (got $WORK)"); fi
 [[ -f $READ_DIR/episodes/manifest.json ]] || problems+=("no episodes at $READ_DIR/episodes: run 'uv run simtest interp export'")
 if [[ " $PARTS " == *" vectors "* ]]; then
   [[ -z ${VECTORS:-} ]] || problems+=("PARTS builds the vectors and VECTORS sends a file: one or the other")
@@ -78,8 +79,9 @@ if [[ -n ${PHRASES:-} ]]; then
 fi
 exports="ALL,WORK=$remote,PARTS=${PARTS// /+},CHUNK_MIN=$chunk"
 [[ -z ${PROJ_ENGINE:-} ]] || exports+=",PROJ_ENGINE=$PROJ_ENGINE"
-[[ -z ${LAYERS:-} ]] || exports+=",LAYERS=$LAYERS"
-[[ -z ${SAE_LAYERS:-} ]] || exports+=",SAE_LAYERS=$SAE_LAYERS"
+# sbatch --export splits on commas, so a list goes with plus signs, as PARTS does, and read_run.sh decodes it.
+[[ -z ${LAYERS:-} ]] || exports+=",LAYERS=${LAYERS//,/+}"
+[[ -z ${SAE_LAYERS:-} ]] || exports+=",SAE_LAYERS=${SAE_LAYERS//,/+}"
 [[ ${NO_SERVER_IDS:-} != 1 ]] || exports+=",NO_SERVER_IDS=1"
 [[ ${ALLOW_OTHER_BACKEND:-} != 1 ]] || exports+=",ALLOW_OTHER_BACKEND=1"
 x -i explore/hopper/read.slurm ssh $LOGIN "cd $remote && sbatch --parsable --time=$(( int(TIME_LIMIT * 60) )) --job-name=sim-read-$name \
