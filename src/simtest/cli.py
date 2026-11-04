@@ -1,4 +1,4 @@
-"""Command line: simtest {scenarios,demo,run,preflight,plan,summarize,images,snapshot,label,judge,pilot,power,post,fidelity,equiv}.
+"""Command line: simtest {scenarios,demo,run,preflight,plan,summarize,images,snapshot,label,judge,pilot,power,post,fidelity,equiv,interp}.
 
 Two families share the CLI: the office testbed (src/simtest, the first design) and the
 coding family (src/simtest/coding). `run` picks the family from the config's `family:` key
@@ -12,6 +12,7 @@ simulated bash step against shadow execution (src/simtest/post/fidelity.py). `eq
 two vLLM backends compute the same models (src/simtest/equiv.py, docs/BACKENDS.md). `plan`
 estimates a run's GPU hours and units, and splits it into jobs (src/simtest/stats/replay.py);
 `preflight` runs a config end to end offline before a GPU session (src/simtest/preflight.py).
+`interp` is the laptop's side of reading a run from the inside (src/simtest/interp/command.py).
 """
 
 from __future__ import annotations
@@ -173,6 +174,9 @@ def main(argv: list[str] | None = None) -> None:
     add_equiv_parser(sub)
     add_plan_parser(sub)
     add_preflight_parser(sub)
+    from .interp.command import add_parser as add_interp_parser
+
+    add_interp_parser(sub)
     args = p.parse_args(argv)
 
     if args.cmd == "scenarios":
@@ -284,6 +288,10 @@ def main(argv: list[str] | None = None) -> None:
         from .equiv import main as equiv_main
 
         equiv_main(args)
+    elif args.cmd == "interp":
+        from .interp.command import main as interp_main
+
+        interp_main(args)
 
 
 if __name__ == "__main__":
