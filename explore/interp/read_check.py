@@ -9,10 +9,14 @@ measures"). One step per process and engine, since vLLM and transformers can't s
 `run` takes the longest episode and the shortest (OOM first, then the short one) and writes
 OUT/check-<label>-<uuid>.json. On vLLM the phrases go through prompt log-probs at three turns: slow and
 meant for this check only. `compare` pairs every check with vllm's on the same episode and writes
-OUT/read-check.json. Development numbers: none of this is evidence. Pass rules: docs/INTERP.md.
+OUT/read-check.json, only when every path read the same episodes: read_run.sh skips the check once that
+file exists, so a failed run must leave none. Development numbers: none of this is evidence. Pass rules:
+docs/INTERP.md.
 """
 import argparse, json, sys, time
 from pathlib import Path
+
+PATHS = ("vllm", "hf", "hf-2048")     # read_run.sh's three runs
 
 
 def main():
@@ -34,6 +38,10 @@ def main():
     out = Path(a.out)
     if a.cmd == "compare":
         checks = [json.loads(p.read_text()) for p in sorted(out.glob("check-*.json"))]
+        read = {label: {x["uuid"] for x in checks if x["label"] == label} for label in PATHS}
+        short = [label for label, eps in read.items() if not eps or eps != set().union(*read.values())]
+        if short:
+            sys.exit(f"read_check: {', '.join(short)} didn't read every episode: no read-check.json, so a retry runs the check")
         rows = []
         for ref in (x for x in checks if x["label"] == "vllm"):
             for other in (x for x in checks if x["label"] != "vllm" and x["uuid"] == ref["uuid"]):

@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ CONFIG = "configs/coding/pilot.yaml"
 BASH, ZSH = shutil.which("bash"), shutil.which("zsh")
 REC = 'echo "$(basename "$0") $*" >> "$STATE/calls.log"\n'
 AGENT_REV, SIM_REV = "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a", "60d2b0434a53d2e62a7c00a489586815d94ebffb"
+SAE_REV = "13d4221569f7ca5d3c1e605e3e3dc95117e4807c"     # the repo's head on 04-11-2026
 # The venv's python: exit codes by which script it runs and with what. Writes what the real one would.
 PYTHON = REC + """case "$*" in
   *read_run.py*"--parts proj"*) exit "${PROJ_RC:-0}" ;;
@@ -82,6 +84,14 @@ def test_latents_are_asked_on_the_gpu(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "--sae-layers 42 --sae-device cuda" in next(c for c in calls if "read_run.py" in c)
     assert any("layer42.sae.pt" in c for c in calls if c.startswith("hf "))
+
+
+def test_the_saes_download_at_their_pinned_commit_and_the_readings_record_it(tmp_path):
+    proc, calls, work = run(tmp_path, {"PARTS": "transfer", "SAE_REVISION": "main"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    hf = next(c for c in calls if "SAE-Res" in c and c.startswith("hf download"))
+    assert f"--revision {SAE_REV} " in hf
+    assert f"Qwen/SAE-Res-Qwen3.5-27B-W80K-L0_50 {SAE_REV}\n" in (work / "read" / "readings" / "versions.txt").read_text()
 
 
 def test_the_transfer_check_splices_on_hf_and_reads_fvu_on_vllm(tmp_path):
@@ -158,6 +168,43 @@ def test_the_interp_downloads_take_serve_shs_commits(tmp_path):
                          f"hf download Qwen/Qwen3.8-27B-FP8 --revision {AGENT_REV} --local-dir {work}/models/agent"]
     versions = (work / "read" / "readings" / "versions.txt").read_text()
     assert f"Qwen/Qwen3.8-27B-FP8 {AGENT_REV}\n" in versions and f"Qwen/Qwen-AgentWorld-35B-A3B {SIM_REV}\n" in versions
+
+
+def check_file(out, label, uuid):
+    (out / f"check-{label}-{uuid}.json").write_text(json.dumps({
+        "label": label, "uuid": uuid, "tokens": 3, "turns": [0, 1], "projection": [1.0, 2.0, 3.0], "logprobs": [-1.0, -2.0],
+        "monitor": [0.1, 0.2], "seconds": {"pass": 1.0, "phrases": 1.0}}))
+
+
+def compare(out):
+    env = {**os.environ, "PYTHONPATH": str(REPO / "src")}
+    return subprocess.run([sys.executable, "-I", str(REPO / "explore" / "interp" / "read_check.py"), "compare", "--out", str(out)],
+                          env=env, capture_output=True, text=True, timeout=60)
+
+
+@pytest.mark.parametrize("gone", ["vllm", "hf", "hf-2048"])
+def test_a_check_with_a_path_missing_writes_no_result_so_a_retry_runs_it(tmp_path, gone):
+    for label in {"vllm", "hf", "hf-2048"} - {gone}:
+        check_file(tmp_path, label, "long")
+    proc = compare(tmp_path)
+    assert proc.returncode != 0 and gone in proc.stderr and not (tmp_path / "read-check.json").exists()
+
+
+def test_a_check_with_an_episode_missing_on_one_path_writes_no_result(tmp_path):
+    for label in ("vllm", "hf", "hf-2048"):
+        check_file(tmp_path, label, "long")
+    check_file(tmp_path, "vllm", "short")
+    check_file(tmp_path, "hf", "short")
+    proc = compare(tmp_path)
+    assert proc.returncode != 0 and "hf-2048" in proc.stderr and not (tmp_path / "read-check.json").exists()
+
+
+def test_a_complete_check_writes_its_result(tmp_path):
+    for label in ("vllm", "hf", "hf-2048"):
+        check_file(tmp_path, label, "long")
+    proc = compare(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert len(json.loads((tmp_path / "read-check.json").read_text())) == 3
 
 
 def test_the_estimate_is_in_the_header():
