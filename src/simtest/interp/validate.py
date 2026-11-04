@@ -17,8 +17,10 @@ on it.
 episode or the label itself can't pass for a signal:
 - Turn 0 is left out: its prompt is the same in every condition, so it holds no signal. It checks
   the engine instead: `turn0_spread` is how far readings of the same prompt differ.
-- Each turn's value is centred on the mean of that scenario at that turn (`centred_curves`). Monitors
-  drift through an episode, and an aware episode is read over a shorter window, below.
+- Each turn's value is centred on the mean of that scenario at that turn (`centred_curves`), over
+  the turns in the window below. Monitors drift through an episode, and an aware episode is read over
+  a shorter window. A turn after the onset is in no mean: it would carry the label into every other
+  episode's value.
 - Against a judge's label, the window ends at the label's onset turn, which is kept: a prompt-end or
   logit reading at a turn comes before the agent writes anything, while a later prompt holds the
   agent's own words, so reading on would read the label itself. `agent_tokens` reads what the agent
@@ -103,14 +105,22 @@ def last_turn(monitor: str, onset: int | None) -> int | None:
     return onset - 1 if onset is not None and monitor.startswith("agent_tokens:") else onset
 
 
-def centred_curves(rows: list[dict], monitor: str) -> dict[str, dict[int, float]]:
-    """{uuid: {turn: value minus the mean of its scenario at that turn}}."""
+def centred_curves(rows: list[dict], monitor: str, last: dict[str, int | None] | None = None) -> dict[str, dict[int, float]]:
+    """{uuid: {turn: value minus the mean of its scenario at that turn}}. With `last`, each episode
+    stops at its last turn, and later turns are in no mean: they would carry the label into every
+    other episode's value."""
+    last = last or {}
+
+    def kept(r: dict) -> dict[int, float]:
+        end = last.get(r["uuid"])
+        return {t: v for t, v in r["curves"].get(monitor, {}).items() if end is None or t <= end}
+
     sums: dict = defaultdict(list)
     for r in rows:
-        for t, v in r["curves"].get(monitor, {}).items():
+        for t, v in kept(r).items():
             sums[r["scenario"], t].append(v)
     means = {k: float(np.mean(v)) for k, v in sums.items()}
-    return {r["uuid"]: {t: v - means[r["scenario"], t] for t, v in r["curves"].get(monitor, {}).items()} for r in rows}
+    return {r["uuid"]: {t: v - means[r["scenario"], t] for t, v in kept(r).items()} for r in rows}
 
 
 def _logit_curves(logit: dict, provenance: dict, scenario: str) -> dict[str, dict[int, float]]:
@@ -332,30 +342,32 @@ def build(episodes: list[dict], design: dict, results: list[dict] | None, readin
                          "summary": reading.get("summary")})
     by = _labels(results)
     monitors = sorted({m for r in rows for m in r["curves"]})
-    centred = {m: centred_curves(rows, m) for m in monitors}
     out: dict = {}
     primary_values: dict[str, dict] = {}
     primary_labels: dict[str, bool] = {}
     for m in monitors:
         entry: dict = {"cells": _cells(rows, m, design), "curves": _curve_means(rows, m), "labels": {}, "behaviour": {}}
         for label in LABELS if results else ():
-            values, labels, errors, no_window = {}, {}, 0, 0
+            ends, positive, errors = {}, {}, 0
             for r in rows:
                 res = by.get((r["judge_key"], label))
                 if res is None or res.get("error") or res.get("positive") is None:
                     errors += 1
                     continue
-                onset = onset_turn(res.get("onset")) if res["positive"] else None
-                v = window(centred[m][r["uuid"]], last_turn(m, onset))
-                if v is None:
-                    no_window += 1 if centred[m][r["uuid"]] else 0
-                    continue
-                values[r["uuid"]], labels[r["uuid"]] = v, bool(res["positive"])
+                positive[r["uuid"]] = bool(res["positive"])
+                ends[r["uuid"]] = last_turn(m, onset_turn(res.get("onset")) if res["positive"] else None)
+            judged = [r for r in rows if r["uuid"] in positive]
+            curves = centred_curves(judged, m, ends)
+            values = {u: v for u in positive if (v := window(curves[u], None)) is not None}
+            labels = {u: positive[u] for u in values}
+            no_window = sum(u not in values and any(t >= 1 for t in next(r["curves"].get(m, {}) for r in judged if r["uuid"] == u))
+                            for u in positive)
             if any(k[1] == label for k in by):
                 entry["labels"][label] = {**_score(rows, values, labels), "errors": errors, "no_window": no_window}
                 if label == PRIMARY:
                     primary_values[m], primary_labels = values, labels
-        all_turns = {r["uuid"]: window(centred[m][r["uuid"]], None) for r in rows}
+        centred = centred_curves(rows, m)
+        all_turns = {r["uuid"]: window(centred[r["uuid"]], None) for r in rows}
         for name in BEHAVIOUR:
             labels = {r["uuid"]: bool(r["metrics"][name]) for r in rows if r["metrics"].get(name) is not None}
             entry["behaviour"][name] = _score(rows, all_turns, labels)
