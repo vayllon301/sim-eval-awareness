@@ -248,7 +248,9 @@ fixed numbers from earlier sessions. PASS needs all four:
 
 The verdicts:
 - **FAIL:** a line shows another scheme or kernel, or bar 2 or 3 is missed.
-- **INCOMPLETE:** bar 4 is missed, so the evidence isn't there.
+- **INCOMPLETE:** bar 4 is missed, so the evidence isn't there. A layer kind the check can't read, or kinds
+  that don't add up to the layers quantized, count as a line that isn't there: never a pass, and never a
+  FAIL for a good server in a format we didn't expect.
 - Either way **no episode runs, and the session stops**: `session.sh` stops the VM, and `run_chunks.sh`
   cancels every job.
 

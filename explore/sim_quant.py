@@ -92,7 +92,8 @@ SPEED_CONFIRM = 0.90
 _FLAG = re.compile(r"--quantization fp8_per_channel --moe-backend triton(?=\s|$)")
 _LAYER_SCHEME = "fp8_per_channel_static"
 _QUANTIZING = re.compile(r"Quantizing (\d+) layers of types: (.*)")
-_SCHEME = re.compile(r"\(from (?:linear|moe|targets): (?:[^,)]*, )?([A-Za-z0-9_]+)\)")
+# One layer kind, as vLLM prints it: "mlp.experts: 40 (from moe: fp8_per_tensor_static)".
+_KIND = re.compile(r"[\w.]+: (\d+) \(from [^():]+: (?:[^,)]*, )?([A-Za-z0-9_]+)\)")
 _MOE = re.compile(r"Using (\w+) Fp8 MoE backend")
 _GPU = re.compile(r"^gpu: (.+)$", re.M)
 
@@ -118,20 +119,29 @@ def served_line(text: str) -> str | None:
 def server_check(text: str) -> tuple[list[str], list[str]]:
     """(missing, wrong) from server.txt: the simulator's served line, the scheme vLLM reports for
     every quantized layer kind, the MoE kernel it chose, and the GPU. Missing is a line that isn't
-    there; wrong is a line that shows something else."""
+    there, a layer kind that can't be read, or kinds that don't add up to the layers quantized; wrong
+    is a line that shows something else."""
     missing, wrong = [], []
     served = served_line(text)
     if served is None:
         missing.append("no simulator command line in server.txt")
     elif not _FLAG.search(served):
         wrong.append(f"the served simulator line is not --quantization {SCHEME} --moe-backend triton")
-    m = _QUANTIZING.search(text)
-    if not m:
+    lines = list(_QUANTIZING.finditer(text))
+    if not lines:
         missing.append("no 'Quantizing ... layers' line from the simulator's log")
-    else:
-        schemes = _SCHEME.findall(m.group(2))
-        if not schemes or set(schemes) != {_LAYER_SCHEME}:
-            wrong.append(f"layers quantized as {sorted(set(schemes))}, not only {_LAYER_SCHEME}")
+    for m in lines:
+        kinds = [k.strip() for k in m.group(2).split(";")]
+        read = [hit for k in kinds if (hit := _KIND.fullmatch(k))]
+        unread = [k for k in kinds if not _KIND.fullmatch(k)]
+        schemes = {hit.group(2) for hit in read}
+        total = sum(int(hit.group(1)) for hit in read)
+        if unread:
+            missing.append(f"layer kinds this check can't read: {unread}")
+        elif total != int(m.group(1)):
+            missing.append(f"the layer kinds add up to {total}, not the {m.group(1)} quantized: the line is cut short")
+        if schemes - {_LAYER_SCHEME}:
+            wrong.append(f"layers quantized as {sorted(schemes)}, not only {_LAYER_SCHEME}")
     moe = _MOE.findall(text)
     if not moe:
         missing.append("no MoE backend line from the simulator's log")

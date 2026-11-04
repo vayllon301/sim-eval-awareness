@@ -388,9 +388,9 @@ def test_without_sim_only_nothing_is_stopped(tmp_path):
 
 # --- server.txt: what the setup check and the gate read (explore/sim_quant.py) ---------------------
 
-VLLM_SAYS = ("INFO [base_loader.py:151] Quantizing 340 layers of types: mlp.experts: 40 (from moe: fp8_per_channel_static)\n"
-             "INFO [fp8.py:525] Using TRITON Fp8 MoE backend out of potential backends: ['TRITON']\n"
-             "INFO [__init__.py:797] Selected CutlassFP8ScaledMMLinearKernel for Fp8PtpcOnlineLinearMethod\n"
+# The real lines of a G4 serve log, with the per-channel label: no log has served that scheme yet.
+VLLM_SAYS = ((Path(__file__).parent / "sim_quant_fixtures" / "g4-simulator-fp8.log").read_text().replace("fp8_per_tensor_static", "fp8_per_channel_static")
+             + "INFO [__init__.py:797] Selected CutlassFP8ScaledMMLinearKernel for Fp8PtpcOnlineLinearMethod\n"
              "INFO some other line of the server's log\n")
 
 

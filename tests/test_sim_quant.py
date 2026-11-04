@@ -6,6 +6,7 @@ server."""
 
 from __future__ import annotations
 
+import argparse
 import http.server
 import importlib.util
 import json
@@ -120,21 +121,90 @@ def test_fidelity_summary_is_incomplete_with_missing_or_errored_steps():
 GPU = "NVIDIA H100 80GB HBM3"
 
 
-def _server(scheme, quant_flag, layers="340", backend="TRITON", stray=None, gpu=GPU):
-    kinds = ["attn.qkv: 10", "linear_attn.in_proj_ba: 30", "linear_attn.in_proj_qkvz: 30", "mlp.experts: 40"]
-    parts = [f"{k} (from {'moe' if 'experts' in k else 'linear'}: {stray if stray and i == 1 else scheme})"
-             for i, k in enumerate(kinds)]
+# Verbatim from a G4 serve log (logs/colab-probe/g4-server/simulator.log, 29-10-2026, vLLM 0.32.0): what
+# vLLM prints for the simulator. No log holds the per-channel scheme, which has never been served, so
+# that label is swapped into this real line.
+REAL = (Path(__file__).parent / "sim_quant_fixtures" / "g4-simulator-fp8.log").read_text()
+
+
+def _server(scheme, quant_flag, layers="340", backend="TRITON", stray=None, gpu=GPU, lines=None):
+    said = (lines or REAL).replace("fp8_per_tensor_static", scheme).replace("Quantizing 340", f"Quantizing {layers}")
+    said = said.replace("Using TRITON Fp8", f"Using {backend} Fp8")
+    if stray:
+        said = said.replace(f"attn.qkv: 27 (from linear: {scheme})", f"attn.qkv: 27 (from linear: {stray})")
     return (f"gpu: {gpu}\n"
             "vllm serve /content/models/simulator --served-model-name simulator --host 127.0.0.1 --port 8001 "
             f"--gpu-memory-utilization 0.52 --max-model-len 131072 --max-num-seqs 64 --language-model-only "
-            f"--reasoning-parser qwen3 {quant_flag} --trust-remote-code\n"
-            f"INFO [base_loader.py:151] Quantizing {layers} layers of types: " + "; ".join(parts) + "\n"
-            f"INFO [fp8.py:525] Using {backend} Fp8 MoE backend out of potential backends: ['AITER', 'TRITON']\n"
+            f"--reasoning-parser qwen3 {quant_flag} --trust-remote-code\n" + said +
             "INFO [__init__.py:797] Selected CutlassFP8ScaledMMLinearKernel for Fp8PtpcOnlineLinearMethod\n")
 
 
 PT = _server("fp8_per_tensor_static", "--quantization fp8")
 PC = _server("fp8_per_channel_static", "--quantization fp8_per_channel --moe-backend triton")
+
+
+def test_the_fixture_is_the_real_format():
+    kinds = REAL.split("layers of types: ")[1].strip().split("; ")
+    assert len(kinds) == 14 and "mlp.experts: 40 (from moe: fp8_per_tensor_static)" in kinds
+    assert "pid=11437" in REAL and "fp8_per_channel" not in REAL
+
+
+def test_the_old_scheme_on_the_real_line_is_wrong_and_every_kind_is_read():
+    missing, wrong = S.server_check(PT)
+    assert missing == [] and any("fp8_per_tensor_static" in p for p in wrong)
+
+
+def _layers(text, old, new):
+    assert old in text
+    return text.replace(old, new)
+
+
+FLAG = "--quantization fp8_per_channel --moe-backend triton"
+CHANNEL = "fp8_per_channel_static"
+
+
+def test_a_kind_from_any_source_is_read():
+    """One kind from a source nobody listed, on another scheme: the old parser skipped it and passed."""
+    text = _layers(PC, f"attn.qkv: 27 (from linear: {CHANNEL})", "attn.qkv: 27 (from quant_config: fp8_per_tensor_static)")
+    missing, wrong = S.server_check(text)
+    assert missing == [] and any("per_tensor" in p for p in wrong)
+    assert S.gate_problems(_passed(), text, HEAD, False)
+
+
+def test_a_kind_it_cant_read_is_missing_and_stops_the_gate(tmp_path):
+    """A kind with no parentheses says nothing about its scheme, so it can't pass, and can't be wrong."""
+    text = _layers(PC, f"attn.qkv: 27 (from linear: {CHANNEL})", "attn.qkv: 27")
+    missing, wrong = S.server_check(text)
+    assert wrong == [] and any("attn.qkv: 27" in p for p in missing)
+    assert S.gate_problems(_passed(), text, HEAD, False)
+    (tmp_path / "server.txt").write_text(text)
+    assert S.main_lines(argparse.Namespace(server=tmp_path / "server.txt")) == 1
+
+
+def test_a_good_server_in_an_unknown_format_is_incomplete_not_a_fail():
+    """A FAIL stays in its directory until Victor decides: a format we can't read isn't one."""
+    text = _server(CHANNEL, FLAG).replace(f"(from linear: {CHANNEL})", f"[{CHANNEL}]").replace(f"(from moe: {CHANNEL})", f"[{CHANNEL}]")
+    missing, wrong = S.server_check(text)
+    assert wrong == [] and missing
+    assert S.rule(_fid(), _noise(), missing, wrong, 500.0)["verdict"] == "INCOMPLETE"
+
+
+def test_a_wrong_kind_beats_one_it_cant_read():
+    text = _layers(PC, f"attn.qkv: 27 (from linear: {CHANNEL})", "attn.qkv: 27")
+    text = _layers(text, f"attn.proj: 27 (from linear: {CHANNEL})", "attn.proj: 27 (from linear: fp8_per_tensor_static)")
+    missing, wrong = S.server_check(text)
+    assert missing and wrong and S.rule(_fid(), _noise(), missing, wrong, 500.0)["verdict"] == "FAIL"
+
+
+def test_a_line_cut_short_is_missing():
+    """Fewer kinds than the layers it counted: the rest could be anything."""
+    missing, wrong = S.server_check(_layers(PC, f"; mlp.shared_expert.down_proj: 40 (from linear: {CHANNEL})", ""))
+    assert wrong == [] and any("add up to 300" in p for p in missing)
+
+
+def test_every_quantizing_line_is_read():
+    text = PC + _layers(PC, f"attn.qkv: 27 (from linear: {CHANNEL})", "attn.qkv: 27 (from linear: fp8_per_tensor_static)")
+    assert any("per_tensor" in p for p in S.server_check(text)[1])
 
 
 def test_server_check_accepts_the_final_scheme_as_served():
