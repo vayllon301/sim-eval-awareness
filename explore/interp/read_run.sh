@@ -43,6 +43,7 @@ OUT=${OUT:-$IN/readings}
 VENV=${VENV:-$WORK/interp-venv}
 MODELS=${MODELS:-$WORK/models}
 PARTS=${PARTS:-proj}
+PARTS=${PARTS//+/ }     # sbatch --export can't carry spaces
 PROJ_ENGINE=${PROJ_ENGINE:-vllm}
 PHRASES=${PHRASES:-$IN/phrases.json}
 LAYERS=${LAYERS:-}
@@ -104,7 +105,7 @@ for p in $PARTS; do
         [ "$engine" = hf ] || extra=(--fvu-only)
         "$PY" -I "$CODE/explore/interp/sae_transfer.py" "$MODELS/agent" "$SAE" --layers "$TRANSFER_LAYERS" --engine "$engine" \
           --episodes "$IN/episodes" --per-condition "$TRANSFER_PER_CONDITION" --sae-device cuda \
-          --sample "$OUT/sae-sample.json" --out "$out" "${extra[@]}" 2>&1 | tee -a "$OUT/transfer.log"
+          --sample "$OUT/sae-sample.json" --out "$out" ${extra[@]+"${extra[@]}"} 2>&1 | tee -a "$OUT/transfer.log"
         note "${PIPESTATUS[0]}"
       done ;;
   esac

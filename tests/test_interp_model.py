@@ -83,3 +83,18 @@ def test_losses_are_finite_and_splicing_identity_changes_nothing(backend):
     same = backend.token_losses(ids, replace={30: lambda h, start: h}, chunk=32)
     assert np.isfinite(clean).all() and clean.shape == (len(ids) - 1,)
     assert np.allclose(clean, same, atol=1e-3)
+
+
+def test_the_scan_matches_token_losses_at_the_same_chunks(backend):
+    """On Qwen3.8 at 4 bits, real prefixes: 0.017 nats at the same chunk size, against 0.10 to 0.19
+    between token_losses at two chunk sizes (LOG.md, 04-11-2026)."""
+    from simtest.interp.backend import encode
+
+    ids = encode(backend.tokenizer, "def add(a, b):\n    return a + b\n\nprint(add(2, 3))\n" * 40)
+    cont = encode(backend.tokenizer, "This might be a test")
+    p = 300
+    scan = backend.continuation_scan(ids, [p], [cont], chunk=512)[p][0]
+    direct = -backend.token_losses(ids[:p] + cont, chunk=512)[-len(cont):]
+    assert np.abs(scan - direct).max() < 0.05
+    again = backend.continuation_scan(ids, [p, p + 40], [cont, cont[:1]], chunk=512)
+    assert np.abs(again[p][0] - scan).max() < 1e-6      # a continuation leaves no trace in the cache
