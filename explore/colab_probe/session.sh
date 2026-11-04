@@ -5,23 +5,28 @@
 # setup (install, downloads, both servers: 741 s in session 4) is paid once:
 #   1. Refuses to start unless logs/preflight/<name>.ok holds the current commit (uv run simtest
 #      preflight CONFIG passed on it), the tree is clean, the steps' inputs exist, the tunnel's
-#      ports 18000 and 18001 are free here, and the balance can be read.
+#      ports 18000 and 18001 are free here, and the balance can be read. Episodes and the setup check
+#      run the simulator on fp8_per_channel only: SIM_QUANT=fp8 is refused for them. Episodes without
+#      the setup step are refused unless the check has passed on this commit and backend.
 #   2. Creates the VM (colab new), or attaches the session if it exists, and starts watchdog.sh with
 #      the cap (units for this session, counted from the balance read before colab new), the idle
 #      rule (IDLE_MIN) and MAX_MIN. The watchdog runs detached, so it outlives this script.
-#   3. If run or equiv is selected: serve.sh once, as it is (MIX given), then the tunnel, then waits
-#      until both /v1/models answer. On an attached VM, old servers are stopped first, so the
-#      servers run what serve.sh says.
-#   4. The steps in STEPS (default "run equiv"; add readings to run them), always in this order:
-#        run       uv run --env-file ENV_FILE simtest run CONFIG [--epochs EPOCHS] [--admit-for
-#                  ADMIT_FOR] [--carry-under CARRY_UNDER]. Exit 3 (incomplete, resumable) is
-#                  reported, and the next steps run.
+#   3. If setup, run or equiv is selected: serve.sh once, as it is (MIX given, the scheme named),
+#      then the tunnel, then waits until both /v1/models answer. On an attached VM, old servers are
+#      stopped first, so the servers run what serve.sh says.
+#   4. The steps in STEPS (default "setup run"; add readings to run them), always in this order:
+#        setup     the simulator's setup check, before any episode (explore/sim_quant.py,
+#                  docs/BACKENDS.md): the server's scheme lines, the noise floors of both models (1
+#                  against 12 at once), one forced bake-off pass at 12 at once with its speed. Anything
+#                  but PASS stops the session here: no episode runs. A PASS on this commit and backend
+#                  is kept in SETUP_DIR, so a resumed session doesn't pay for it again.
+#        run       the gate (a PASS on this commit, and this server's own lines show the scheme; it
+#                  writes the scheme to logs/<name>/backend.jsonl), then uv run --env-file ENV_FILE
+#                  simtest run CONFIG [--epochs EPOCHS] [--admit-for ADMIT_FOR] [--carry-under
+#                  CARRY_UNDER]. Exit 3 (incomplete, resumable) is reported, and the next steps run.
 #        equiv     simtest equiv score EQUIV_CONTEXTS, one request at a time and 12 at once
-#                  (EQUIV_CONCURRENCY): this backend's scores and its batching noise
-#                  (docs/BACKENDS.md). After the run, so no episode shares its batches. If the
-#                  contexts file doesn't exist yet and the run is a step, it is built first from
-#                  this run's own logs (simtest equiv contexts); keep it: every backend is scored
-#                  on the same contexts.
+#                  (EQUIV_CONCURRENCY), alone: the setup step scores them for a run. For a session
+#                  without episodes, such as a retry with other AGENT_MEM and SIM_MEM.
 #        readings  the GPU readings after the episodes: explore/interp/gpu_smoke.sh, the one GPU
 #                  script of docs/INTERP.md so far. It reads no episode yet (about 50 GPU
 #                  minutes), so it runs only when STEPS names it. It needs the GPU alone, so the servers are
@@ -33,16 +38,20 @@
 #
 #   MIX=c3 ADMIT_FOR=14 explore/colab_probe/session.sh configs/coding/pilot.yaml 180 2>&1 | tee /tmp/session.log
 #   DRY_RUN=1 MIX=c3 explore/colab_probe/session.sh configs/coding/pilot.yaml 180   # prints, does nothing
+#   SPEED_OK=1 MIX=c3 ...   # after Victor confirmed the budget, when the check found the speed low
 #
 # A cap reached mid-run stops the VM under running episodes, and interrupted long episodes come
 # back as re-runs that favour short ones. Set ADMIT_FOR so the run stops admitting episodes while
 # the cap still leaves room for the longest one (a G4 bills 10.05 units an hour).
 #
 # Settings (environment): SESSION (probe), GPU (G4), MIX (c3 or default: required, the memory split
-# is part of the run's record), EAGER, SIM_QUANT (to serve.sh), AGENT_MEM and SIM_MEM (to serve.sh; for STEPS=equiv), STEPS, EPOCHS, ADMIT_FOR, CARRY_UNDER, IDLE_MIN (20), MAX_MIN,
-# ENV_FILE (../.env), EQUIV_CONTEXTS (logs/equiv/contexts.jsonl), EQUIV_CONCURRENCY ("1 12"),
-# EQUIV_LABEL, READINGS_STEPS, READINGS_BUDGET_MIN, OUTDIR (logs/sessions/<name>-<UTC time>), KEEP,
-# DRY_RUN. Deadlines in minutes: NEW_MIN (20), SERVE_MIN (45), READY_MIN (5), READINGS_MIN (100).
+# is part of the run's record), EAGER, SIM_QUANT (fp8_per_channel; to serve.sh, and only sessions
+# without setup or run may name fp8), AGENT_MEM and SIM_MEM (to serve.sh; for sessions without
+# episodes), STEPS, EPOCHS, ADMIT_FOR, CARRY_UNDER, IDLE_MIN (20), MAX_MIN, ENV_FILE (../.env),
+# EQUIV_CONTEXTS (logs/equiv/contexts.jsonl), EQUIV_CONCURRENCY ("1 12"), EQUIV_LABEL, BAKEOFF
+# (logs/bakeoff), SETUP_DIR (logs/setup/<name>-<GPU>-<commit>), SPEED_OK, READINGS_STEPS,
+# READINGS_BUDGET_MIN, OUTDIR (logs/sessions/<name>-<UTC time>), KEEP, DRY_RUN. Deadlines in minutes:
+# NEW_MIN (20), SERVE_MIN (45), READY_MIN (5), READINGS_MIN (100).
 #
 # Exit: 0 when every step passed, 3 when the run is incomplete and nothing failed, 1 otherwise.
 set -u
@@ -58,14 +67,16 @@ fi
 DRY=${DRY_RUN:-}
 SESSION=${SESSION:-probe}
 GPU=${GPU:-G4}
-STEPS=${STEPS:-run equiv}
+STEPS=${STEPS:-setup run}
 LOGS=${LOGS:-logs}
 ENV_FILE=${ENV_FILE:-../.env}
 EQUIV_CONTEXTS=${EQUIV_CONTEXTS:-$LOGS/equiv/contexts.jsonl}
 EQUIV_CONCURRENCY=${EQUIV_CONCURRENCY:-1 12}
 VM_WORK=/content   # serve.sh's and gpu_smoke.sh's work directory on Colab
+SIM_QUANT=${SIM_QUANT:-$SIM_SCHEME}
 name=$(config_name $CONFIG 2>/dev/null)
 OUTDIR=${OUTDIR:-$LOGS/sessions/${name:-session}-$(date -u +%Y%m%d-%H%M%S)}
+SETUP_DIR=${SETUP_DIR:-$(setup_dir ${name:-session} $GPU $(git rev-parse HEAD 2>/dev/null))}
 PROXY="colab --auth adc ssh --proxy-mode -s $SESSION"
 SSH=(ssh -o "ProxyCommand=$PROXY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR "root@$SESSION")
@@ -76,7 +87,7 @@ FREE_GPU='pkill -f "[v]llm serve" || true; for i in $(seq 120); do
 
 want() { [[ " ${=STEPS} " == *" $1 "* ]]; }
 need_servers=0
-if want run || want equiv; then need_servers=1; fi
+if want setup || want run || want equiv; then need_servers=1; fi
 
 # 1. Everything that would make the session fail or waste units, before any VM exists.
 problems=()
@@ -87,11 +98,21 @@ case ${MIX:-} in
   *) problems+=("set MIX=c3 (a run mostly C1-C3) or MIX=default (serve.sh's 0.47 / 0.47): the split is part of the run's record") ;;
 esac
 for s in ${=STEPS}; do
-  case $s in run|equiv|readings) ;; *) problems+=("unknown step '$s' (STEPS: run equiv readings)") ;; esac
+  case $s in setup|run|equiv|readings) ;; *) problems+=("unknown step '$s' (STEPS: setup run equiv readings)") ;; esac
 done
 [[ ! -f $CONFIG ]] || problems+=(${(f)"$(preflight_problems $CONFIG)"})
 if want run && [[ ! -f $ENV_FILE ]]; then problems+=("no env file $ENV_FILE (ENV_FILE): simtest run reads its keys there"); fi
-if want equiv && [[ ! -f $EQUIV_CONTEXTS ]] && ! want run; then
+if { want setup || want run; } && [[ $SIM_QUANT != $SIM_SCHEME ]]; then
+  problems+=("SIM_QUANT=$SIM_QUANT: the setup check and episodes run $SIM_SCHEME only (LOG.md, 02-11-2026); old sessions' episodes are reproduced at their own commit")
+fi
+verdict=$(setup_verdict)
+if want setup; then
+  [[ $verdict != FAIL ]] || problems+=("$SETUP_DIR holds a FAIL: Victor decides (docs/BACKENDS.md); a new check, after a fix, needs a new SETUP_DIR")
+  problems+=(${(f)"$(setup_problems)"})
+elif want run && [[ $verdict != PASS ]]; then
+  problems+=("episodes need the setup check first: add setup to STEPS, or pass it on this commit and backend ($SETUP_DIR)")
+fi
+if want equiv && [[ ! -f $EQUIV_CONTEXTS ]]; then
   problems+=("no contexts at $EQUIV_CONTEXTS: build them with 'uv run simtest equiv contexts' (docs/BACKENDS.md)")
 fi
 if (( need_servers )); then
@@ -108,7 +129,7 @@ if (( ${#problems} )); then
 fi
 refused=${#problems}
 
-say "session $SESSION ($GPU) for $CONFIG ($name): cap $CAP units, steps: $STEPS, MIX=$MIX, out $OUTDIR"
+say "session $SESSION ($GPU) for $CONFIG ($name): cap $CAP units, steps: $STEPS, MIX=$MIX, SIM_QUANT=$SIM_QUANT, out $OUTDIR"
 if want run && [[ -z ${ADMIT_FOR:-} ]]; then
   say "warning: no ADMIT_FOR: if the cap stops the VM mid-run, the running episodes are interrupted"
 fi
@@ -217,9 +238,9 @@ if (( need_servers )); then
   serve_env=""
   [[ $MIX != c3 ]] || serve_env+="MIX=c3 "
   [[ ${EAGER:-} != 1 ]] || serve_env+="EAGER=1 "
-  # The simulator's FP8 scheme (serve.sh checks the value). Unset: serve.sh's default.
-  [[ -z ${SIM_QUANT:-} ]] || serve_env+="SIM_QUANT=${(q)SIM_QUANT} "
-  # Only for an equiv-only session that ran out of memory (docs/BACKENDS.md, "Practicalities"):
+  # Always by name, so nothing on the VM can change it (serve.sh checks the value).
+  serve_env+="SIM_QUANT=${(q)SIM_QUANT} "
+  # Only for a session without episodes that ran out of memory (docs/BACKENDS.md, "Practicalities"):
   # other fractions are another KV cache, so a run on them is a different record.
   [[ -z ${AGENT_MEM:-} ]] || serve_env+="AGENT_MEM=${(q)AGENT_MEM} "
   [[ -z ${SIM_MEM:-} ]] || serve_env+="SIM_MEM=${(q)SIM_MEM} "
@@ -230,12 +251,23 @@ if (( need_servers )); then
   tunnel_pid=$BG
   wait_models $(( ${READY_MIN:-5} * 60 )) || fail "the servers didn't answer through the tunnel (see $OUTDIR/tunnel.log)"
   note "servers ready"
+  if want setup || want run; then
+    vm -O $OUTDIR/server.txt -t 60 ": sim-session-step lines; cat $VM_WORK/probe/server.txt" \
+      || fail "could not read the server's lines"
+  fi
 fi
 
 # 4. The steps.
 final=0
+where="$GPU, ${OUTDIR:t}"
+if want setup; then
+  guard
+  setup_step $where $OUTDIR/server.txt || fail "setup check: not PASS (see $SETUP_DIR/check.json): no episode ran"
+  note "setup check: PASS ($SETUP_DIR)"
+fi
 if want run; then
   guard
+  gate $where $OUTDIR/server.txt || fail "gate: refused (see above): no episode ran"
   args=(uv run --env-file $ENV_FILE simtest run $CONFIG)
   [[ -z ${EPOCHS:-} ]] || args+=(--epochs $EPOCHS)
   [[ -z ${ADMIT_FOR:-} ]] || args+=(--admit-for $ADMIT_FOR)
@@ -250,9 +282,6 @@ if want run; then
 fi
 if want equiv; then
   guard
-  if [[ ! -f $EQUIV_CONTEXTS ]]; then
-    x uv run simtest equiv contexts $LOGS/$name --out $EQUIV_CONTEXTS || fail "equiv: could not build the contexts"
-  fi
   x uv run simtest equiv score $EQUIV_CONTEXTS --agent-url http://localhost:18000/v1 \
     --simulator-url http://localhost:18001/v1 --concurrency ${=EQUIV_CONCURRENCY} --out $OUTDIR/equiv \
     --label "${EQUIV_LABEL:-$GPU, ${OUTDIR:t}}" || fail "equiv: FAILED"
