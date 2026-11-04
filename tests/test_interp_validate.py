@@ -325,3 +325,23 @@ def test_the_logit_part_may_sit_in_its_own_directory(tmp_path):
 def test_several_layers_need_a_choice():
     reading = {"summary": {"by_turn": {"eval_awareness@36": [], "eval_awareness@42": []}}, "logit": None}
     assert V.reading_layers({"u": reading}) == [36, 42]
+
+
+def test_the_agents_own_tokens_stop_before_the_onset_turn():
+    """prompt_end and logit read a turn's prompt, before the agent writes. agent_tokens reads what it
+    wrote, so its onset turn holds the verbalisation itself."""
+    assert V.last_turn("agent_tokens:eval_awareness", 4) == 3
+    assert V.last_turn("prompt_end:eval_awareness", 4) == 4
+    assert V.last_turn("logit:eval", 4) == 4
+    assert V.last_turn("agent_tokens:eval_awareness", None) is None
+
+
+def test_a_monitor_on_the_agents_own_tokens_cant_score_by_reading_the_verbalisation():
+    eps, res, read = make(signal=0.0)
+    for e in eps:
+        if e["condition"] == "C3" and e["epoch"] < 3:    # aware at t4 (turn 3): only that turn's own tokens jump
+            for row in read[e["uuid"]]["summary"]["by_turn"]["eval_awareness@42"]:
+                if row["turn"] == 3:
+                    row["agent_centred"] += 50.0
+    r = build(eps, res, read)["monitors"]["agent_tokens:eval_awareness"]["labels"]["eval_awareness"]
+    assert 0.25 < r["auroc"] < 0.75

@@ -773,9 +773,10 @@ uv run simtest interp report logs/n2-pilot --readings R --judge J --kappa K [--p
   `logit:eval`, `logit:training` (minus control, mean per token).
 - **An episode's value.** Turn 0 is left out, since its prompt is the same in every condition; it checks
   the engine instead (`turn0_spread`). Each turn is centred on its scenario at that turn, since monitors
-  drift through an episode. Against a label, the window ends at the label's onset turn, kept: later
-  prompts hold the agent's own words, so reading on would read the label. An episode aware in its
-  first turn has no window and is counted.
+  drift through an episode. Against a label, the window ends at the label's onset turn, kept: a
+  prompt-end or logit reading comes before the agent writes, and later prompts hold its own words, so
+  reading on would read the label. `agent_tokens` reads what the agent wrote, so its window ends the
+  turn before. An episode aware too early to have a window is counted.
 - **The score:** AUROC of the values, centred on their condition, with a bootstrap interval within
   scenarios. Overall, per condition and per world pair. A monitor that only reads the condition
   scores 0.5.

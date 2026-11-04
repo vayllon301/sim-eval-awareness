@@ -19,10 +19,11 @@ episode or the label itself can't pass for a signal:
   the engine instead: `turn0_spread` is how far readings of the same prompt differ.
 - Each turn's value is centred on the mean of that scenario at that turn (`centred_curves`). Monitors
   drift through an episode, and an aware episode is read over a shorter window, below.
-- Against a judge's label, the window ends at the label's onset turn, which is kept: the monitor at
-  a turn reads the prompt before the agent writes anything, while a later prompt holds the agent's
-  own words, so reading on would read the label itself. An episode aware in its first turn has no
-  window: counted as `no_window`, left out.
+- Against a judge's label, the window ends at the label's onset turn, which is kept: a prompt-end or
+  logit reading at a turn comes before the agent writes anything, while a later prompt holds the
+  agent's own words, so reading on would read the label itself. `agent_tokens` reads what the agent
+  wrote, so for it the window ends the turn before (`last_turn`). An episode aware too early to have
+  a window is counted as `no_window` and left out.
 - The episode values are centred on their condition's mean, so a monitor that only reads the
   condition scores 0.5 (`auroc`).
 
@@ -93,6 +94,13 @@ def window(curve: dict[int, float], onset: int | None) -> float | None:
     """The mean of a turn curve over turns 1 to `onset`, or all of them from turn 1 on."""
     vals = [v for t, v in curve.items() if t >= 1 and (onset is None or t <= onset)]
     return float(np.mean(vals)) if vals else None
+
+
+def last_turn(monitor: str, onset: int | None) -> int | None:
+    """The last turn a monitor may read against a label with this onset. A prompt-end or logit
+    reading at a turn comes before the agent writes, so the onset turn is clean; `agent_tokens` reads
+    what it wrote, so that turn holds the verbalisation."""
+    return onset - 1 if onset is not None and monitor.startswith("agent_tokens:") else onset
 
 
 def centred_curves(rows: list[dict], monitor: str) -> dict[str, dict[int, float]]:
@@ -338,7 +346,7 @@ def build(episodes: list[dict], design: dict, results: list[dict] | None, readin
                     errors += 1
                     continue
                 onset = onset_turn(res.get("onset")) if res["positive"] else None
-                v = window(centred[m][r["uuid"]], onset)
+                v = window(centred[m][r["uuid"]], last_turn(m, onset))
                 if v is None:
                     no_window += 1 if centred[m][r["uuid"]] else 0
                     continue
