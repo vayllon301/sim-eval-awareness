@@ -276,8 +276,8 @@ def test_readings_load_from_their_directory(tmp_path):
 
 
 def test_the_layer_comes_from_the_readings_when_there_is_one():
-    assert V.reading_layer({"u": {"summary": summary("u", {"eval_awareness": {0: (1.0, 2.0)}}, layer=36), "logit": None}}) == 36
-    assert V.reading_layer({"u": {"summary": None, "logit": None}}) is None
+    assert V.reading_layers({"u": {"summary": summary("u", {"eval_awareness": {0: (1.0, 2.0)}}, layer=36), "logit": None}}) == [36]
+    assert V.reading_layers({"u": {"summary": None, "logit": None}}) == []
 
 
 # --- sentences picked on the pilot are never scored on the world they came from ------------------------
@@ -312,3 +312,16 @@ def test_a_world_with_no_sentence_left_has_no_curve():
             "Other": {"group": "eval", "source": "pilot", "episodes": 2, "pairs": ["a"]},
             "Ctl": {"group": "control", "source": "pilot", "episodes": 9, "pairs": ["a", "b"]}}
     assert V._curves({"summary": None, "logit": two_phrases("u")}, None, provenance=prov, scenario="a")["logit:eval"] == {}
+
+
+def test_the_logit_part_may_sit_in_its_own_directory(tmp_path):
+    """read_run.sh writes it to readings/logit: another engine, so other settings in read.json."""
+    (tmp_path / "logit").mkdir()
+    (tmp_path / "a.summary.json").write_text(json.dumps(summary("a", {"eval_awareness": {0: (1.0, 2.0)}})))
+    (tmp_path / "logit" / "a.logit.json").write_text(json.dumps(logit("a", {0: 0.5})))
+    assert V.load_readings(tmp_path)["a"]["logit"]["logit_monitor"]["status"] == "draft"
+
+
+def test_several_layers_need_a_choice():
+    reading = {"summary": {"by_turn": {"eval_awareness@36": [], "eval_awareness@42": []}}, "logit": None}
+    assert V.reading_layers({"u": reading}) == [36, 42]

@@ -483,3 +483,15 @@ def test_readings_so_far_go_over_first_so_a_second_session_resumes(tmp_path):
 
     with tarfile.open(state / "read-in.tgz") as t:
         assert any(n.endswith("old.npz") for n in t.getnames())
+
+
+def test_a_dry_run_of_a_read_touches_nothing(tmp_path):
+    (tmp_path / "v.safetensors").write_text("v")
+    proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1", "STEPS": "run ids read", "READ_VECTORS": str(tmp_path / "v.safetensors")})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert not [c for c in calls if c.split()[0] in ("colab", "ssh", "uv", "curl", "caffeinate")] and not out.exists()
+    cmds = [x for x in proc.stdout.splitlines() if x.startswith("+ ")]
+    order = ["simtest run", "simtest interp export", "simtest interp server-ids", "sim-session-step free-gpu", "git bundle create",
+             "sim-session-step read;"]
+    pos = [next(i for i, c in enumerate(cmds) if o in c) for o in order]
+    assert pos == sorted(pos), list(zip(order, pos))

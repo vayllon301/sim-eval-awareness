@@ -20,7 +20,12 @@ Modules:
   steering     the steering spec format and its resolution to per-layer additions
   reader       episode adapters, rendering with role masks, per-token projections
   monitors     the logit monitor: log-probs of short sentences at the start of each
-               turn's reasoning
+               turn's reasoning, in one pass over the episode where the backend can
+  episodes     the Inspect adapter and a run's export (laptop: it needs Inspect)
+  readrun      reading a run, resumable; the server's token IDs; the path check
+  validate     each monitor against the judge's labels and behaviour; the DRAFT rule
+  phrases      the monitor's sentences from the pilot's verbalisations (DRAFT rule)
+  command      `simtest interp`
   sae          TopK SAEs (Qwen-Scope), a torch-free .pt reader, FVU
   meta         fingerprints, hashes and versions recorded in every output
 """

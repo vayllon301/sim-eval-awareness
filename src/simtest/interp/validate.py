@@ -144,19 +144,18 @@ def _curves(reading: dict, layer: int | None, *, provenance: dict | None = None,
     return out
 
 
-def reading_layer(readings: dict) -> int | None:
-    """The reading's layer, when the readings hold one layer."""
-    layers = {int(k.rpartition("@")[2]) for r in readings.values() for k in ((r.get("summary") or {}).get("by_turn") or {})}
-    return max(layers) if layers else None
+def reading_layers(readings: dict) -> list[int]:
+    return sorted({int(k.rpartition("@")[2]) for r in readings.values() for k in ((r.get("summary") or {}).get("by_turn") or {})})
 
 
 def load_readings(path: str | Path) -> dict[str, dict]:
-    """{uuid: {"summary": ..., "logit": ...}} from a readings directory (readrun.py)."""
+    """{uuid: {"summary": ..., "logit": ...}} from a readings directory (readrun.py). The logit part
+    may sit in `logit/`: it runs on another engine, so it has its own settings."""
     path = Path(path)
     out: dict[str, dict] = {}
     for p in sorted(path.glob("*.summary.json")):
         out.setdefault(p.name.removesuffix(".summary.json"), {})["summary"] = json.loads(p.read_text())
-    for p in sorted(path.glob("*.logit.json")):
+    for p in sorted([*path.glob("*.logit.json"), *path.glob("logit/*.logit.json")]):
         out.setdefault(p.name.removesuffix(".logit.json"), {})["logit"] = json.loads(p.read_text())
     for r in out.values():
         r.setdefault("summary", None)

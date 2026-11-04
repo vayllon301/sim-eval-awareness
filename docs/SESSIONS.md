@@ -1,4 +1,4 @@
-# GPU sessions: preflight, session.sh, the watchdog, Hopper chunks
+# GPU sessions: preflight, session.sh, the watchdog, Hopper chunks, reading a run
 
 GPU time is paid in Colab units (a G4 bills 10.05 an hour while the VM lives) or in Hopper's
 queue. These scripts cut the time a GPU waits for nothing. They never change an episode: the
@@ -34,18 +34,24 @@ One VM session does all of a config's GPU work, so the setup is paid once (741 s
    cap (the second argument, in units).
 3. Runs `serve.sh` once with the given `MIX` (required: `c3` or `default`), opens the tunnel and
    waits for both `/v1/models`.
-4. Runs the steps in `STEPS`, always in this order (default: `run equiv`):
+4. Runs the steps in `STEPS`, always in this order (default: `run equiv`; `ids`, `readings` and `read` run
+   when named):
    - `run`: `simtest run`, with `EPOCHS`, `ADMIT_FOR` and `CARRY_UNDER` passed on. If the run is
      incomplete (exit 3), it says so and goes on.
    - `equiv`: `simtest equiv score` on the contexts, one request at a time and 12 at once
      (BACKENDS.md). It runs after the episodes, so they don't share its batches. With no
      contexts file yet, it first builds one from this run's logs (`simtest equiv contexts`).
      Keep that file: every backend is scored on the same contexts.
-   - `readings` (only when named): stops the servers to free the GPU, sends the code at HEAD (a
-     git bundle), and runs `explore/interp/gpu_smoke.sh` (INTERP.md, "GPU smoke test"). It reads
-     no episode yet and takes about 50 GPU minutes, so it is off by default.
+   - `ids`: `simtest interp export`, then `simtest interp server-ids`: the run's episodes for the
+     reader, and the token IDs of the agent server's own renderer for each one. It needs the servers
+     up, no GPU time, and it changes no episode. It takes a minute or two.
+   - `readings`: stops the servers to free the GPU, sends the code at HEAD (a git bundle), and runs
+     `explore/interp/gpu_smoke.sh` (INTERP.md, "GPU smoke test"). It builds the vector files and
+     takes about 50 GPU minutes.
+   - `read`: alone on the GPU in the same way, runs `explore/interp/read_run.sh` on the run's
+     episodes ([section 5](#5-reading-a-run-on-the-gpu)). `READ_PARTS` picks the parts.
 5. Always stops the VM at the end, also after an error or Ctrl-C, unless `KEEP=1`. The VM's
-   `$WORK/probe` and the readings come back first.
+   `$WORK/probe` and the smoke test's outputs come back first; a read's come back after each chunk.
 
 Everything goes to `logs/sessions/<name>-<UTC time>/`: `watchdog.log`, `serve.log`, `tunnel.log`,
 `probe/`, `equiv-c1.jsonl` and `equiv-c12.jsonl`, `readings.log` and `interp-smoke/`. The script
@@ -104,11 +110,48 @@ must leave room for the longest one. The plan keeps `TIME_LIMIT − SETUP_HOURS 
 room. `run_chunks.sh` keeps the same room before the job's real end: if the servers come up late,
 the window shrinks, and a chunk with no room left is skipped and submitted again later.
 
+## 5. Reading a run on the GPU
+
+The steps come from `explore/interp/read_run.sh`, on a Colab VM or a Hopper node, alone on the GPU
+(INTERP.md, "Reading a run"; every number below is an estimate until the first run):
+
+| `READ_PARTS` (`PARTS`) | What | Engine | Pilot, minutes |
+| --- | --- | --- | --- |
+| `check` | The first GPU run: the reading paths on the longest and shortest episode | vLLM, then transformers | about 15 |
+| `proj` | Projections, prompt ends, turn curves, SAE latents | vLLM (`READ_ENGINE=hf` to change) | about 15 |
+| `logit` | The logit monitor. Needs `READ_PHRASES`, so the judge first | transformers | about 25 |
+| `transfer` | The Qwen-Scope transfer check | transformers, then vLLM | about 15 |
+
+```bash
+# with the episodes: read the projections while the VM is up
+STEPS="run equiv ids read" READ_VECTORS=logs/interp/... MIX=c3 ADMIT_FOR=14 explore/colab_probe/session.sh configs/coding/pilot.yaml 180
+# after the judge: a short second session
+STEPS=read READ_PARTS="logit transfer" READ_PHRASES=<file> MIX=c3 explore/colab_probe/session.sh configs/coding/pilot.yaml 12
+# Hopper
+LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." VECTORS=<file> PARTS="check proj" explore/hopper/submit_read.sh configs/coding/pilot.yaml
+```
+
+- **Vectors.** `READ_VECTORS` is a file on the laptop. Without it, `proj` uses the file the `readings`
+  step builds on that VM, so name `readings` in `STEPS`.
+- **Chunks and resuming.** Colab allows one SSH session, so a read can't copy results out while it
+  runs. `session.sh` runs `read_run.sh` for `READ_CHUNK_MIN` minutes (20), copies the readings back to
+  `logs/read/<name>/readings/`, and goes on until nothing is left. A VM lost mid-run loses one chunk.
+  A second session sends the readings first and goes on from them. A chunk that finishes nothing more
+  stops the read, so it can't loop on a billing VM. Each engine load costs about a minute per chunk.
+- **Order of a session.** `ids` runs while the servers are up. `readings` and `read` share one stop of
+  the servers. The sentences don't exist until the judge has read the episodes, so `logit` is a
+  second, short session: about 45 minutes with setup. On Hopper it is a second job.
+- **Hopper.** `submit_read.sh` sends the code, the episodes, the readings so far, the vectors and the
+  sentences to `WORK`, and submits `read.slurm` (one GPU). The login host must see `WORK`. The time
+  limit is a parameter; `CHUNK_MIN` ends 10 minutes before it. The job's exit code is the reader's: 3
+  means episodes are left, and submitting again resumes. It prints the command that brings the
+  readings back.
+
 ## Not covered yet
 
-- **Readings.** The `readings` step runs the GPU smoke test, the only GPU script in INTERP.md so
-  far. Reading pilot episodes on vLLM needs the reader's Inspect adapter, which is not built yet
-  (INTERP.md, "Left for the GPU").
+- **Reading on a GPU.** `read_run.sh` and `read.slurm` have run only against stubs
+  (`tests/test_read_run_script.py`, `test_session_script.py`). `read_run.py` has run on the laptop's MLX
+  on real logs.
 - **Equivalence memory.** Prompt log-probs may need more memory than the servers leave free
   (BACKENDS.md, "Practicalities"). If `equiv` runs out of memory, run it again alone:
   `STEPS=equiv AGENT_MEM=... SIM_MEM=...` (`session.sh` passes both to `serve.sh`). Never run

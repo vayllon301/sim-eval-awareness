@@ -104,6 +104,9 @@ def main(args) -> None:
         readings = V.load_readings(args.readings or default_dir(args.log_dir, "readings"))
         results, kappa = _judge(args.judge, args.kappa) if args.judge else (None, None)
         provenance = json.loads(args.phrases.read_text()).get("provenance") if args.phrases else None
-        rep = V.build(episodes, design, results, readings, layer=args.layer or V.reading_layer(readings), kappa=kappa,
+        layers = V.reading_layers(readings)
+        if args.layer is None and len(layers) > 1:
+            raise SystemExit(f"these readings hold layers {layers}: give --layer (the vector file's chosen layer)")
+        rep = V.build(episodes, design, results, readings, layer=args.layer or (layers[0] if layers else None), kappa=kappa,
                       run=args.log_dir.name, provenance=provenance)
         print(V.dumps(rep) if args.json else V.format_report(rep))

@@ -20,7 +20,7 @@
 #             at TRANSFER_LAYERS. Skipped once its output exists.
 #
 # Estimated minutes for the pilot's 54 episodes (2.3M tokens), from LOG.md's numbers and the laptop's
-# scaling, not measured on a GPU: proj about 15, logit about 25, transfer about 10, plus about 1 per
+# scaling, not measured on a GPU: proj about 15, logit about 25, transfer about 15, plus about 1 per
 # engine load. Setup: 3 install, 5 download when the VM has neither.
 #
 # Colab's SSH allows one session, so a read step can't copy results out while it runs. CHUNK_MIN
