@@ -479,10 +479,13 @@ verbalisation, so a difference can show even if verbalised rates sit near zero.
   The scan makes one pass over the episode and a short pass per turn and phrase. On the
   laptop (Qwen3.8, 4 bits), a 28,728-token C3 episode with 40 turns and 10 phrases took 83.5 s;
   the generic path would take about 5.6M tokens at about 1,000 tokens/s, about 93 minutes.
-- **The two paths agree.** On that episode at three turns, at the same chunk size, the largest
+- **The two paths agree.** On that episode at one turn, at the same chunk size, the largest
   difference is 0.017 nats. At different chunk sizes `token_losses` differs from itself by
-  0.10 to 0.19 nats (mean 0.04 to 0.10): on 4-bit weights, where a chunk ends changes a
-  log-prob by more than a rounding error. The first GPU run measures this on FP8.
+  0.10 to 0.19 nats (mean 0.04 to 0.10): on these weights, where a chunk ends changes a log-prob
+  by more than a rounding error. It washes out at the monitor's level: at 8 bits, on two real
+  episodes, 1,024 against 2,048 tokens per chunk moves single log-probs by 0.06 to 0.07 nats (RMS)
+  but moves `eval_minus_control` by 2 to 5% of what it moves between turns. The first GPU run
+  measures this on FP8.
 - Phrases: `explore/interp/data/logit_monitor_phrases.json`, a draft. Aranguri's two
   sentences verbatim, three coding-agent drafts of ours (eval), two training sentences, and
   three controls (one shares the common "The user" opening). In N2 they are replaced by
@@ -653,6 +656,12 @@ the last reply as the provider would replay it. Tools come from the request. Too
 read are dropped and counted, and failed calls are counted. Each check stays in the metadata:
 `prompt_tokens`, `completion_tokens`, `requests_are_prefixes`, `replay_differs`, `partial_last_turn`.
 
+**End to end on real logs:** session 4's 6 C0 episodes went through `export`, `proj`, `logit`, `proj` with
+latents, `sae_transfer.py` and `report` on the laptop's 8-bit weights, with no failure. Prompt lengths all
+equal, 122 of 124 generated turns equal, and readings of one scenario's first prompt identical. FP8
+vectors with the training twin exist from session 4 (`logs/interp/gpu-smoke-s4/`: layers 36 to 48,
+chosen layer 36); the laptop's older files have no twin.
+
 **Exported episodes** are plain JSON (`reader.save_episode`), since the GPU venv has no Inspect. Keys
 keep their order: the template prints tools and arguments in it, so sorted keys change the tokens
 (2 fewer on every prompt of the real logs). The files live in `logs/read/<name>/`, beside the logs,
@@ -719,6 +728,11 @@ apply to prompt log-probs. The check keeps that path for three turns only.
 Estimates. Nothing here has run on a GPU, and 5 to 9K tokens/s (`PRIOR_SETUPS.md`) is a calculation, not
 a measurement.
 
+- **The laptop, for scale** (Qwen3.8 at 8 bits, real session 4 episodes, MLX): `proj` about 1,000
+  tokens/s, 2.3 minutes for 6 C0 episodes (130K tokens). `logit` 11 minutes for the same 6 with the
+  draft's 10 phrases. The SAE encoder on the CPU at one layer: 85 s for 34K tokens, about 400 tokens/s,
+  about 96 minutes on the pilot's tokens, which is why it runs on the GPU. A reading with no
+  latents is about 1 MB per 30K tokens at one layer.
 - **Tokens in the pilot:** about 2.3M. Session 4's C0 mean 21.8K (6 episodes, 21 turns), session 5's C3
   mean about 54K (17 episodes, 40 turns, up to 80K). 18 × 21.8K + 36 × 54K, with C2 assumed as long as
   C3.
@@ -731,7 +745,7 @@ a measurement.
 | `simtest interp export`, `server-ids` | 1 to 2 min | No GPU |
 | `check` (first run) | about 15 min | Below |
 | `proj` | about 15 min | 6 to 10 min of forward pass, the rest capture, rendering and latents |
-| `logit` | about 25 min | One pass, plus 18,000 short passes on a long cache |
+| `logit` | about 25 min, 15 to 50 | One pass, plus 18,000 short passes on a long cache: the least known number here |
 | `transfer` | about 15 min | 260K tokens × 8 passes on hf and 1 on vllm, plus the decoder on the CPU |
 | Setup | 8 min when the VM has nothing | 1 min per engine load |
 
