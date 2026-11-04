@@ -63,8 +63,11 @@ def make_backend(engine: str, model: str | Path, *, quantization: str | None = N
 
         return HFBackend(model)
     if engine == "mlx":
+        import mlx.core as mx
+
         from .mlx_backend import MLXBackend
 
+        mx.set_cache_limit(2 << 30)   # its buffer cache took an 80K-token pass past 50 GB (04-11-2026)
         return MLXBackend(model)
     raise ReadError(f"unknown engine {engine!r}")
 
