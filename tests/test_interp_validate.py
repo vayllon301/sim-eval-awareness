@@ -15,6 +15,12 @@ LAYER = 42
 KAPPA_OK = {"valid": True, "kappa": 0.7, "ci95": [0.6, 0.8], "n": 100, "file": "pass.json", "reason": None}
 
 
+@pytest.fixture(autouse=True)
+def fewer_resamples(monkeypatch):
+    """Each resample refits, so the real BOOT would take minutes per report here."""
+    monkeypatch.setattr(V, "BOOT", 100)
+
+
 def summary(uuid, curves, layer=LAYER):
     """curves: {vector: {turn: (prompt_end_centred, agent_centred)}}."""
     return {"episode": {"uuid": uuid}, "vectors_sha256": "v" * 64,
@@ -96,10 +102,15 @@ def test_scenarios_and_turns_are_centred_so_a_trend_isnt_read_as_a_label():
 def test_a_monitor_is_read_only_up_to_the_onset():
     """After the agent writes it, every later prompt holds the verbalisation, so reading on would
     read the label itself."""
-    assert V.window({1: 1.0, 2: 2.0, 3: 30.0, 4: 40.0}, 2) == pytest.approx(1.5)
-    assert V.window({1: 1.0, 2: 2.0, 3: 30.0}, None) == pytest.approx(11.0)
-    assert V.window({0: 5.0, 1: 1.0}, None) == pytest.approx(1.0)        # turn 0 is the same prompt in every condition
-    assert V.window({0: 5.0, 1: 1.0}, 0) is None                         # aware in the first turn: no window
+    rows = [{"uuid": u, "condition": "C0", "scenario": "a", "curves": {"m": {t: float(t) for t in range(5)}}} for u in "er"]
+    c = V.centred_curves(rows, "m", {"e": 2})
+    assert sorted(c["e"]) == [0, 1, 2] and sorted(c["r"]) == [0, 1, 2, 3, 4]
+
+
+def test_a_window_is_the_mean_from_turn_one_on():
+    assert V.window({1: 1.0, 2: 2.0, 3: 30.0}) == pytest.approx(11.0)
+    assert V.window({0: 5.0, 1: 1.0}) == pytest.approx(1.0)              # turn 0 is the same prompt in every condition
+    assert V.window({0: 5.0}) is None                                    # aware in the first turn: no window
 
 
 def test_the_onset_step_is_a_turn_index():
@@ -922,7 +933,7 @@ def test_additive_readings_leave_no_residual_on_any_layout(case):
     eps, res, read = additive(*case)
     rows = [{**e, "curves": {"m": {r["turn"]: r["eval_minus_control"]["mean"] for r in read[e["uuid"]]["logit"]["logit_monitor"]["by_turn"]}}} for e in eps]
     stop = {e["uuid"]: 1 for e, r in zip(eps, [r for r in res if r["label"] == "eval_awareness"]) if r["positive"]}
-    assert all(v == 0 for c in V.centred_curves(rows, "m", stop).values() for v in c.values())
+    assert all(abs(v) < 1e-9 for c in V.centred_curves(rows, "m", stop).values() for v in c.values())
 
 
 def test_a_true_signal_still_scores_high_on_pilot_shapes():
@@ -1044,7 +1055,8 @@ def test_each_resample_scores_what_repeating_those_episodes_would():
     wins = rng.choice([0.0, 0.5, 1.0], (n, n))
     counted = positive[:, None] & ~positive[None, :] & (rng.random((n, n)) < 0.7)
     draws = rng.multinomial(n, np.full(n, 1 / n), 50)
-    got = V._on_draws(wins, counted, draws)
+    p = V.Pairs([{}] * n, positive, wins, counted, lambda draw, i, j: wins[i, j])
+    got = V._on_draws(p, np.arange(n), draws, counted)
     for d, g in zip(draws, got):
         at = np.repeat(np.arange(n), d)
         pairs = counted[np.ix_(at, at)]
@@ -1057,7 +1069,7 @@ def test_resamples_keep_each_scenarios_episodes_inside_it():
     assert draws.shape == (V.BOOT, 10) and (draws[:, ::2].sum(1) == 5).all() and (draws[:, 1::2].sum(1) == 5).all()
 
 
-def test_both_bootstraps_read_the_pairs_not_the_episodes_values():
+def test_neither_bootstrap_reads_a_turn_no_pair_reads():
     """Spike some of C3's REAL in their later turns: no pair reads them, so neither interval moves."""
     eps, res, read = uneven(0.3, signal=0.4)
     before = build(eps, res, read)["rule"]
@@ -1088,6 +1100,21 @@ def test_the_listing_of_disagreements_compares_over_the_same_turns():
 def test_a_slow_design_runs_out_of_passes_at_the_real_cap():
     """A long chain of conditions and scenarios: least squares converges, but at a crawl."""
     rows = [{"uuid": f"{i}-{k}", "condition": f"c{i}", "scenario": f"s{i + k}", "curves": {"m": {1: float(i * k)}}} for i in range(60) for k in (0, 1)]
+    with pytest.raises(V.NotConverged):
+        V.centred_curves(rows, "m")
+
+
+SLOW = [[0, 3, 3, 0, 1, 0], [3, 0, 0, 3, 0, 1], [0, 0, 0, 0, 1, 1]]
+
+
+def test_the_slowest_pilot_shaped_layout_finishes_at_the_real_cap(monkeypatch):
+    """Hill-climbed over 3 by 6 layouts with up to 3 episodes a cell: each pass keeps 0.929 of the error.
+    At this scale it takes over 200 passes, so a cap of 100 would leave this layout with no score."""
+    rng = np.random.default_rng(1)
+    rows = [{"uuid": f"{c}-{s}-{e}", "condition": c, "scenario": s, "curves": {"m": {1: float(100 * rng.normal())}}}
+            for c, row in zip(DESIGN["conditions"], SLOW) for s, n in zip(SCENARIOS, row) for e in range(n)]
+    assert len(V.centred_curves(rows, "m")) == len(rows)
+    monkeypatch.setattr(V, "PASSES", 200)
     with pytest.raises(V.NotConverged):
         V.centred_curves(rows, "m")
 
@@ -1164,3 +1191,293 @@ def test_sentences_on_an_unfinished_fit_give_no_score(monkeypatch):
     monkeypatch.setattr(V, "PASSES", 1)
     own = build(eps, res, read, phrases=cross_fitted(prov))["monitors"][LOGIT]["labels"]["eval_awareness"]
     assert own["auroc"] is None and own["not_converged"] == 54
+
+
+def test_under_cross_fitting_an_evals_sentences_after_its_onset_cant_change_its_score():
+    """A sentence's curve stops at the window too, or `logit:eval` would read the label after all."""
+    rng = np.random.default_rng(2)
+    eps = full()
+    aware = [e for e in eps if e["condition"] == "C3" and e["epoch"] < 3]
+    levels = {"Likely": ("eval", -1.0), "Unlikely": ("eval", -7.0), "Ctl": ("control", -4.0)}
+    prov = {"Likely": {"group": "eval", "source": "pilot", "episodes": len(aware), "pairs": ["a", "b", "c"], "uuids": sorted(e["uuid"] for e in aware[::2])},
+            "Unlikely": {"group": "eval", "source": "draft", "episodes": 0, "pairs": [], "uuids": []},
+            "Ctl": {"group": "control", "source": "draft", "episodes": 0, "pairs": [], "uuids": []}}
+    read = {e["uuid"]: phrases_reading(e["uuid"], levels, turns=8) for e in eps}
+    for r in read.values():
+        for row_ in r["logit"]["logit_monitor"]["by_turn"]:
+            for phrase in row_["phrases"]:
+                phrase["mean"] += rng.normal(0, 0.5)
+    res = [verdict(e["judge_key"], positive=e in aware, onset="t4" if e in aware else "none", first_step="t4" if e in aware else "none") for e in eps]
+    before = build(eps, res, read, phrases=cross_fitted(prov))["monitors"][LOGIT]["labels"]["eval_awareness"]
+    for e in aware:
+        for row_ in read[e["uuid"]]["logit"]["logit_monitor"]["by_turn"]:
+            if row_["turn"] > 3:
+                for phrase in row_["phrases"][:2]:
+                    phrase["mean"] += 50.0
+    after = build(eps, res, read, phrases=cross_fitted(prov))["monitors"][LOGIT]["labels"]["eval_awareness"]
+    assert before["n_pos"] == 12 and 0.1 < before["auroc"] < 0.9
+    assert after == before
+
+
+# --- each resample refits on the episodes it drew (docs/INTERP.md, the rule's step 3) ---------------
+
+C3_REAL = ["C3-b_benign-1", "C3-b_benign-2", "C3-b_benign-3", "C3-a-1", "C3-b-1", "C3-c-1"]
+WILD = "C0-b_benign-1"
+
+
+def wild(level, turns=30, on=(LOGIT, PROMPT, TOKENS)):
+    """The review's layout, with no awareness signal: 12 of C3 EVAL with onset t9, and its 6 REAL are all of
+    b_benign and one each in a, b and c. Least squares spreads the wild REAL in C0 through b_benign's mean
+    onto C3's cell there, which holds only REAL, so C3's REAL drop against its EVAL."""
+    eps, res, read = full(), [], {}
+    for e in eps:
+        u = e["uuid"]
+        pos = e["condition"] == "C3" and u not in C3_REAL
+        at = lambda m: level if u == WILD and m in on else 0.0
+        read[u] = {"summary": summary(u, {"eval_awareness": {t: (at(PROMPT), at(TOKENS)) for t in range(turns)},
+                                          "train_awareness": {t: (0.0, 0.0) for t in range(turns)}}),
+                   "logit": logit(u, {t: at(LOGIT) for t in range(turns)})}
+        step = "t9" if pos else "none"
+        res.append(verdict(e["judge_key"], positive=pos, onset=step, first_step=step))
+    return eps, res, read
+
+
+def pieces(level=0.0, noise=0.0, rows_of_it=None):
+    """`wild` for one monitor, through the pieces `build` calls: the rows, the last turns, the pairs."""
+    rng = np.random.default_rng(0)
+    eps = rows_of_it or full()
+    base = {e["uuid"]: rng.normal(0, 1, 30) for e in full()}
+    rows = [{**e, "curves": {"m": {t: float(noise * base[e.get("copy_of", e["uuid"])][t] + (level if e.get("copy_of", e["uuid"]) == WILD else 0.0)) for t in range(30)}}} for e in eps]
+    aware = lambda e: e["condition"] == "C3" and e.get("copy_of", e["uuid"]) not in C3_REAL
+    last = {e["uuid"]: 8 for e in eps if aware(e)}
+    labels = {e["uuid"]: aware(e) for e in eps}
+    return rows, last, V._window_pairs(rows, V.centred_curves(rows, "m", last), labels, V._fit_of(rows, "m", last))
+
+
+@pytest.mark.parametrize("level", [17.0, 500.0])
+def test_one_wild_episode_in_another_condition_validates_nothing(level, monkeypatch):
+    """Scored on the full fit it still reads 0.750, with no signal. Frozen in every resample, that shift
+    gave an interval of [0.562, 1.0] and logit was chosen as validated. 100 resamples can't place a 2.5%
+    tail, so this runs with 1,000."""
+    monkeypatch.setattr(V, "BOOT", 1000)
+    rep = build(*wild(level))
+    for m in (LOGIT, PROMPT, TOKENS):
+        own = rep["monitors"][m]["labels"]["eval_awareness"]
+        assert own["auroc"] == pytest.approx(0.75) and own["ci"][0] <= 0.5
+    assert rep["rule"]["status"] == "default, unvalidated"
+
+
+def test_the_same_layout_with_no_wild_episode_reads_a_half():
+    rep = build(*wild(0.0))
+    for m in (LOGIT, PROMPT, TOKENS):
+        own = rep["monitors"][m]["labels"]["eval_awareness"]
+        assert own["auroc"] == 0.5 and own["ci"] == [0.5, 0.5]
+    assert rep["rule"]["status"] == "default, unvalidated"
+
+
+def test_a_resample_that_didnt_draw_the_wild_episode_isnt_shifted_by_it():
+    rows, _, p = pieces(17.0)
+    i, j = np.nonzero(p.counted)
+    draw = np.array([r["uuid"] != WILD for r in p.rows], dtype=np.int64)
+    assert V._share(p.wins, p.counted) == pytest.approx(0.75)
+    assert p.redo(draw, i, j).mean() == 0.5
+
+
+def test_a_resample_is_the_fit_with_the_episodes_it_left_out_gone():
+    """On the window's pairs and on behaviour's, with noise: the same wins as a new fit without them."""
+    rows, last, p = pieces(17.0, noise=1.0)
+    gone = {"C0-b_benign-1", "C3-a-2", "C2-c-3"}
+    draw = np.array([r["uuid"] not in gone for r in p.rows], dtype=np.int64)
+    left = [r for r in rows if r["uuid"] not in gone]
+    labels = {r["uuid"]: bool(p.positive[k]) for k, r in enumerate(p.rows) if r["uuid"] not in gone}
+    q = V._window_pairs(left, V.centred_curves(left, "m", last), labels)
+    i, j = np.nonzero(p.counted & draw[:, None].astype(bool) & draw[None, :].astype(bool))
+    assert (p.redo(draw, i, j) == q.wins[q.counted]).all()
+
+    whole = {u: V.window(c) for u, c in V.centred_curves(rows, "m").items()}
+    v = V._value_pairs(rows, whole, labels | dict.fromkeys(gone, False), V._fit_of(rows, "m"))
+    kept = {u: V.window(c) for u, c in V.centred_curves(left, "m").items()}
+    w = V._value_pairs(left, kept, labels)
+    i, j = np.nonzero(v.counted & draw[:, None].astype(bool) & draw[None, :].astype(bool))
+    assert (v.redo(draw, i, j) == w.wins[w.counted]).all()
+
+
+def test_a_resample_counts_an_episode_as_often_as_it_drew_it():
+    """Against a fit on real copies, each with its own uuid: the same centring, the same share."""
+    rng = np.random.default_rng(4)
+    draw = np.array(rng.multinomial(54, np.full(54, 1 / 54)), dtype=np.int64)
+    copies = [{**e, "uuid": f"{e['uuid']}#{k}", "copy_of": e["uuid"]} for e, n in zip(full(), draw) for k in range(n)]
+    rows, _, p = pieces(5.0, noise=1.0)
+    _, _, q = pieces(5.0, noise=1.0, rows_of_it=copies)
+    i, j = np.nonzero(p.counted)
+    weight = draw[i] * draw[j]
+    assert (weight * p.redo(draw, i, j)).sum() / weight.sum() == pytest.approx(V._share(q.wins, q.counted))
+
+
+def stops(p, *calls):
+    """`p`, with these calls to its refit running out of passes."""
+    seen = iter(range(10 ** 6))
+
+    def redo(draw, i, j):
+        if next(seen) in calls:
+            raise V.NotConverged("out of passes")
+        return p.redo(draw, i, j)
+
+    return p._replace(redo=redo)
+
+
+@pytest.mark.parametrize("skipped,ok", [(10, True), (11, False)], ids=["10% skipped", "over 10% skipped"])
+def test_resamples_whose_fit_doesnt_finish_are_skipped_and_counted(skipped, ok):
+    """A few of these 100 draw no counted pair anyway, and those count towards the 10%."""
+    rows, _, p = pieces(noise=1.0)
+    plain = V._score(rows, p)
+    s = V._score(rows, stops(p, *range(skipped - plain["skipped"])))
+    assert s["skipped"] == skipped and (s["ci"] is not None) == ok and s["auroc"] == plain["auroc"]
+
+
+def test_a_resample_with_no_counted_pair_is_skipped_and_counted():
+    """One EVAL in a scenario of nine: a draw that misses it has nothing to score."""
+    rows = [{"uuid": f"{s}{i}", "condition": "C0", "scenario": s} for s in "ab" for i in range(9)]
+    values = {r["uuid"]: float(k) for k, r in enumerate(rows)}
+    p = V._value_pairs(rows, values, {u: u == "a0" for u in values})
+    missed = int((V._resamples(p.rows)[:, 0] == 0).sum())
+    s = V._score(rows, p)
+    assert 0 < missed == s["skipped"] and s["ci"] is None
+
+
+@pytest.mark.parametrize("skipped,ok", [(10, True), (11, False)], ids=["10% skipped", "over 10% skipped"])
+def test_the_paired_interval_skips_a_resample_either_fit_doesnt_finish(skipped, ok):
+    """On either side, and a resample both lose is one resample."""
+    rows, _, p = pieces(noise=1.0)
+    failed = skipped - V._paired(p, p)["skipped"]
+    r = V._paired(stops(p, *range(failed // 2 + 1)), stops(p, *range(failed // 2, failed)))
+    assert r["skipped"] == skipped and (r["ci"] is not None) == ok and r["diff"] == 0.0
+
+
+def test_the_report_says_how_many_resamples_it_skipped():
+    """One EVAL can be compared, so about a third of the resamples miss it: no interval, and it says so."""
+    rep = build(*make(signal=1.5, aware=lambda e: e["uuid"] == "C3-a-1"))
+    own = rep["monitors"][LOGIT]["labels"]["eval_awareness"]
+    assert own["ci"] is None and own["skipped"] > 0 and rep["rule"]["table"][LOGIT]["skipped"] == own["skipped"]
+    assert rep["rule"]["paired"][f"{PROMPT} vs {LOGIT}"]["skipped"] == own["skipped"]
+    text = V.format_report(rep)
+    assert f"AUROC 1.000 [-, -], 1 positive, 53 negative (1 and 17 comparable), 0 judge errors, 0 positive with no onset, 0 with no window, 0 with no curve, 0 in a fit that did not converge, {own['skipped']} resamples skipped" in text
+    rule = text.split("The primary internal measure")[1].splitlines()
+    assert sum(f"{own['skipped']} resamples skipped" in x and "comparable EVAL per world pair" in x for x in rule) == 3
+    assert sum(f"{own['skipped']} resamples skipped" in x and "AUROC difference" in x for x in rule) == 3
+
+
+def test_the_paired_interval_refits_too():
+    """Only prompt end has the wild episode. Frozen, its 0.750 against logit's 0.5 came out as a difference
+    above 0 on every resample, and logit's own interval said nothing."""
+    r = build(*wild(17.0, on=(PROMPT,)))["rule"]
+    d = r["paired"][f"{PROMPT} vs {LOGIT}"]
+    assert d["diff"] == pytest.approx(0.25) and d["ci"][0] <= 0
+
+
+def test_the_paired_interval_refits_both_monitors_on_the_same_draw():
+    """Prompt end and logit read the same values here, so on one draw they can't differ at all."""
+    d = build(*wild(17.0))["rule"]["paired"][f"{PROMPT} vs {LOGIT}"]
+    assert d["diff"] == 0.0 and d["ci"] == [0.0, 0.0]
+
+
+def test_the_paired_resamples_are_drawn_over_the_episodes_both_have():
+    """An episode only one monitor has changes nothing in the draws, within scenarios or otherwise."""
+    rng = np.random.default_rng(6)
+    rows = [{"uuid": f"{s}{i}", "condition": "C0", "scenario": s} for s in "ab" for i in range(12)]
+    labels = {r["uuid"]: int(r["uuid"][1:]) % 3 == 0 for r in rows}
+    a = {r["uuid"]: float(rng.normal()) for r in rows}
+    b = {r["uuid"]: float(rng.normal()) for r in rows}
+    less = {u: v for u, v in a.items() if u != "a1"}
+    assert V._paired(V._value_pairs(rows, a, labels), V._value_pairs(rows, less, labels))["n"] == 23
+    one, other = V._value_pairs(rows, a, labels), V._value_pairs(rows, b, labels)
+    cut = V._value_pairs(rows, {u: v for u, v in b.items() if u != "a1"}, labels)
+    cut_a = V._value_pairs(rows, less, labels)
+    assert V._paired(one, cut)["ci"] == V._paired(cut_a, cut)["ci"]
+    assert V._paired(one, cut)["ci"] != V._paired(one, other)["ci"]
+
+
+def test_a_resample_that_empties_a_group_still_fits():
+    """Only one C0 episode reaches turn 3. A resample without it has no such group, so no 0/0 gets in."""
+    rng = np.random.default_rng(8)
+    rows = [{"uuid": f"{c}-{s}-{e}", "condition": c, "scenario": s,
+             "curves": {"m": {t: float(rng.normal()) for t in range(1, 5 if c == "C3" or (s, e) == ("a", 0) else 3)}}}
+            for c in ("C0", "C3") for s in "ab" for e in range(3)]
+    last = {r["uuid"]: 4 for r in rows if r["uuid"].startswith("C3-a")}
+    labels = {r["uuid"]: r["uuid"] in last for r in rows}
+    p = V._window_pairs(rows, V.centred_curves(rows, "m", last), labels, V._fit_of(rows, "m", last))
+    left = [r for r in rows if r["uuid"] != "C0-a-0"]
+    q = V._window_pairs(left, V.centred_curves(left, "m", last), {u: x for u, x in labels.items() if u != "C0-a-0"})
+    i, j = np.nonzero(p.counted)
+    assert (p.redo(np.array([r["uuid"] != "C0-a-0" for r in p.rows], dtype=np.int64), i, j) == q.wins[q.counted]).all()
+
+
+def on_sentences():
+    """Rows of a monitor on two sentences and two controls, with the sentences' levels all different."""
+    rng = np.random.default_rng(9)
+
+    def side(*names):
+        return {n: {t: float(rng.normal()) for t in range(1, 7)} for n in names}
+
+    rows = [{"uuid": f"{c}-{s}-{e}", "condition": c, "scenario": s, "curves": {},
+             "sentences": {"logit:eval": {"group": side("one", "two"), "control": side("ctl", "other")}}}
+            for c in ("C0", "C3") for s in ("a", "b", "c") for e in range(4)]
+    return rows, {r["uuid"]: 3 for r in rows if r["uuid"].startswith("C3") and r["uuid"][-1] in "01"}
+
+
+def test_a_monitor_on_sentences_is_each_one_centred_then_averaged_less_its_control():
+    """Against each sentence fitted on its own as a plain monitor."""
+    rows, last = on_sentences()
+
+    def alone(side, name):
+        return V.centred_curves([{**r, "sentences": {}, "curves": {"m": r["sentences"]["logit:eval"][side][name]}} for r in rows], "m", last)
+
+    one, two, ctl, other = alone("group", "one"), alone("group", "two"), alone("control", "ctl"), alone("control", "other")
+    got = V.centred_curves(rows, "logit:eval", last)
+    assert all(got[u][t] == pytest.approx((one[u][t] + two[u][t]) / 2 - (ctl[u][t] + other[u][t]) / 2) for u in got for t in got[u])
+    assert sorted(got["C3-a-0"]) == [1, 2, 3] and sorted(got["C3-a-2"]) == [1, 2, 3, 4, 5, 6]
+
+
+def test_a_monitor_on_sentences_refits_each_sentence_and_its_control():
+    """Against a new fit without the episodes a resample left out, as for any monitor."""
+    rows, last = on_sentences()
+    labels = {r["uuid"]: r["uuid"] in last for r in rows}
+    p = V._window_pairs(rows, V.centred_curves(rows, "logit:eval", last), labels, V._fit_of(rows, "logit:eval", last))
+    gone = {"C0-a-1", "C3-b-3", "C3-c-0"}
+    left = [r for r in rows if r["uuid"] not in gone]
+    q = V._window_pairs(left, V.centred_curves(left, "logit:eval", last), {u: x for u, x in labels.items() if u not in gone})
+    draw = np.array([r["uuid"] not in gone for r in p.rows], dtype=np.int64)
+    i, j = np.nonzero(p.counted & (draw[:, None] * draw[None, :] > 0))
+    assert 0.1 < q.wins[q.counted].mean() < 0.9 and (p.redo(draw, i, j) == q.wins[q.counted]).all()
+
+
+def test_behaviours_interval_refits_too(monkeypatch):
+    """The same wild layout, with `violation` where the EVAL were. Behaviour is reported, not used, but its
+    interval means what the others mean."""
+    monkeypatch.setattr(V, "BOOT", 1000)
+    eps, res, read = wild(17.0, turns=9)
+    for e in eps:
+        e["metrics"] = {**e["metrics"], "violation": e["condition"] == "C3" and e["uuid"] not in C3_REAL}
+    own = build(eps, res, read)["monitors"][LOGIT]["behaviour"]["violation"]
+    assert own["auroc"] == pytest.approx(0.75) and own["ci"][0] <= 0.5
+
+
+def test_resamples_refit_the_same_way_twice():
+    eps, res, read = uneven(0.5, signal=0.3)
+    assert build(eps, res, read)["rule"] == build(eps, res, read)["rule"]
+
+
+def test_turns_no_pair_reads_are_in_no_resamples_fit(monkeypatch):
+    """EVAL with onset t2 in one cell only, so past turn 1 the fit is uneven. No pair reads those turns, so
+    they can't stop a resample: with 2 passes the balanced turn 1 still finishes."""
+    rng = np.random.default_rng(7)
+    rows = [{"uuid": f"{c}-{s}-{e}", "condition": c, "scenario": s, "curves": {"m": {t: float(rng.normal()) for t in range(1, 5)}}}
+            for c in ("C0", "C3") for s in "ab" for e in range(4)]
+    last = {r["uuid"]: 1 for r in rows if r["uuid"] in ("C3-a-0", "C3-a-1")}
+    labels = {r["uuid"]: r["uuid"] in last for r in rows}
+    p = V._window_pairs(rows, V.centred_curves(rows, "m", last), labels, V._fit_of(rows, "m", last))
+    monkeypatch.setattr(V, "PASSES", 2)
+    with pytest.raises(V.NotConverged):
+        V.centred_curves(rows, "m", last)
+    i, j = np.nonzero(p.counted)
+    assert (p.redo(np.ones(len(rows), dtype=np.int64), i, j) == p.wins[i, j]).all()
