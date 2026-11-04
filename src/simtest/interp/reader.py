@@ -3,8 +3,9 @@ vectors, a role for every token. Reference: docs/INTERP.md, "Reader".
 
 1. An adapter turns an episode record into chat messages and tools (`Episode`). Only
    adapters know a record format; everything after them is format-free. Today:
-   `from_colab_probe` (explore/colab_probe/episode.py). The N1 Inspect format gets its
-   own adapter.
+   `from_colab_probe` (explore/colab_probe/episode.py), and `episodes.from_inspect` for a
+   run's Inspect logs (kept apart: it needs Inspect, which the GPU venv hasn't got). An
+   Episode is plain JSON (`save_episode`, `load_episode`).
 2. `render` renders the messages with the model's own chat template (tools included,
    earlier reasoning kept, as the server rendered them for the next turn), tokenizes the
    text, and labels every token with a role and the agent turn it belongs to. Segments
@@ -133,6 +134,23 @@ def _assignments(path: Path, names: set[str], ns: dict) -> dict:
             if targets & names:
                 exec(compile(ast.Module([node], []), str(path), "exec"), ns)
     return ns
+
+
+def save_episode(ep: Episode, path: str | Path, wire: dict | None = None) -> Path:
+    """An episode as plain JSON, so a machine without its record format can read it (episodes.py
+    exports Inspect episodes for the GPU venv, which has no Inspect). `wire` is the last request as
+    the server received it, for that server's own renderer (readrun.server_ids). Keys keep their
+    order: the template prints tools and arguments in it, so sorting them changes the tokens."""
+    path = Path(path)
+    path.write_text(json.dumps({"messages": ep.messages, "tools": ep.tools, "turns": ep.turns, "meta": ep.meta,
+                                "template_kwargs": ep.template_kwargs, "wire": wire}))
+    return path
+
+
+def load_episode(path: str | Path) -> Episode:
+    d = json.loads(Path(path).read_text())
+    return Episode(messages=d["messages"], tools=d["tools"], turns=d["turns"], meta=d["meta"],
+                   template_kwargs=d["template_kwargs"])
 
 
 def colab_probe_prompts(explore_dir: str | Path) -> dict:
