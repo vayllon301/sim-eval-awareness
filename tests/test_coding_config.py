@@ -115,3 +115,4 @@ def test_pilot_config_keeps_session_5s_settings_and_concurrency():
     assert "2 or more of a condition's scored episodes" in header   # the judge-error gate
     assert "max_connections" in header and "units" in header
     assert "12 in flight in total" in header and "one queue" in header
+    assert "fp8_per_channel" in header and "per tensor over the whole batch" not in header   # LOG.md, 02-11-2026

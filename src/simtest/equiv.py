@@ -15,9 +15,9 @@ Two score files are then compared position by position.
 - **Tokens.** Each server renders and tokenizes a context itself (`/tokenize`, its own chat
   template), and the IDs' hash is stored. Two files can only be compared on identical IDs: a
   backend that renders differently is not the same backend.
-- **Noise floor.** The simulator's FP8 MoE scales activations per tensor over the whole batch
-  (docs/INTERP.md), so even one server gives different numbers when requests share a batch.
-  Scoring the same contexts one at a time and N at a time measures that noise.
+- **Noise floor.** Even one server gives different numbers when requests share a batch (MoE
+  tiles, attention splits, prefill chunk boundaries; docs/BACKENDS.md). Scoring the same contexts
+  one at a time and N at a time measures that noise.
 - **Pass rule (DRAFT):** for each model, the gap between the two backends (both one request at
   a time) is no bigger than the reference backend's own batching noise: mean |difference in
   log-prob| no larger, top-1 agreement no lower. Both models must pass. Different token IDs

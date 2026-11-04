@@ -100,8 +100,9 @@ The reference backend is vLLM 0.32 with both models in FP8, as the episodes run
 (`explore/colab_probe/serve.sh`). The agent is the official FP8 checkpoint
 (`Qwen/Qwen3.8-27B-FP8`: 128×128 weight blocks, activations quantized per token in groups
 of 128). The simulator is bf16 weights (`Qwen/Qwen-AgentWorld-35B-A3B`) quantized by vLLM
-at load (`--quantization fp8`). Vectors, steering and readings run inside that engine, so
-they use the episodes' FP8 weights by construction.
+at load (`--quantization fp8_per_channel --moe-backend triton`, from the pilot on; LOG.md,
+02-11-2026). Vectors, steering and readings run inside that engine, so they use the episodes'
+FP8 weights by construction.
 
 **Path per model** (sources checked on 31-10-2026, listed below):
 
@@ -110,28 +111,29 @@ they use the episodes' FP8 weights by construction.
   the `kernels` hub), but with other kernels, so its numbers are close, not identical. It is
   the cross-check and the fallback.
 - *Simulator:* vLLM with vllm-lens, the only engine with these FP8 weights.
-  - In vLLM 0.32, `--quantization fp8` on a bf16 checkpoint is the deprecated name of
-    `fp8_per_tensor`.
-  - Weights: one scale per merged projection (qkv, gate_up, `in_proj_qkvz`, `in_proj_ba`)
-    and one per expert.
-  - Activations: per token in dense layers (CUTLASS), per tensor over the whole batch in
-    the MoE (Triton).
+  - `fp8_per_channel`, from the pilot on: one weight scale per output channel, and
+    activations per token in every layer, the MoE included.
+  - Every session before the pilot ran `--quantization fp8`, in vLLM 0.32 the deprecated name
+    of `fp8_per_tensor` on a bf16 checkpoint. Weights: one scale per merged projection (qkv,
+    gate_up, `in_proj_qkvz`, `in_proj_ba`) and one per expert. Activations: per token in
+    dense layers (CUTLASS), per tensor over the whole batch in the MoE (Triton).
   - transformers quantizes each unmerged projection in 128×128 blocks, so it can't
     reproduce those weights.
-- *A consequence for every simulator number.* The MoE's activation scale is computed over
-  the whole batch, so the simulator's output depends on what else is in the batch. The
-  episodes ran 13–16 at once; the vLLM backend sends one request at a time.
-  `fp8_per_channel` (per-token activations, the MoE included) removes that part of the
-  dependence, but it changes the simulator's weights for every condition, so it is
-  decided before the pilot.
+- *A consequence for every simulator number.* Under `fp8`, the MoE's activation scale was
+  computed over the whole batch, so the simulator's output depended on what else was in the
+  batch. The episodes ran 13–16 at once; the vLLM backend sends one request at a time.
+  `fp8_per_channel` removes that part of the dependence. It changes the simulator's weights
+  for every condition, so the pilot and everything after it use it.
   - Checked in vLLM 0.32.0's source (02-11-2026, [`BACKENDS.md`](BACKENDS.md), "The
     simulator's quantization"): it exists, and it covers every quantized layer, the MoE
     included, on the G4 and the H100. Other batch dependence remains (MoE tile sizes, attention
     splits, prefill chunks), and vLLM's batch-invariant mode refuses the GDN layers, so the
-    pin at 12 at once stays either way.
-  - If it is adopted, every phase uses it: `serve.sh`'s `SIM_QUANT=fp8_per_channel` for
-    episodes (`EAGER=1` too), and `quantization="fp8_per_channel"` for this backend and the
-    smoke test (`explore/interp/gpu_smoke.py` says `fp8` today).
+    pin at 12 at once stays.
+  - Every phase uses it: `serve.sh`'s default for episodes (`EAGER=1` too), and
+    `quantization="fp8_per_channel"` with `moe_backend="triton"` for this backend and the smoke
+    test (`explore/interp/gpu_smoke.py`).
+  - Session 4's simulator vectors are on `fp8`. They are not reused, and their fingerprint
+    keeps them apart.
 
 **vLLM backend** (`vllm_backend.py`), on vllm-lens 1.3.0 (UK AISI, MIT):
 
@@ -186,8 +188,9 @@ they use the episodes' FP8 weights by construction.
   with transformers 5.21 on the laptop and with 5.19 on Python 3.12, vLLM 0.32's pins as on
   the VM.
 
-**Fingerprints.** A backend that quantizes at load appends its scheme (`fp1:…+vllm:fp8`),
-so vectors built on the simulator's bf16 files don't steer its FP8 weights. A pre-quantized
+**Fingerprints.** A backend that quantizes at load appends its scheme
+(`fp1:…+vllm:fp8_per_channel`), so vectors built on the simulator's bf16 files, or on another
+scheme, don't steer its FP8 weights. A pre-quantized
 checkpoint has one fingerprint (the same files) on vLLM and on transformers.
 
 **EasySteer** (v0.29.0) can't be used.
@@ -598,9 +601,10 @@ colab --auth adc stop -s probe
 - Run the smoke test and log it. Until then, nothing on the GPU path has run.
 - If `served_equals_eager` fails, steering experiments run all their conditions on the
   eager engine (above).
-- The simulator's batch-dependent FP8 MoE ([GPU backends](#gpu-backends)): keep
-  `fp8_per_tensor`, or move every phase to `fp8_per_channel`. Decided on the
-  measurement and DRAFT rule in [`BACKENDS.md`](BACKENDS.md) (the pilot session's first hour).
+- The simulator on `fp8_per_channel` ([GPU backends](#gpu-backends)) has never run. Its first
+  startup is the setup check before the pilot's first episode ([`BACKENDS.md`](BACKENDS.md),
+  "The setup check"). The steering smoke test reruns for the simulator on this scheme before
+  N4 (LOG.md, 02-11-2026), with `moe_backend="triton"`, as `serve.sh` serves it.
 - The SAE transfer check on FP8 activations of pilot transcripts. `sae_transfer.py` splices
   with `token_losses(replace=)`, which only the HF backend has. So either the agent on the
   HF backend, or a vllm-lens `Hook` that splices in the worker process.
