@@ -21,6 +21,12 @@ earlier attempt of a drawn sample that began the same way. Refused episodes are 
 the reason, never dropped silently.
 
 An episode's key is `<log>::<sample id>::<epoch>`, with the log path relative to the root.
+
+**A run's scored episodes** (`scored_episodes`) are a third set: what `simtest judge run` and `scout`
+read from a log directory once the judge has passed (the pilot, then N3). They come from simtest's
+own loader, as `simtest summarize` counts them: a sample run once, from its newest log, with a valid
+end. Their key is `<run>::<sample uuid>`, so a resumed run that copies a finished sample into a newer
+log keeps its cache.
 """
 
 from __future__ import annotations
@@ -180,6 +186,27 @@ def _dir_episodes(root: Path, d: str) -> list[dict]:
             else:
                 out.append(ep)
     return out + list(by_uuid.values())
+
+
+def run_episode(log_dir: Path, e: dict) -> dict:
+    """A `load_run` episode as the judges take it."""
+    log_dir = Path(log_dir).resolve()
+    log = _path(e["log_path"]).resolve().relative_to(log_dir.parent).as_posix()
+    ep = _ep({"log": log, "sample_id": e["sample_id"], "epoch": e["epoch"], "uuid": e["uuid"]}, source=log_dir.name)
+    return {**ep, "key": f"{log_dir.name}::{e['uuid']}"} if e["uuid"] else ep
+
+
+def scored_episodes(log_dir: Path) -> tuple[list[dict], Path, int]:
+    """(a run's scored episodes, the root of their log paths, how many episodes aren't scored)."""
+    from ..coding import analysis as A
+
+    log_dir = Path(log_dir).resolve()
+    try:
+        eps, _ = A.load_run(log_dir)
+    except A.LogDirError as exc:
+        raise EpisodeError(str(exc)) from exc
+    scored = [run_episode(log_dir, e) for e in eps if not A.is_excluded(e)]
+    return sorted(scored, key=lambda e: e["key"]), log_dir.parent, len(eps) - len(scored)
 
 
 def tuning_set(spec_path: Path, guard: TestSetGuard | None = None, read=None) -> tuple[list[dict], list[dict], Path]:

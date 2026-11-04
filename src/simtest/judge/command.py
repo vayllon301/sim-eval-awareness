@@ -3,17 +3,21 @@ the hand labels. See docs/TESTBED.md, "The awareness judge".
 
     simtest judge tune <tuning.yaml> --backend codex --prompts v1 --out tune.jsonl
     simtest judge run <manifest.json> --backend inspect --model openrouter/... --prompts v3 --out kappa.jsonl --yes
-    simtest judge kappa <kappa.jsonl> <labels.jsonl> --manifest <manifest.json>
+    simtest judge kappa <kappa.jsonl> <labels.jsonl> --manifest <manifest.json> --record pass.json
     simtest judge kappa <scout.jsonl> --judge <kappa.jsonl>          # two judges on the same episodes
     simtest judge scout <manifest.json> --model openrouter/... --out scout.jsonl --yes
+    simtest judge run logs/<run> --model openrouter/... --prompts v3 --kappa pass.json --out judge.jsonl --yes
+    simtest judge scout logs/<run> --model openrouter/... --out scout.jsonl --yes
     simtest judge sizes <manifest.json | tuning.yaml> --prompts v3
     simtest judge show <results.jsonl>
 
-`tune` reads only tuning episodes and refuses the test set. `run` reads only the test set,
-with a frozen prompt version (a FROZEN file, committed: the prompt directory must be clean),
-on Inspect's model API. Any paid call (Inspect with a model other than mockllm) needs
-`--yes`; without it the command prints the plan and stops. `scout` runs the second judge
-(scout.py), Scout's published eval-awareness scanner, on the same test set.
+`tune` reads only tuning episodes and refuses the test set. `run` reads the test set, or a
+run's scored episodes from its log directory, with a frozen prompt version (a FROZEN file,
+committed: the prompt directory must be clean), on Inspect's model API. Any paid call (Inspect
+with a model other than mockllm) needs `--yes`; without it the command prints the plan and stops.
+A paid `run` on a log directory also needs `--kappa`: this judge's recorded pass (kappa.py).
+`scout` runs the second judge (scout.py), Scout's published eval-awareness scanner, on the same
+episodes; it has no pass line, so it needs no record.
 """
 
 from __future__ import annotations
@@ -58,8 +62,11 @@ def add_parser(sub) -> None:
     t.add_argument("--limit", type=int, default=None)
     t.add_argument("--min-turns", type=int, default=1, help="leave out episodes with fewer agent turns (default 1)")
     common(t, "codex")
-    r = jsub.add_parser("run", help="run the frozen judge on a manifest's drawn episodes (the kappa pass)")
-    r.add_argument("manifest", type=Path)
+    r = jsub.add_parser("run", help="run the frozen judge on a manifest's drawn episodes (the kappa pass) or a "
+                                    "run's scored episodes (a log directory)")
+    r.add_argument("source", type=Path, help="a hand-label manifest, or a run's log directory")
+    r.add_argument("--kappa", type=Path, default=None,
+                   help="with a log directory: this judge's recorded pass (simtest judge kappa --record)")
     common(r, "inspect")
     k = jsub.add_parser("kappa", help="Cohen's kappa per label against the hand labels (or another judge), with a "
                                       "bootstrap 95%% CI")
@@ -72,9 +79,12 @@ def add_parser(sub) -> None:
                         "them); required with the hand labels")
     k.add_argument("--boot", type=int, default=10000)
     k.add_argument("--json", action="store_true")
+    k.add_argument("--record", type=Path, default=None,
+                   help="write the outcome here (totals only): the primary judge's pass, read by simtest pilot and by "
+                        "simtest judge run on a log directory")
     sc = jsub.add_parser("scout", help="the second judge: Scout's published eval-awareness scanner on a manifest's "
-                                       "drawn episodes (never tuned)")
-    sc.add_argument("manifest", type=Path)
+                                       "drawn episodes or a run's scored episodes (never tuned)")
+    sc.add_argument("source", type=Path, help="a hand-label manifest, or a run's log directory")
     sc.add_argument("--model", required=True, help="an Inspect model id (openrouter/...; mockllm/model in tests)")
     sc.add_argument("--out", type=Path, required=True, help="results JSONL (appended; cached calls are skipped)")
     sc.add_argument("--concurrency", type=int, default=4)
@@ -133,7 +143,7 @@ def _plan_summary(calls, store, backend) -> str:
     return out
 
 
-def _execute(args, episodes, read, guard=None, min_turns: int = 0) -> None:
+def _execute(args, episodes, read, guard=None, min_turns: int = 0, check=None) -> None:
     prompts = J.load_prompts(args.prompts, _labels(args))
     backend = _backend(args)
     calls, refused = J.plan_calls(episodes, read, prompts, args.prompts, backend, args.budget, guard=guard)
@@ -144,6 +154,8 @@ def _execute(args, episodes, read, guard=None, min_turns: int = 0) -> None:
         calls = [c for c in calls if c["base"]["n_turns"] >= min_turns]
     store = J.ResultStore(args.out)
     print(_plan_summary(calls, store, backend))
+    if check is not None:
+        check(calls)
     if _paid(args) and not args.yes:
         print("Not called: this backend spends credit. Add --yes to make the calls.")
         return
@@ -190,14 +202,39 @@ def _model_args(raw):
     return margs
 
 
+def _run_dir(log_dir: Path) -> tuple[list[dict], Path]:
+    """A run's scored episodes and their root; every other episode is said, never judged."""
+    try:
+        episodes, root, left_out = E.scored_episodes(log_dir)
+    except E.EpisodeError as exc:
+        raise SystemExit(str(exc)) from exc
+    if left_out:
+        print(f"left out {left_out} episode(s) that aren't scored (simtest pilot reports them)")
+    return episodes, root
+
+
+def _require_pass(args, calls: list[dict]) -> None:
+    """The primary judge reads a run only after its kappa pass (configs/coding/pilot.yaml)."""
+    from .kappa import judge_identity, pass_state
+
+    if calls and _paid(args):
+        state = pass_state(args.kappa, judge_identity(c["base"] for c in calls))
+        if not state["valid"]:
+            raise SystemExit(f"Not called: {state['reason']}")
+
+
 def _scout(args) -> None:
     from . import scout as S
 
     temp = None if str(args.temperature).lower() == "none" else float(args.temperature)
     settings = S.run_settings(temperature=temp, max_tokens=args.max_tokens, reasoning_effort=args.reasoning_effort,
                               seed=args.seed, model_args=_model_args(args.model_args), budget=args.budget)
-    guard = E.TestSetGuard(args.manifest)
-    calls, refused = S.plan_calls(guard.drawn, lambda ep: E.read_sample(guard.root, ep), args.model, settings)
+    if args.source.is_dir():
+        episodes, root = _run_dir(args.source)
+    else:
+        guard = E.TestSetGuard(args.source)
+        episodes, root = guard.drawn, guard.root
+    calls, refused = S.plan_calls(episodes, lambda ep: E.read_sample(root, ep), args.model, settings)
     for r in refused:
         print(f"refused {r['key']}: {r['reason']}")
     store = J.ResultStore(args.out)
@@ -241,7 +278,7 @@ def _sizes(args) -> None:
 
 
 def main(args: argparse.Namespace) -> None:
-    from .kappa import dumps, format_report, kappa_files
+    from .kappa import dumps, format_report, kappa_files, write_pass
 
     if args.judge_cmd == "tune":
         spec = E.load_tuning_spec(args.spec)
@@ -264,8 +301,14 @@ def main(args: argparse.Namespace) -> None:
                              "judged only with a frozen, committed prompt version")
         if J.code_state()["prompts_dirty"]:
             raise SystemExit("judge/prompts has uncommitted changes: commit them first")
-        guard = E.TestSetGuard(args.manifest)
-        _execute(args, guard.drawn, lambda ep: E.read_sample(guard.root, ep))
+        if args.source.is_dir():
+            episodes, root = _run_dir(args.source)
+            _execute(args, episodes, lambda ep: E.read_sample(root, ep), check=lambda calls: _require_pass(args, calls))
+        else:
+            if args.kappa is not None:
+                raise SystemExit("--kappa is for a run's log directory: a manifest's episodes are the kappa pass itself")
+            guard = E.TestSetGuard(args.source)
+            _execute(args, guard.drawn, lambda ep: E.read_sample(guard.root, ep))
     elif args.judge_cmd == "kappa":
         if (args.labels is None) == (args.reference is None):
             raise SystemExit("give the hand labels (labels.jsonl) or --judge <results.jsonl>, one of the two")
@@ -275,6 +318,12 @@ def main(args: argparse.Namespace) -> None:
         rep = kappa_files(args.results, args.labels, n_boot=args.boot, judge_path=args.reference,
                           manifest_path=args.manifest)
         print(dumps(rep) if args.json else format_report(rep))
+        if args.record is not None:
+            try:
+                write_pass(args.record, rep, args.results, args.labels, args.manifest)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+            print(f"recorded: {args.record}")
     elif args.judge_cmd == "scout":
         _scout(args)
     elif args.judge_cmd == "sizes":

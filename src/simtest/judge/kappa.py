@@ -22,17 +22,25 @@ Judge results (judge.py) carry each test-set episode's opaque label id; the hand
   REAL) gives a sensitivity line next to the label, never in its place.
 - The reference can be another judge's results instead of the hand labels
   (`judge_as_labels`): the same report, the two judges on the same episodes.
+- The outcome can be recorded (`write_pass`, `simtest judge kappa --record`): totals only, with the
+  judge it belongs to (`judge_identity`). The primary judge reads a run's episodes only with a
+  recorded pass for that same judge (`pass_state`): another model, prompt or setting needs a new
+  kappa pass (configs/coding/pilot.yaml).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
 from collections import Counter
 from pathlib import Path
 
-from .judge import LABELS, PRIMARY, read_results
+from .judge import LABELS, PRIMARY, _now, code_state, read_results
+
+PASS_KAPPA = 0.6
+IDENTITY = ("prompt_version", "backend", "model", "settings", "render_version")
 
 
 def cohen_kappa(a: list, b: list) -> float:
@@ -291,7 +299,7 @@ def format_report(rep: dict) -> str:
             elif math.isnan(r["kappa"]):
                 lines.append("  pass: kappa undefined")
             else:
-                lines.append(f"  pass (kappa >= 0.6): {'yes' if r['kappa'] >= 0.6 else 'no'}")
+                lines.append(f"  pass (kappa >= {PASS_KAPPA}): {'yes' if r['kappa'] >= PASS_KAPPA else 'no'}")
         cm = r["confusion_hand_by_judge"]
         cols = list(next(iter(cm.values())).keys())
         lines.append(f"  {'reference' if by_judge else 'hand'} \\ judge  " + "  ".join(f"{c:>6}" for c in cols))
@@ -343,7 +351,7 @@ def _nan_to_none(x):
         return None
     if isinstance(x, dict):
         return {k: _nan_to_none(v) for k, v in x.items()}
-    if isinstance(x, list):
+    if isinstance(x, (list, tuple)):
         return [_nan_to_none(v) for v in x]
     return x
 
@@ -351,3 +359,78 @@ def _nan_to_none(x):
 def dumps(rep: dict) -> str:
     """Strict JSON: an undefined kappa is null."""
     return json.dumps(_nan_to_none(rep), indent=1, allow_nan=False)
+
+
+# --- the recorded pass -------------------------------------------------------------------------
+
+def passed(rep: dict) -> bool:
+    """The rule the pass line prints: a complete comparison, on the primary label, at the line."""
+    r = rep["labels"].get(PRIMARY)
+    return bool(r) and r["complete"] and not math.isnan(r["kappa"]) and r["kappa"] >= PASS_KAPPA
+
+
+def judge_identity(records) -> dict:
+    """What makes a judge that judge, from its results or planned calls (each call's `base`): the
+    prompt version, each label's prompt file, the backend, model and settings, and the renderer."""
+    judge, prompts = None, {}
+    for r in records:
+        one = {k: r.get(k) for k in IDENTITY}
+        if judge is None:
+            judge = one
+        elif one != judge:
+            raise ValueError(f"more than one judge in these results: {judge} and {one}")
+        if prompts.setdefault(r["label"], r.get("prompt_sha256")) != r.get("prompt_sha256"):
+            raise ValueError(f"more than one judge in these results: two prompts for {r['label']}")
+    if judge is None:
+        raise ValueError("no judge results")
+    return {**judge, "prompt_sha256": prompts}
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def write_pass(path: Path, rep: dict, results_path: Path, labels_path: Path, manifest_path: Path) -> dict:
+    """Record the primary judge's kappa outcome, pass or not: totals only, no episode."""
+    if rep.get("reference") != "hand" or labels_path is None or manifest_path is None:
+        raise ValueError("a kappa pass is recorded only against the hand labels, with the manifest")
+    if any(j["backend"] == "scout" for j in rep["judge"]):
+        raise ValueError("a kappa pass is the primary judge's: the second judge has no pass line")
+    r = rep["labels"][PRIMARY]
+    rec = {"passed": passed(rep), "threshold": PASS_KAPPA, "kappa": r["kappa"], "ci95": r["ci95"], "n": r["n"],
+           "drawn": rep.get("drawn"), "complete": r["complete"], "judge": judge_identity(read_results(results_path)),
+           "results_sha256": _sha256(results_path), "labels_sha256": _sha256(labels_path),
+           "manifest_sha256": _sha256(manifest_path), "simtest_commit": code_state()["simtest_commit"],
+           "recorded_at": _now()}
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(dumps(rec) + "\n")
+    return rec
+
+
+def _differences(recorded: dict, judge: dict) -> list[str]:
+    out = [k for k in IDENTITY if recorded.get(k) != judge.get(k)]
+    prompts = recorded.get("prompt_sha256") or {}
+    if any(prompts.get(label) != sha for label, sha in (judge.get("prompt_sha256") or {}).items()):
+        out.append("prompt_sha256")
+    return out
+
+
+def pass_state(path: Path | None, judge: dict) -> dict:
+    """{"valid", "reason", "kappa", "ci95", "n", "file"} for this judge against a recorded pass."""
+    no = lambda why, **kw: {"valid": False, "reason": why, "kappa": None, "ci95": None, "n": None,  # noqa: E731
+                            "file": None if path is None else str(path), **kw}
+    if path is None or not Path(path).is_file():
+        return no("no kappa pass recorded: give --kappa <file> (simtest judge kappa ... --record <file>)")
+    try:
+        rec = json.loads(Path(path).read_text())
+        seen = {"kappa": rec["kappa"], "ci95": rec.get("ci95"), "n": rec["n"]}
+        recorded = rec["judge"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return no(f"unreadable kappa record {path}: {exc!r}")
+    if not rec.get("complete"):
+        return no(f"the recorded kappa comparison is incomplete (n {rec['n']}): no pass", **seen)
+    if not rec.get("passed"):
+        return no(f"recorded kappa {rec['kappa']} is below {rec.get('threshold', PASS_KAPPA)}: no pass", **seen)
+    if diff := _differences(recorded, judge):
+        return no(f"this judge differs from the one that passed ({', '.join(diff)}): it needs a new kappa pass", **seen)
+    return {**no(""), **seen, "valid": True, "reason": None}
