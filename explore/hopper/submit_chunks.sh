@@ -16,13 +16,15 @@
 #
 # What it does:
 #   1. Refuses unless logs/preflight/<name>.ok holds the current commit and the tree is clean (the
-#      jobs would wait on GPUs for a run that can't start), and the parameters are given.
+#      jobs would wait on GPUs for a run that can't start), the parameters are given, the setup
+#      check's inputs exist, and SIM_QUANT is unset or fp8_per_channel.
 #   2. Plans: simtest plan CONFIG --durations FILE --time-limit TIME_LIMIT --setup-hours SETUP_HOURS
 #      --json, one chunk per job (offline; it runs in the dry run too).
 #   3. Copies explore/colab_probe/serve.sh to REMOTE_DIR on the cluster (default sim-session, under
 #      the home on the login host: the nodes must see it too; the status files go there).
-#   4. Submits serve.slurm (by stdin) once per chunk with --time and the job's settings. If a
-#      submission fails, the jobs already submitted are cancelled.
+#   4. Submits serve.slurm (by stdin) once per chunk with --time and the job's settings, the
+#      simulator's scheme always by name. If a submission fails, the jobs already submitted are
+#      cancelled.
 #   5. Writes LOGS/hopper/<name>-<UTC time>.jobs: the commit, the cluster settings, one line per job
 #      (job id, epochs, admit-for hours), for run_chunks.sh.
 #
@@ -41,7 +43,10 @@ DRY=${DRY_RUN:-}
 LOGS=${LOGS:-logs}
 REMOTE_DIR=${REMOTE_DIR:-sim-session}
 SBATCH_ARGS=${SBATCH_ARGS:-}
+SIM_QUANT=${SIM_QUANT:-$SIM_SCHEME}
+EQUIV_CONTEXTS=${EQUIV_CONTEXTS:-$LOGS/equiv/contexts.jsonl}
 name=$(config_name $CONFIG 2>/dev/null)
+SETUP_DIR=${SETUP_DIR:-$(setup_dir ${name:-hopper} hopper "$(git rev-parse HEAD 2>/dev/null)")}
 
 problems=()
 [[ -f $CONFIG ]] || problems+=("no config $CONFIG (give a path from the repo root)")
@@ -52,6 +57,11 @@ if ! [[ ${SETUP_HOURS:-} =~ $NUM ]]; then problems+=("set SETUP_HOURS to the hou
 if [[ -z ${WORK:-} ]]; then problems+=("set WORK to a scratch directory on the nodes (about 110 GB free)")
 elif [[ $WORK != /* ]]; then problems+=("WORK must be an absolute path on the nodes (got $WORK)"); fi
 [[ ! -f $CONFIG ]] || problems+=(${(f)"$(preflight_problems $CONFIG)"})
+[[ $SIM_QUANT == $SIM_SCHEME ]] \
+  || problems+=("SIM_QUANT=$SIM_QUANT: episodes run $SIM_SCHEME only (LOG.md, 02-11-2026); old sessions' episodes are reproduced at their own commit")
+[[ $(setup_verdict) != FAIL ]] \
+  || problems+=("$SETUP_DIR holds a FAIL: Victor decides (docs/BACKENDS.md); a new check, after a fix, needs a new SETUP_DIR")
+problems+=(${(f)"$(setup_problems)"})
 if (( ${#problems} )); then
   for p in $problems; do print -u2 -r -- "submit_chunks.sh: refused: $p"; done
   exit 1
@@ -83,10 +93,10 @@ x -i explore/colab_probe/serve.sh ssh $LOGIN "mkdir -p ${(q)REMOTE_DIR}/status &
   || { print -u2 "submit_chunks.sh: could not copy serve.sh to $LOGIN:$REMOTE_DIR"; exit 1; }
 minutes=$(( int(TIME_LIMIT * 60) ))
 # $PWD expands on the login host, in REMOTE_DIR: the job runs there, and so do the paths it gets.
-exports="ALL,WORK=${(q)WORK},SERVE_SH=\$PWD/serve.sh,STATUS_DIR=\$PWD/status,TIME_LIMIT_MIN=$minutes"
+# ALL is the login shell's environment: the scheme goes by name, so nothing there can change it.
+exports="ALL,WORK=${(q)WORK},SERVE_SH=\$PWD/serve.sh,STATUS_DIR=\$PWD/status,TIME_LIMIT_MIN=$minutes,SIM_QUANT=$SIM_QUANT"
 [[ -z ${MIX:-} ]] || exports+=",MIX=$MIX"
 [[ -z ${EAGER:-} ]] || exports+=",EAGER=$EAGER"
-[[ -z ${SIM_QUANT:-} ]] || exports+=",SIM_QUANT=$SIM_QUANT"   # the simulator's FP8 scheme; serve.sh checks it
 ids=()
 rows=()
 i=0

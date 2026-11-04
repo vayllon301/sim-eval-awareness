@@ -17,6 +17,7 @@ SIM_ONLY=1 restarts the simulator alone, next to a running agent (docs/BACKENDS.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -380,6 +381,11 @@ def test_serve_keeps_the_lines_the_setup_check_reads(tmp_path):
     assert sum("Using TRITON Fp8 MoE backend" in x for x in text) == 1
     assert sum("Selected CutlassFP8ScaledMMLinearKernel" in x for x in text) == 1
     assert not any("some other line" in x for x in text)
+    # and what serve.sh really writes is what the check really reads
+    spec = importlib.util.spec_from_file_location("sim_quant", SCRIPT.parents[1] / "sim_quant.py")
+    sq = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sq)
+    assert sq.server_check("\n".join(text)) == ([], [])
 
 
 def test_a_sim_only_restart_replaces_the_lines(tmp_path):

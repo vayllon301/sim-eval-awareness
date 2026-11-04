@@ -11,7 +11,9 @@
 # servers alive until the job ends. It checks both every HEALTH_POLL seconds and ends the job when
 # one fails 3 checks in a row, so the GPUs go back to the queue. It writes STATUS_DIR/<job id>:
 #   node=<the node>  state=starting|ready|failed|server-died|ended  start=<epoch s>  end=<epoch s>
-# where end is the start plus the time limit. run_chunks.sh reads it through the login host.
+# where end is the start plus the time limit, and, before it says ready, STATUS_DIR/<job id>.server:
+# serve.sh's server.txt (the GPU, the served simulator line, what vLLM quantized). run_chunks.sh reads
+# both through the login host.
 #
 # The time limit is a parameter, not set here: submit_chunks.sh passes it (sbatch --time, and
 # TIME_LIMIT_MIN for the status file). Hopper's limit is unknown. A job killed at its time limit
@@ -21,7 +23,7 @@
 #
 # Required (sbatch --export): WORK (scratch, about 110 GB free; the venv and the models stay there for
 # the next jobs), SERVE_SH, STATUS_DIR, TIME_LIMIT_MIN. Optional: MIX (no effect on two GPUs), EAGER,
-# PROFILE (two-gpu), HEALTH_POLL (60).
+# SIM_QUANT (submit_chunks.sh always names fp8_per_channel), PROFILE (two-gpu), HEALTH_POLL (60).
 #SBATCH --job-name=sim-serve
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -59,7 +61,7 @@ if [ "$profile" != "${PROFILE:-two-gpu}" ]; then
 fi
 echo "$dry"
 
-if ! bash "$SERVE_SH"; then
+if ! bash "$SERVE_SH" || ! cp "$WORK/probe/server.txt" "$STATUS.server"; then
   status failed
   exit 1
 fi

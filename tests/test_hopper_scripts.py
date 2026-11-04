@@ -44,7 +44,8 @@ def stub_dir(tmp_path: Path, stubs: dict[str, str]) -> Path:
 FAKE_SERVE = """#!/bin/sh
 # stands in for explore/colab_probe/serve.sh: the dry run prints a profile; the real run "serves"
 if [ "${DRY_RUN:-}" = 1 ]; then echo "profile: ${FAKE_PROFILE:-two-gpu} (2 GPU of 81559 MiB), vllm 0.32.0, work $WORK"; exit 0; fi
-echo "serve WORK=$WORK MIX=${MIX:-}" >> "$STATE/calls.log"
+echo "serve WORK=$WORK MIX=${MIX:-} SIM_QUANT=${SIM_QUANT:-}" >> "$STATE/calls.log"
+[ -n "${NO_SERVER_LINES:-}" ] || { mkdir -p "$WORK/probe"; echo "gpu: stand-in" > "$WORK/probe/server.txt"; }
 exit "${SERVE_RC:-0}"
 """
 # healthy for HEALTHY_CHECKS calls, then down; it copies the status file the first time it is asked
@@ -98,6 +99,21 @@ def test_the_job_serves_writes_ready_and_ends_when_a_server_dies(tmp_path):
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_job_keeps_the_servers_lines_where_the_login_host_sees_them(tmp_path):
+    """Before it says ready: run_chunks.sh reads them through the login host for each job."""
+    proc, state = run_slurm(tmp_path, {"HEALTHY_CHECKS": "1"})
+    assert (tmp_path / "status" / "42.server").read_text() == "gpu: stand-in\n"
+    assert status(tmp_path, state / "status-at-first-check")["state"] == "ready"
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_job_without_its_lines_is_failed_not_left_starting(tmp_path):
+    proc, state = run_slurm(tmp_path, {"NO_SERVER_LINES": "1"})
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "failed"
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
 def test_a_failed_serve_is_written_as_failed(tmp_path):
     proc, state = run_slurm(tmp_path, {"SERVE_RC": "1"})
     assert proc.returncode == 1
@@ -140,6 +156,15 @@ def test_the_end_of_the_job_is_written(tmp_path):
 PLAN = {"chunks": [{"epochs": "1-1", "admit_for_hours": 9.5}, {"epochs": "2-2", "admit_for_hours": 9.5},
                    {"epochs": "3-3", "admit_for_hours": 9.25}]}
 UV = REC + """case "$*" in
+  *"sim_quant.py lines "*) exit "${LINES_RC:-0}" ;;
+  *"sim_quant.py fidelity "*) exit 0 ;;
+  *"sim_quant.py check "*)
+    out=$(echo "$*" | sed -E 's/.*--out ([^ ]+).*/\\1/')
+    printf '{\\n "verdict": "%s"\\n}\\n' "${CHECK_VERDICT:-PASS}" > "$out/check.json"
+    case ${CHECK_VERDICT:-PASS} in PASS) exit 0 ;; FAIL) exit 1 ;; *) exit 2 ;; esac ;;
+  *"sim_quant.py gate "*)
+    n=$(grep -c 'sim_quant.py gate ' "$STATE/calls.log"); rc=$(sed -n "${n}p" "$STATE/gate-rcs" 2>/dev/null)
+    exit "${rc:-0}" ;;
   "run python "*) shift 2; exec "$PYTHON" "$@" ;;
   *"simtest plan "*) cat "$STATE/plan.json"; exit "${PLAN_RC:-0}" ;;
   *"simtest run "*)
@@ -162,6 +187,7 @@ case $cmd in
     [ "$n" = "${FAIL_SBATCH:-0}" ] && { echo "sbatch: error: Batch job submission failed" >&2; exit 1; }
     echo "$((1000 + n));hopper" ;;
   *"cat > "*"/serve.sh"*) cat > "$STATE/remote-serve.sh" ;;
+  *"/status/"*".server"*) id=$(echo "$cmd" | sed -E 's#.*/status/([0-9]+)[.]server.*#\\1#'); echo "gpu: job $id's lines" ;;
   *"squeue -h -j "*)
     id=$(echo "$cmd" | sed -E 's/.*squeue -h -j ([0-9]+).*/\\1/')
     echo "squeue=$(pop "$STATE/jobs/$id.squeue")"
@@ -188,7 +214,9 @@ case "$*" in
   *) exit 7 ;;
 esac
 """
-LAPTOP = {"uv": UV, "ssh": SSH, "git": GIT, "curl": CURL, "lsof": REC + "exit 1\n"}
+PYTHON3 = REC + 'printf "%s" "${RECORDING_PROBLEM:-}"\n[ -z "${RECORDING_PROBLEM:-}" ]\n'   # the recording's check
+LAPTOP = {"uv": UV, "ssh": SSH, "git": GIT, "curl": CURL, "lsof": REC + "exit 1\n", "python3": PYTHON3}
+SETUP = "setup/n2-pilot-hopper-0123456789ab"   # the setup check's directory under LOGS
 
 
 def laptop(tmp_path: Path, preflight: str | None = HEAD):
@@ -200,6 +228,8 @@ def laptop(tmp_path: Path, preflight: str | None = HEAD):
     if preflight is not None:
         (logs / "preflight").mkdir()
         (logs / "preflight" / "n2-pilot.ok").write_text(preflight + "\n")
+    (logs / "equiv").mkdir()
+    (logs / "equiv" / "contexts.jsonl").write_text("{}\n")
     (tmp_path / "dotenv").write_text("")
     (tmp_path / "durations.json").write_text("{}")
     env = {"PATH": f"{stubs}:/usr/bin:/bin", "HOME": str(tmp_path), "STATE": str(state), "LOGS": str(logs),
@@ -272,7 +302,10 @@ def test_a_failed_submission_cancels_the_jobs_already_submitted(tmp_path):
     ({"WORK": "scratch/sim"}, HEAD, "absolute"),
     ({}, None, "preflight"),
     ({"GIT_DIRTY": "?? x\n"}, HEAD, "dirty"),
-], ids=["login", "time", "setup", "work", "relative-work", "preflight", "dirty"])
+    ({"SIM_QUANT": "fp8"}, HEAD, "SIM_QUANT"),                        # a leftover in the shell
+    ({"EQUIV_CONTEXTS": "/nonexistent/c.jsonl"}, HEAD, "contexts"),   # the check couldn't run on the first job
+    ({"RECORDING_PROBLEM": "real.jsonl is missing"}, HEAD, "real.jsonl is missing"),
+], ids=["login", "time", "setup", "work", "relative-work", "preflight", "dirty", "old-scheme", "no-contexts", "no-recording"])
 def test_submission_refusals(tmp_path, env, preflight, needle):
     proc, state, logs = submit(tmp_path, env, preflight)
     assert proc.returncode == 1
@@ -316,11 +349,16 @@ def ready(node: str, hours_left: float) -> str:
     return f"node={node};state=ready;start={now - 1800};end={now + int(hours_left * 3600)}"
 
 
-def run_chunks(tmp_path: Path, rows, setup_jobs, env: dict | None = None, commit=HEAD, run_rcs=()):
+def run_chunks(tmp_path: Path, rows, setup_jobs, env: dict | None = None, commit=HEAD, run_rcs=(), gate_rcs=(),
+               check=None):
     state, logs, base = laptop(tmp_path)
     f = jobs_file(tmp_path, rows, commit)
     setup_jobs(state)
     (state / "run-rcs").write_text("".join(f"{rc}\n" for rc in run_rcs))
+    (state / "gate-rcs").write_text("".join(f"{rc}\n" for rc in gate_rcs))
+    if check is not None:      # a check already on disk, for this commit and backend
+        (logs / SETUP).mkdir(parents=True)
+        (logs / SETUP / "check.json").write_text(json.dumps({"verdict": check}, indent=1) + "\n")
     full = {**base, "OUTDIR": str(tmp_path / "out"), **(env or {})}
     proc = subprocess.run([ZSH, str(RUN), str(f)], env=full, cwd=REPO, capture_output=True, text=True,
                           timeout=90, stdin=subprocess.DEVNULL)
@@ -430,13 +468,14 @@ def test_run_chunks_refuses_another_commit(tmp_path):
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
 def test_run_chunks_dry_run_touches_nothing(tmp_path):
     proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5"), ("1002", "2-2", "9.5")], lambda s: None,
-                             env={"DRY_RUN": "1", "EQUIV": "1", "EQUIV_CONTEXTS": str(tmp_path / "dotenv")})
+                             env={"DRY_RUN": "1"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert not [c for c in calls_of(state) if c.startswith(("ssh", "uv", "curl"))]
     out = proc.stdout
     assert out.count("simtest run ") == 2 and "--admit-for 9.50" in out
     assert out.count("simtest equiv score") == 1          # on the first chunk's servers, before its episodes
-    assert out.index("simtest equiv score") < out.index("simtest run ")
+    assert out.count("sim_quant.py gate ") == 2           # each chunk's own servers
+    assert out.index("simtest equiv score") < out.index("sim_quant.py check ") < out.index("simtest run ")
     assert "scancel 1001" in out and "tunnel.sh" in out
 
 
@@ -463,27 +502,152 @@ def test_the_planners_own_chunks_are_submitted(tmp_path, monkeypatch):
     assert rows == [["1001", "1-2", "2.5"], ["1002", "3", "2.5"]]
 
 
+# --- the simulator's scheme and the setup check (LOG.md, 02-11-2026; docs/BACKENDS.md) -----------------
+
+
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
-def test_equiv_runs_on_the_first_usable_job_when_the_first_fails(tmp_path):
-    """S4: with EQUIV=1 the check runs before any episode, also when the first job failed."""
+def test_the_setup_check_runs_on_the_first_usable_job_when_the_first_fails(tmp_path):
+    """Before any episode, once, also when the first job failed; each chunk has its own gate."""
     def jobs(state):
         job(state, "1001", ["RUNNING", ""], ["node=gpu07;state=failed;start=1;end=2"])
         job(state, "1002", ["RUNNING"], [ready("gpu11", 20)])
         job(state, "1003", ["RUNNING"], [ready("gpu12", 20)])
-    ctx = tmp_path / "contexts.jsonl"
-    ctx.write_text("{}\n")
-    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5"), ("1002", "2-2", "9.5"), ("1003", "3-3", "9.5")],
-                             jobs, env={"EQUIV": "1", "EQUIV_CONTEXTS": str(ctx)})
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5"), ("1002", "2-2", "9.5"), ("1003", "3-3", "9.5")], jobs)
+    assert proc.returncode == 3, proc.stderr + proc.stdout
     calls = calls_of(state)
-    eq = [i for i, c in enumerate(calls) if "simtest equiv score" in c]
-    first_run = next(i for i, c in enumerate(calls) if "simtest run " in c)
-    assert len(eq) == 1 and eq[0] < first_run, proc.stdout
+    pos = [i for i, c in enumerate(calls) if "simtest equiv score" in c]
+    forced = [i for i, c in enumerate(calls) if "sim_quant.py fidelity" in c]
+    check = [i for i, c in enumerate(calls) if "sim_quant.py check" in c]
+    gates = [i for i, c in enumerate(calls) if "sim_quant.py gate" in c]
+    run_at = [i for i, c in enumerate(calls) if "simtest run " in c]
+    assert len(pos) == len(forced) == len(check) == 1 and len(gates) == len(run_at) == 2
+    assert pos[0] < forced[0] < check[0] < gates[0] < run_at[0] < gates[1] < run_at[1]
+    assert "Hopper, job 1002 on gpu11, fp8_per_channel" in calls[pos[0]]   # the label names the job and the scheme
+    assert "--concurrency 1 12" in calls[pos[0]]
+    assert (tmp_path / "logs" / SETUP / "server.txt").read_text() == "gpu: job 1002's lines\n"
 
 
-def test_sim_quant_reaches_the_job(tmp_path):
-    """S9 (sol-loop round 5): the job's serve.sh gets SIM_QUANT when it is given."""
-    proc, state, logs = submit(tmp_path, {"SIM_QUANT": "fp8_per_channel"})
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_each_chunk_is_gated_on_its_own_jobs_lines(tmp_path):
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 20)])
+        job(state, "1002", ["RUNNING"], [ready("gpu11", 20)])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5"), ("1002", "2-2", "9.5")], jobs)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    gates = [c for c in calls_of(state) if "sim_quant.py gate" in c]
+    out = tmp_path / "out"
+    assert f"--server {out / 'server-1001.txt'}" in gates[0] and f"--server {out / 'server-1002.txt'}" in gates[1]
+    assert f"--run-log {tmp_path / 'logs' / 'n2-pilot'}" in gates[0]
+    assert "job 1002 on gpu11" in gates[1]
+    assert (out / "server-1002.txt").read_text() == "gpu: job 1002's lines\n"
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+@pytest.mark.parametrize("v", ["FAIL", "INCOMPLETE"])
+def test_a_check_that_does_not_pass_cancels_every_job_before_any_episode(tmp_path, v):
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 20)])
+        job(state, "1002", ["PENDING"], [""])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5"), ("1002", "2-2", "9.5")], jobs, env={"CHECK_VERDICT": v})
+    assert proc.returncode == 1, proc.stdout
+    assert "no episode" in proc.stdout
+    assert not runs(calls_of(state))
+    cancelled = (state / "scancel.log").read_text()
+    assert "1001" in cancelled and "1002" in cancelled
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_later_jobs_refused_gate_stops_everything(tmp_path):
+    """Job 1002 landed on other cards, or serves another scheme: its episodes never start."""
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 20)])
+        job(state, "1002", ["RUNNING"], [ready("gpu11", 20)])
+        job(state, "1003", ["PENDING"], [""])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5"), ("1002", "2-2", "9.5"), ("1003", "3-3", "9.5")], jobs,
+                             gate_rcs=(0, 1))
+    assert proc.returncode == 1
+    assert len(runs(calls_of(state))) == 1 and "--epochs 1-1" in runs(calls_of(state))[0]
+    assert "gate" in proc.stdout and "1003" in (state / "scancel.log").read_text()
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_pass_on_this_commit_is_not_paid_for_twice(tmp_path):
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 20)])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], jobs, check="PASS")
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    calls = calls_of(state)
+    assert not any("simtest equiv score" in c or "sim_quant.py fidelity" in c for c in calls)
+    assert any("sim_quant.py gate" in c for c in calls) and runs(calls)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_failed_check_refuses_before_any_job_is_touched(tmp_path):
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], lambda s: None, check="FAIL")
+    assert proc.returncode == 1
+    assert "refused" in proc.stderr and "FAIL" in proc.stderr
+    assert not [c for c in calls_of(state) if c.startswith("uv")]
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+@pytest.mark.parametrize("env,needle", [({"EQUIV_CONTEXTS": "/nonexistent/c.jsonl"}, "contexts"),
+                                        ({"RECORDING_PROBLEM": "real.jsonl is missing"}, "real.jsonl is missing")],
+                         ids=["no-contexts", "no-recording"])
+def test_run_chunks_refuses_a_check_that_could_not_run(tmp_path, env, needle):
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], lambda s: None, env=env)
+    assert proc.returncode == 1
+    assert "refused" in proc.stderr and needle in proc.stderr
+    assert not [c for c in calls_of(state) if c.startswith("uv")]
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_speed_ok_reaches_the_gate_on_hopper(tmp_path):
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 20)])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], jobs, env={"SPEED_OK": "1"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert any("sim_quant.py gate" in c and c.rstrip().endswith("--speed-ok") for c in calls_of(state))
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_the_setup_time_comes_out_of_the_first_chunks_window(tmp_path):
+    """The admission window is worked out after the check, so the room for the longest episode stays."""
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 5.9)])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], jobs)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    calls = calls_of(state)
+    assert calls.index(runs(calls)[0]) > next(i for i, c in enumerate(calls) if "sim_quant.py check" in c)
+    assert admit(runs(calls)[0]) <= 3.9
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_the_scheme_is_always_named_to_the_job(tmp_path):
+    """--export=ALL passes the login shell's environment too: the job gets the scheme by name."""
+    proc, state, logs = submit(tmp_path)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    sb = sbatches(calls_of(state))
+    assert sb and all(",SIM_QUANT=fp8_per_channel" in c for c in sb)
+    proc, state, logs = submit(tmp_path / "named", {"SIM_QUANT": "fp8_per_channel"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert all(",SIM_QUANT=fp8_per_channel" in c for c in sbatches(calls_of(state)))
-    proc, state, logs = submit(tmp_path / "d")
-    assert not any("SIM_QUANT" in c for c in sbatches(calls_of(state)))
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_submit_needs_no_check_inputs_once_it_has_passed(tmp_path):
+    d = tmp_path / "passed"
+    d.mkdir()
+    (d / "check.json").write_text(json.dumps({"verdict": "PASS"}, indent=1) + "\n")
+    proc, state, logs = submit(tmp_path / "a", {"SETUP_DIR": str(d), "EQUIV_CONTEXTS": "/nonexistent/c.jsonl"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_submit_refuses_a_failed_check(tmp_path):
+    d = tmp_path / "failed"
+    d.mkdir()
+    (d / "check.json").write_text(json.dumps({"verdict": "FAIL"}, indent=1) + "\n")
+    proc, state, logs = submit(tmp_path / "a", {"SETUP_DIR": str(d)})
+    assert proc.returncode == 1
+    assert "refused" in proc.stderr and "FAIL" in proc.stderr
+    assert not [c for c in calls_of(state) if c.startswith("ssh")]

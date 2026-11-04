@@ -76,7 +76,7 @@ VM_WORK=/content   # serve.sh's and gpu_smoke.sh's work directory on Colab
 SIM_QUANT=${SIM_QUANT:-$SIM_SCHEME}
 name=$(config_name $CONFIG 2>/dev/null)
 OUTDIR=${OUTDIR:-$LOGS/sessions/${name:-session}-$(date -u +%Y%m%d-%H%M%S)}
-SETUP_DIR=${SETUP_DIR:-$(setup_dir ${name:-session} $GPU $(git rev-parse HEAD 2>/dev/null))}
+SETUP_DIR=${SETUP_DIR:-$(setup_dir ${name:-session} $GPU "$(git rev-parse HEAD 2>/dev/null)")}
 PROXY="colab --auth adc ssh --proxy-mode -s $SESSION"
 SSH=(ssh -o "ProxyCommand=$PROXY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR "root@$SESSION")

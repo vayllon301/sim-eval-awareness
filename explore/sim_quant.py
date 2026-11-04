@@ -512,7 +512,7 @@ def main_recording(args) -> int:
     return 1 if problems else 0
 
 
-def main(argv=None) -> int:
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("fidelity", help="the bake-off's forced pass at 12 at once, with /metrics")
@@ -533,7 +533,11 @@ def main(argv=None) -> int:
     n.add_argument("--server", required=True)
     r = sub.add_parser("recording", help="is the bake-off's recording the pinned one")
     r.add_argument("--bakeoff", default="logs/bakeoff")
-    args = p.parse_args(argv)
+    return p
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
     return {"fidelity": main_fidelity, "check": main_check, "gate": main_gate, "lines": main_lines,
             "recording": main_recording}[args.cmd](args)
 

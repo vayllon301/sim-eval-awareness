@@ -10,8 +10,10 @@ and curl. Logs go to a temporary LOGS directory.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -59,7 +61,7 @@ UV = REC + """case "$*" in
   *"sim_quant.py fidelity "*) exit "${FIDELITY_RC:-0}" ;;
   *"sim_quant.py check "*)
     # stands in for the rule: it writes the verdict, and its exit says so
-    out=$(echo "$*" | sed -E 's/.*--out ([^ ]+).*/\1/')
+    out=$(echo "$*" | sed -E 's/.*--out ([^ ]+).*/\\1/')
     printf '{\n "verdict": "%s"\n}\n' "${CHECK_VERDICT:-PASS}" > "$out/check.json"
     case ${CHECK_VERDICT:-PASS} in PASS) exit 0 ;; FAIL) exit 1 ;; *) exit 2 ;; esac ;;
   *"sim_quant.py gate "*) exit "${GATE_RC:-0}" ;;
@@ -479,6 +481,19 @@ def test_the_contexts_are_needed_only_if_the_check_will_run(tmp_path):
     proc, calls, out, state = run(tmp_path, {"EQUIV_CONTEXTS": "/nonexistent/contexts.jsonl", "RECORDING_PROBLEM": "x"},
                                   before=verdict(tmp_path))
     assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+def test_the_commands_the_session_prints_are_the_ones_sim_quant_takes(tmp_path):
+    """The stubs accept anything, so the real parser reads what the scripts really send."""
+    spec = importlib.util.spec_from_file_location("sim_quant", REPO / "explore" / "sim_quant.py")
+    sq = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sq)
+    proc, *_ = run(tmp_path, {"DRY_RUN": "1", "SPEED_OK": "1"})
+    cmds = [shlex.split(x[2:]) for x in proc.stdout.splitlines() if x.startswith("+ ") and "explore/sim_quant.py" in x]
+    tails = [c[c.index("explore/sim_quant.py") + 1:] for c in cmds]
+    assert [t[0] for t in tails] == ["lines", "fidelity", "check", "gate"]
+    for t in tails:
+        sq.parser().parse_args(t)        # a bad option ends the test here
 
 
 def test_the_session_says_which_scheme_it_serves(tmp_path):
