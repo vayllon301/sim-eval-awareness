@@ -333,6 +333,13 @@ def test_readings_made_without_the_servers_ids_are_counted_and_said():
     assert "2 read with --no-server-ids" in V.format_report(rep)
 
 
+def test_readings_from_vectors_of_another_card_are_counted_and_said():
+    eps, res, read = make()
+    read[eps[0]["uuid"]]["summary"]["vectors_backend"] = {"built_on": "G4", "read_on": "H100", "allowed": True}
+    rep = build(eps, res, read)
+    assert rep["coverage"]["other_backend"] == 1 and "1 read with vectors from another backend" in V.format_report(rep)
+
+
 def test_disagreements_are_listed_not_resolved():
     rep = build(*make(signal=1.5))
     d = rep["disagreements"]

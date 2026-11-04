@@ -405,7 +405,8 @@ def summarize(r: Reading) -> dict:
                            "tokens_by_role": {k: int((r.role == R[k]).sum()) for k in ROLES}, "by_group": {}, "by_turn": {}}
     if "logit_monitor" in r.meta:
         out["logit_monitor"] = r.meta["logit_monitor"]
-    for key in ("chosen_layer", "ids_check", "prompt_mismatches", "completion_checks", "episode_sha256"):   # a run's checks (readrun.py)
+    for key in ("chosen_layer", "vectors_backend", "ids_check", "prompt_mismatches", "completion_checks",
+                "episode_sha256"):   # a run's checks (readrun.py)
         if key in r.meta:
             out[key] = r.meta[key]
     if "episode" in r.meta:
@@ -442,8 +443,8 @@ def summarize(r: Reading) -> dict:
 
 def read(backend: Backend, ep: Episode, vectors: VectorSet, layers: Sequence[int], *,
          names: Sequence[str] | None = None, saes: Mapping[int, Any] | None = None,
-         allow_other_model: bool = False, vectors_path: str | None = None, phrases: dict | None = None,
-         phrases_path: str | None = None, phrase_turns: Sequence[int] | None = None) -> Reading:
+         allow_other_model: bool = False, allow_other_backend: bool = False, vectors_path: str | None = None,
+         phrases: dict | None = None, phrases_path: str | None = None, phrase_turns: Sequence[int] | None = None) -> Reading:
     """One forward pass over the rendered episode; projections onto `names` (default: all
     vectors in the file) at `layers`, top-k latents for each layer in `saes`, and each
     turn's prompt end. With `phrases` (a phrase file: {status, source, groups}), the logit
@@ -453,6 +454,12 @@ def read(backend: Backend, ep: Episode, vectors: VectorSet, layers: Sequence[int
     if want != have and not allow_other_model:
         raise ValueError(f"the vectors were built on {want}, the backend is {have}; vectors only read the model "
                          "they were built on (pass allow_other_model for a deliberate transfer test)")
+    # The file records its card (`model.device`, the same string on vLLM and transformers, so hf can
+    # read vLLM's vectors). The weights fingerprint can't tell: both cards load the same files.
+    built_on, read_on = (vectors.meta.get("model") or {}).get("device"), backend.info.get("device")
+    if built_on != read_on and not allow_other_backend:
+        raise ValueError(f"the vectors were built on {built_on}, this backend is {read_on}: vectors are built on the backend "
+                         "that runs the episodes (docs/BACKENDS.md). allow_other_backend is for a check, and each reading records it")
     names = list(names or vectors.names)
     layers = sorted(set(int(L) for L in layers) | set(int(L) for L in (saes or {})))
     rd = render(ep, backend.tokenizer)
@@ -471,7 +478,8 @@ def read(backend: Backend, ep: Episode, vectors: VectorSet, layers: Sequence[int
         sae_out[int(L)] = sae.encode(acts[int(L)])
     offsets = {n: {str(L): v for L, v in (vectors.meta.get("offset", {}).get(n) or {}).items()} for n in names}
     meta = {"episode": ep.meta, "backend": backend.info, "vectors_model": vectors.meta.get("model"),
-            "chosen_layer": vectors.meta.get("chosen_layer"), "vectors_path": vectors_path, "vectors_sha256": file_sha256(vectors_path) if vectors_path else None,
+            "chosen_layer": vectors.meta.get("chosen_layer"), "vectors_path": vectors_path,
+            "vectors_backend": {"built_on": built_on, "read_on": read_on, "allowed": built_on != read_on}, "vectors_sha256": file_sha256(vectors_path) if vectors_path else None,
             "offsets": offsets, "template_kwargs": ep.template_kwargs, "text_sha256": bytes_sha256(rd.text.encode()),
             "n_tokens": int(len(rd.ids)), "prompt_checks": prompt_checks(ep, backend.tokenizer, prompts),
             "prompt_end_not_prefix": [k for k, e in enumerate(ends.tolist()) if e < 0],

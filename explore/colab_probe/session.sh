@@ -44,6 +44,8 @@
 #                  second session resumes: the readings go over first. Stops when a chunk finishes
 #                  nothing more. READ_NO_SERVER_IDS=1 reads episodes with no server IDs, and each
 #                  reading says so: for logs whose servers are gone, never for evidence.
+#                  READ_ALLOW_OTHER_BACKEND=1 reads vectors built on another card, and each reading
+#                  says so.
 #   5. Always stops the VM at the end, also on an error or Ctrl-C, unless KEEP=1 (the watchdog
 #      still guards a kept VM). The VM's logs ($WORK/probe: serve.sh's logs, timings, versions)
 #      and the smoke test's outputs come back to OUTDIR first. Inspect's logs are on the laptop already.
@@ -65,7 +67,7 @@
 # READINGS_BUDGET_MIN, OUTDIR (logs/sessions/<name>-<UTC time>), KEEP, DRY_RUN; for read: READ_DIR
 # (logs/read/<name>), READ_PARTS (proj), READ_VECTORS (default: the one the readings step builds),
 # READ_PHRASES, READ_LAYERS, READ_SAE_LAYERS, READ_ENGINE (vllm), READ_CHUNK_MIN (20),
-# READ_NO_SERVER_IDS. Deadlines in
+# READ_NO_SERVER_IDS, READ_ALLOW_OTHER_BACKEND. Deadlines in
 # minutes: NEW_MIN (20), SERVE_MIN (45), READY_MIN (5), READINGS_MIN (100), READ_MIN (a chunk:
 # READ_CHUNK_MIN + 20 for setup, engine loads and an episode a budget can't cut, + 15 per check or
 # transfer part, which have no budget).
@@ -374,6 +376,7 @@ if want read; then
   [[ -z ${READ_LAYERS:-} ]] || r_env+="LAYERS=${(qq)READ_LAYERS} "
   [[ -z ${READ_SAE_LAYERS:-} ]] || r_env+="SAE_LAYERS=${(qq)READ_SAE_LAYERS} "
   [[ ${READ_NO_SERVER_IDS:-} != 1 ]] || r_env+="NO_SERVER_IDS=1 "
+  [[ ${READ_ALLOW_OTHER_BACKEND:-} != 1 ]] || r_env+="ALLOW_OTHER_BACKEND=1 "
   if [[ -n ${READ_VECTORS:-} ]]; then
     vm -i $READ_VECTORS -o $OUTDIR/read-in.log -t 300 "cat > $VM_WORK/read/vectors.safetensors" || fail "read: could not copy the vectors"
   fi

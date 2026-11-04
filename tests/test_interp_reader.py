@@ -253,6 +253,44 @@ def test_read_refuses_vectors_from_another_model():
     assert read(b, episode(), vs, [2], allow_other_model=True).proj.shape[1] == 1
 
 
+G4, H100 = "NVIDIA RTX PRO 6000 Blackwell Server Edition", "NVIDIA H100 80GB HBM3"     # as session 4's file records them
+
+
+def other_card(built, read_on):
+    b = FakeBackend()
+    b.info = {**b.info, "device": read_on}
+    vs = fake_vectors(b)
+    vs.meta["model"] = {**vs.meta["model"], "device": built}
+    return b, vs
+
+
+def test_read_refuses_vectors_built_on_another_card():
+    """Session 4's G4 file on a Hopper pilot: the same weights, so the fingerprint can't tell."""
+    b, vs = other_card(G4, H100)
+    assert vs.meta["model"]["fingerprint"] == b.info["fingerprint"]
+    with pytest.raises(ValueError, match="H100"):
+        read(b, episode(), vs, [2])
+
+
+def test_a_file_that_doesnt_say_its_card_is_refused_too():
+    b, vs = other_card(None, H100)
+    with pytest.raises(ValueError, match="None"):
+        read(b, episode(), vs, [2])
+
+
+def test_the_flag_reads_them_and_the_reading_says_so():
+    b, vs = other_card(G4, H100)
+    r = read(b, episode(), vs, [2], allow_other_backend=True)
+    assert summarize(r)["vectors_backend"] == {"built_on": G4, "read_on": H100, "allowed": True}
+
+
+def test_another_engine_on_the_same_card_reads_without_a_flag():
+    """hf is proj's fallback, on the vectors vLLM built: the same device string on both (session 4)."""
+    b, vs = other_card(G4, G4)
+    vs.meta["model"]["engine"] = "vllm"
+    assert summarize(read(b, episode(), vs, [2]))["vectors_backend"] == {"built_on": G4, "read_on": G4, "allowed": False}
+
+
 def test_read_stores_sae_top_k(tmp_path):
     b = FakeBackend()
     rng = np.random.default_rng(2)

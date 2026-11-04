@@ -600,6 +600,11 @@ def test_a_longer_chunk_moves_the_deadline_and_read_min_still_wins(tmp_path):
     assert deadline(proc) == 33 * 60
 
 
+def test_the_flag_for_another_cards_vectors_reaches_the_vm(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, {"READ_ALLOW_OTHER_BACKEND": "1"})
+    assert "ALLOW_OTHER_BACKEND=1" in (state / "read-cmds").read_text()
+
+
 def test_read_runs_alone_on_the_gpu_and_brings_the_readings_back(tmp_path):
     proc, calls, out, state = read_run(tmp_path)
     assert proc.returncode == 0, proc.stderr + proc.stdout

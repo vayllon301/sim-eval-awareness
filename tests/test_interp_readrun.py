@@ -340,6 +340,20 @@ def test_server_ids_are_fetched_from_the_servers_own_renderer(tmp_path):
 
 # --- generated tokens against the re-rendered turn ---------------------------------------------------
 
+def test_vectors_from_another_card_fail_the_episode_and_the_flag_is_recorded(tmp_path, vectors):
+    vs, path = vectors
+    vs.meta["model"] = {**vs.meta["model"], "device": "NVIDIA RTX PRO 6000 Blackwell Server Edition"}
+    b = FakeBackend()
+    b.info = {**b.info, "device": "NVIDIA H100 80GB HBM3"}
+    exported(tmp_path)
+    st = run(tmp_path, vectors, backend=b)
+    assert st["failed"] and "built on" in st["failed"][0]["error"]
+    st = RR.read_run(b, tmp_path / "eps", tmp_path / "other", vectors=vs, vectors_path=path, layers=LAYERS, no_server_ids=True,
+                     allow_other_backend=True)
+    assert not st["failed"] and json.loads((tmp_path / "other" / "read.json").read_text())["allow_other_backend"] is True
+    assert json.loads((tmp_path / "other" / "u1.summary.json").read_text())["vectors_backend"]["allowed"] is True
+
+
 def test_completion_checks_compare_each_turn_with_what_was_generated():
     ids = [7, 7, 7, 1, 2, 9, 7, 7, 3, 9, 7]   # prompt ends at 2; turn 0 is 1, 2, EOS; prompt ends at 7; turn 1 is 3, EOS
     out = completion_checks(ids, np.array([2, 7]), [3, 3], frozenset({9}))

@@ -7,6 +7,11 @@
 # each, in the venv of gpu_env.sh.
 #
 # Steps, in PARTS' order (default: proj):
+#   vectors   explore/interp/gpu_smoke.py's lens step for the agent, when VECTORS doesn't exist: the
+#             vector file on this backend, with its checks. Vectors are built on the backend that runs
+#             the episodes (docs/BACKENDS.md), so a Hopper pilot starts here. It goes first, its layer
+#             scan reaches 30, it holds the training twin, and it comes back in readings/vectors/.
+#             About 8 minutes.
 #   check     explore/interp/read_check.py, on the first GPU run: the longest and the shortest episode
 #             on vllm and on hf, the agreement of the two paths, and the chunk noise. About 15 minutes.
 #             Needs VECTORS and PHRASES. Skipped once read-check.json exists. Pass rules: docs/INTERP.md.
@@ -33,7 +38,8 @@
 # VECTORS ($IN/vectors.safetensors, else $WORK/interp-smoke/agent/vectors.safetensors), LAYERS (the
 # vector file's chosen layer), PHRASES ($IN/phrases.json), SAE_REPO, SAE_LAYERS (none),
 # TRANSFER_LAYERS (32,42,48), TRANSFER_PER_CONDITION (2), CHUNK_MIN (20), NO_SERVER_IDS (1: proj and
-# logit read episodes that have no server IDs, and each reading says so; docs/INTERP.md).
+# logit read episodes that have no server IDs, and each reading says so; docs/INTERP.md),
+# ALLOW_OTHER_BACKEND (1: proj reads vectors built on another card, and each reading says so).
 # Exit: 0 when every part is complete, 3 when some are left (run it again), 1 on an error.
 set -uo pipefail
 VLLM_VERSION=${VLLM_VERSION:-0.32.0}
@@ -67,10 +73,11 @@ t0=$(date +%s)
 stamp() { echo "$1 $(($(date +%s) - t0))s" | tee -a "$OUT/read-timings.txt"; }
 
 for p in $PARTS; do
-  case $p in check|proj|logit|transfer) ;; *) echo "read_run.sh: unknown part $p (PARTS: check proj logit transfer)"; exit 1 ;; esac
+  case $p in vectors|check|proj|logit|transfer) ;; *) echo "read_run.sh: unknown part $p (PARTS: vectors check proj logit transfer)"; exit 1 ;; esac
 done
+case " $PARTS " in *" vectors "*) [ "${PARTS%% *}" = vectors ] || { echo "read_run.sh: vectors goes first in PARTS: the other parts read them"; exit 1; } ;; esac
 [ -f "$IN/episodes/manifest.json" ] || { echo "read_run.sh: no episodes in $IN/episodes: run simtest interp export"; exit 1; }
-case " $PARTS " in *" proj "*|*" check "*) [ -f "$VECTORS" ] || { echo "read_run.sh: no vector file at $VECTORS"; exit 1; } ;; esac
+case " $PARTS " in *" vectors "*) ;; *" proj "*|*" check "*) [ -f "$VECTORS" ] || { echo "read_run.sh: no vector file at $VECTORS"; exit 1; } ;; esac
 case " $PARTS " in *" logit "*|*" check "*) [ -f "$PHRASES" ] || { echo "read_run.sh: no phrase file at $PHRASES"; exit 1; } ;; esac
 used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | sort -n | tail -1)
 if [ "$used" -gt 2000 ]; then echo "read_run.sh: the GPU has $used MiB in use: stop serve.sh's servers first"; exit 1; fi
@@ -93,11 +100,20 @@ note() {   # an exit code of read_run.py: 3 (some left) must not hide an error
 }
 no_ids=()
 [ "${NO_SERVER_IDS:-}" != 1 ] || no_ids=(--no-server-ids)
+other=()
+[ "${ALLOW_OTHER_BACKEND:-}" != 1 ] || other=(--allow-other-backend)
 reader() { "$PY" -I "$CODE/explore/interp/read_run.py" "$MODELS/agent" --episodes "$IN/episodes" ${no_ids[@]+"${no_ids[@]}"} "$@"; }
 budget=$(printf '%s\n' $PARTS | awk -v chunk="$CHUNK_MIN" '/^(proj|logit)$/ { n++ } END { print chunk / (n ? n : 1) }')
 for p in $PARTS; do
   stamp "$p start"
   case $p in
+    vectors)
+      [ ! -e "$VECTORS" ] || continue
+      "$PY" -I "$CODE/explore/interp/gpu_smoke.py" lens "$MODELS/agent" --name agent --out-dir "$WORK/interp-smoke" 2>&1 | tee -a "$OUT/vectors.log"
+      note "${PIPESTATUS[0]}"
+      mkdir -p "$OUT/vectors"
+      cp "$WORK/interp-smoke/agent/vectors.safetensors" "$WORK/interp-smoke/agent/vectors.safetensors.report.json" \
+        "$WORK/interp-smoke/agent/lens.json" "$OUT/vectors/" || note 1 ;;
     check)
       [ ! -e "$OUT/read-check.json" ] || continue
       check() { "$PY" -I "$CODE/explore/interp/read_check.py" "$@" 2>&1 | tee -a "$OUT/check.log"; note "${PIPESTATUS[0]}"; }
@@ -109,6 +125,7 @@ for p in $PARTS; do
     proj)
       args=(--engine "$PROJ_ENGINE" --out "$OUT" --parts proj --vectors "$VECTORS" --budget-min "$budget")
       [ -z "$LAYERS" ] || args+=(--layers "$LAYERS")
+      args+=(${other[@]+"${other[@]}"})
       [ -z "$SAE_LAYERS" ] || args+=(--sae-dir "$SAE" --sae-layers "$SAE_LAYERS" --sae-device cuda)
       reader "${args[@]}" 2>&1 | tee -a "$OUT/proj.log"
       note "${PIPESTATUS[0]}" ;;

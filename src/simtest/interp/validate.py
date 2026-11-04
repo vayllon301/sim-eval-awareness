@@ -440,7 +440,8 @@ def _coverage(episodes: list[dict], rows: list[dict], scored: list[dict], readin
     checks = [(readings[r["uuid"]].get("summary") or {}).get("ids_check") or {} for r in rows]
     unchecked = sum(any(((readings[r["uuid"]].get(part) or {}).get("ids_check") or {}).get("no_server_ids")
                         for part in ("summary", "logit")) for r in rows)
-    return {"episodes": len(episodes), "scored": len(scored), "flagged": sum(A.is_excluded(e) for e in episodes),
+    other = sum(bool(((r.get("summary") or {}).get("vectors_backend") or {}).get("allowed")) for r in rows)
+    return {"episodes": len(episodes), "scored": len(scored), "flagged": sum(A.is_excluded(e) for e in episodes), "other_backend": other,
             "no_reading": missing, "turn0_spread": _turn0_spread(rows, layer),
             "ids": {"server": sum(c.get("source") == "server" for c in checks),
                     "lengths": sum(c.get("source") == "lengths" for c in checks),
@@ -634,6 +635,8 @@ def format_report(rep: dict) -> str:
            f"{cov['ids']['failed']} failed, {cov['ids']['no_server_ids']} read with --no-server-ids.",
            "Readings of one scenario's first prompt, largest difference (should be about 0): "
            + (", ".join(f"{k} {v:.4g}" for k, v in sorted(cov["turn0_spread"].items())) or "none")]
+    if cov["other_backend"]:
+        out.append(f"{cov['other_backend']} read with vectors from another backend (--allow-other-backend).")
     out.append(PHRASE_LINES[rep["phrases"]["state"]])
     if not rep["judge"]["verdicts"]:
         out.append("Judge: no verdicts: the readings only.")

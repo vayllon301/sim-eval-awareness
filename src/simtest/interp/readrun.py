@@ -142,10 +142,10 @@ def _write_json(path: Path, obj: Any, **kw) -> None:
 
 
 def _read_proj(backend, ep, row: dict, episodes_dir: Path, out_dir: Path, vectors, layers, names, saes, vectors_path,
-               allow_other_model, no_server_ids) -> int:
+               allow_other_model, allow_other_backend, no_server_ids) -> int:
     server = _check_ids(render(ep, backend.tokenizer).ids, _server_ids(episodes_dir, row["uuid"], no_server_ids))
     r = read(backend, ep, vectors, layers, names=names, saes=saes, vectors_path=str(vectors_path) if vectors_path else None,
-             allow_other_model=allow_other_model)
+             allow_other_model=allow_other_model, allow_other_backend=allow_other_backend)
     bad = _mismatches(r.meta["prompt_checks"])
     r.meta["episode_sha256"] = row["sha256"]
     r.meta["ids_check"] = server or {"source": "lengths", "n": len(r.meta["prompt_checks"]), "equal": not bad,
@@ -180,11 +180,13 @@ def _sha(path) -> str | None:
 
 
 def _settings(backend, parts, vectors, vectors_path, layers, names, saes, phrases, phrases_path, phrase_turns,
-              no_server_ids) -> dict:
+              no_server_ids, allow_other_backend) -> dict:
     out: dict[str, Any] = {"parts": sorted(parts), "fingerprint": backend.info.get("fingerprint"),
                            "engine": backend.info.get("engine")}
     if no_server_ids:   # only then, so a directory from before the flag still resumes
         out["no_server_ids"] = True
+    if allow_other_backend:
+        out["allow_other_backend"] = True
     if "proj" in parts:
         out.update(vectors_sha256=_sha(vectors_path), layers=sorted(int(L) for L in layers),
                    names=sorted(names or vectors.names),
@@ -203,7 +205,7 @@ def read_run(backend, episodes_dir: str | Path, out_dir: str | Path, *, parts: S
              saes: Mapping[int, Any] | None = None, phrases: dict | None = None, phrases_path: str | Path | None = None,
              phrase_turns: Sequence[int] | None = None, allow_other_model: bool = False, budget_s: float | None = None,
              limit: int | None = None, require_scan: bool = False, no_server_ids: bool = False,
-             clock: Callable[[], float] = time.monotonic) -> dict:
+             allow_other_backend: bool = False, clock: Callable[[], float] = time.monotonic) -> dict:
     """Module docstring. Returns the status, also in `out_dir/status.json`."""
     from .monitors import scan_path
 
@@ -220,7 +222,7 @@ def read_run(backend, episodes_dir: str | Path, out_dir: str | Path, *, parts: S
                             "prefix per turn and phrase. Use the HF backend for the logit part, or allow it explicitly")
     rows = _rows(episodes_dir)
     settings = _settings(backend, parts, vectors, vectors_path, layers, names, saes, phrases, phrases_path, phrase_turns,
-                         no_server_ids)
+                         no_server_ids, allow_other_backend)
     out_dir.mkdir(parents=True, exist_ok=True)
     state = out_dir / "read.json"
     if state.exists() and json.loads(state.read_text()) != settings:
@@ -247,7 +249,7 @@ def read_run(backend, episodes_dir: str | Path, out_dir: str | Path, *, parts: S
             ep = load_episode(episodes_dir / f"{row['uuid']}.json")
             if part == "proj":
                 n = _read_proj(backend, ep, row, episodes_dir, out_dir, vectors, list(layers), names, saes, vectors_path,
-                               allow_other_model, no_server_ids)
+                               allow_other_model, allow_other_backend, no_server_ids)
             else:
                 n = _read_logit(backend, ep, row, episodes_dir, out_dir, phrases, phrases_path, phrase_turns, no_server_ids)
         except Exception as exc:

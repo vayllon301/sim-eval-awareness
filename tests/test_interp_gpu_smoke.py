@@ -13,6 +13,7 @@ import pytest
 
 from simtest.interp import vllm_backend as V
 from simtest.interp.fake import FakeBackend, FakeTokenizer, fake_vllm_api
+from simtest.interp.vectors import VectorSet
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,6 +32,14 @@ def smoke(monkeypatch):
     m.PROMPTS = [(msgs, kw, 12) for msgs, kw, _ in m.PROMPTS]
     m.SAMPLE_TOKENS = 8
     return m
+
+
+def test_the_agents_scan_reaches_below_session_4s_lowest_layer():
+    """Session 4 chose 36, the lowest it scanned, so the peak may lie lower."""
+    spec = importlib.util.spec_from_file_location("gpu_smoke", ROOT / "explore" / "interp" / "gpu_smoke.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert min(m.PRESETS["agent"]["layers"]) == 30 and 36 in m.PRESETS["agent"]["layers"]
 
 
 def test_steered_and_read_layers_must_be_scanned(smoke, monkeypatch, tmp_path):
@@ -67,6 +76,8 @@ def test_stock_lens_and_report_on_the_fake_engine(smoke, monkeypatch, tmp_path):
     assert n["steer_applied"]["rel_err"] < 1e-4  # float32: exact
     lens = json.loads((out / "agent" / "lens.json").read_text())
     assert lens["backend"]["lens"] == "enabled" and lens["vectors"]["chosen_layer"] in (1, 2, 3, 4)
+    built = VectorSet.load(out / "agent" / "vectors.safetensors")
+    assert {"eval_awareness", "train_awareness"} <= set(built.names) and "device" in built.meta["model"]    # what read() compares
     stock = json.loads((out / "agent" / "stock-eager.json").read_text())
     assert stock["backend"]["lens"] == "disabled" and stock["backend"]["engine_settings"]["enforce_eager"]
     # vllm-lens moves vLLM to its V1 model runner, so stock-eager must run there too; served keeps vLLM's default

@@ -28,6 +28,10 @@ PYTHON = REC + """case "$*" in
   *sae_transfer.py*)
     for a in "$@"; do [ "$prev" = --out ] && touch "$a"; prev=$a; done
     exit "${TRANSFER_RC:-0}" ;;
+  *gpu_smoke.py*)
+    for a in "$@"; do [ "$prev" = --out-dir ] && d=$a/agent; prev=$a; done
+    mkdir -p "$d" && touch "$d/vectors.safetensors" "$d/vectors.safetensors.report.json" "$d/lens.json"
+    exit "${LENS_RC:-0}" ;;
   *) exit 0 ;;
 esac
 """
@@ -101,6 +105,52 @@ def test_chunk_min_is_split_across_the_parts_that_have_a_budget(tmp_path, parts,
     assert proc.returncode == 0, proc.stdout + proc.stderr
     got = [c.split("--budget-min ")[1].split()[0] for c in calls if "read_run.py" in c]
     assert got == [str(m) for m in minutes]
+
+
+def run_without_vectors(tmp_path, env):
+    work, stubs, state = setup(tmp_path)
+    (work / "read" / "vectors.safetensors").unlink()
+    full = {"PATH": f"{stubs}:/usr/bin:/bin", "HOME": str(tmp_path), "STATE": str(state), "WORK": str(work), **env}
+    proc = subprocess.run([BASH, str(work / "sim" / "explore" / "interp" / "read_run.sh")], env=full, capture_output=True, text=True,
+                          timeout=30, stdin=subprocess.DEVNULL)
+    return proc, (state / "calls.log").read_text().splitlines() if (state / "calls.log").exists() else [], work
+
+
+def test_the_vectors_part_builds_them_here_and_the_next_part_reads_them(tmp_path):
+    proc, calls, work = run_without_vectors(tmp_path, {"PARTS": "vectors+proj"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    lens = next(i for i, c in enumerate(calls) if "gpu_smoke.py lens" in c)
+    assert f"{work}/models/agent --name agent --out-dir {work}/interp-smoke" in calls[lens]
+    proj = next(i for i, c in enumerate(calls) if "read_run.py" in c)
+    assert lens < proj and f"--vectors {work}/interp-smoke/agent/vectors.safetensors" in calls[proj]
+
+
+def test_the_vectors_come_back_with_the_readings(tmp_path):
+    proc, calls, work = run_without_vectors(tmp_path, {"PARTS": "vectors"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert {p.name for p in (work / "read" / "readings" / "vectors").iterdir()} == {"vectors.safetensors", "vectors.safetensors.report.json", "lens.json"}
+
+
+def test_vectors_that_exist_arent_built_again(tmp_path):
+    proc, calls, work = run(tmp_path, {"PARTS": "vectors proj"})
+    assert proc.returncode == 0 and not any("gpu_smoke.py" in c for c in calls)
+
+
+def test_a_failed_build_is_an_error(tmp_path):
+    proc, calls, work = run_without_vectors(tmp_path, {"PARTS": "vectors", "LENS_RC": "1"})
+    assert proc.returncode == 1
+
+
+def test_the_vectors_part_goes_first(tmp_path):
+    proc, calls, work = run_without_vectors(tmp_path, {"PARTS": "proj vectors"})
+    assert proc.returncode == 1 and "first" in proc.stdout
+
+
+def test_the_flag_for_another_cards_vectors_reaches_proj(tmp_path):
+    proc, calls, work = run(tmp_path, {"ALLOW_OTHER_BACKEND": "1"})
+    assert "--allow-other-backend" in next(c for c in calls if "read_run.py" in c)
+    proc, calls, work = run(tmp_path / "x" if (tmp_path / "x").mkdir() is None else None)
+    assert "--allow-other-backend" not in next(c for c in calls if "read_run.py" in c)
 
 
 def test_the_transfer_check_splices_on_hf_and_reads_fvu_on_vllm(tmp_path):
@@ -287,6 +337,26 @@ def test_the_job_keeps_room_for_the_parts_that_have_no_budget(tmp_path, parts, m
     proc, calls, _ = submit(tmp_path, {"PARTS": parts, "PHRASES": str(tmp_path / "p.json"), "NO_SERVER_IDS": "1"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert f"CHUNK_MIN={minutes}," in "\n".join(calls) + "," or f"CHUNK_MIN={minutes} " in "\n".join(calls)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_job_can_build_its_vectors_on_hopper(tmp_path):
+    proc, calls, _ = submit(tmp_path, {"PARTS": "vectors proj", "VECTORS": None, "NO_SERVER_IDS": "1"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    job = "\n".join(calls)
+    assert "PARTS=vectors+proj" in job and "CHUNK_MIN=100" in job and "cat > /scratch/v/sim/read/vectors.safetensors" not in job
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_job_refuses_to_build_vectors_and_send_a_file(tmp_path):
+    proc, calls, _ = submit(tmp_path, {"PARTS": "vectors proj", "NO_SERVER_IDS": "1"})
+    assert proc.returncode == 1 and "VECTORS" in proc.stderr and not any(c.startswith("ssh") for c in calls)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_the_flag_for_another_cards_vectors_is_sent_by_name(tmp_path):
+    proc, calls, _ = submit(tmp_path, {"ALLOW_OTHER_BACKEND": "1", "NO_SERVER_IDS": "1"})
+    assert "ALLOW_OTHER_BACKEND=1" in "\n".join(calls)
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")

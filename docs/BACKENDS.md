@@ -324,8 +324,17 @@ hardware.
   way.
 - **The simulator's G4 numbers:** none carry over. Session 4's vectors aren't reused (LOG.md,
   02-11-2026), and the development numbers keep their "development" label.
-- **The agent's G4 numbers and vectors:** they carry over only after the clean agent check, which
-  needs G4 scores that don't exist yet.
+- **The agent's G4 numbers:** they carry over only after the clean agent check, which needs G4 scores
+  that don't exist yet.
+- **Vectors:** built on the backend that runs the episodes (PLAN.md: "Same FP8 weights for everything"),
+  so session 4's file is not used on Hopper. `PARTS="vectors check proj"` on `submit_read.sh` builds them
+  in the job, with the layer scan down to 30 (session 4 chose 36, the lowest it scanned), the training
+  twin and the checks of `gpu_smoke.py`'s lens step, and they come back in `readings/vectors/`. Read
+  `lens.json` against the smoke test's rules before any reading counts. `read()` compares the file's
+  `model.device` with the backend's and refuses another card: the weights fingerprint can't tell, since
+  both load the same files. Another engine on the same card passes, as the `hf` fallback needs. A file
+  with no device is refused. `--allow-other-backend` (`ALLOW_OTHER_BACKEND=1`) reads them anyway, and
+  each reading and the report say so.
 - **Moving work between the G4 and Hopper** (a pilot on one and N3 on the other): first score both
   backends on `fp8_per_channel`. `STEPS=setup` on a G4 is about 25 minutes plus the VM's setup, so about
   6 units (an estimate). It spends units, so it needs Victor's OK and a reason in the log.

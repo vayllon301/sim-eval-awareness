@@ -34,6 +34,7 @@ def main():
     ap.add_argument("--phrases"), ap.add_argument("--logit-turns", help="comma-separated (default: every turn)")
     ap.add_argument("--allow-slow-logit", action="store_true", help="let the logit part run without continuation_scan")
     ap.add_argument("--allow-other-model", action="store_true", help="vectors from other weights: a transfer test only")
+    ap.add_argument("--allow-other-backend", action="store_true", help="vectors built on another card: for a check, and each reading says so")
     ap.add_argument("--no-server-ids", action="store_true", help="read episodes that have no server IDs: each reading says so")
     ap.add_argument("--budget-min", type=float), ap.add_argument("--limit", type=int)
     a = ap.parse_args()
@@ -52,7 +53,7 @@ def main():
         st = read_run(b, a.episodes, a.out, parts=parts, vectors=vs, vectors_path=a.vectors, layers=layers,
                       names=a.names.split(",") if a.names else None, saes=saes, phrases=phrases, phrases_path=a.phrases,
                       phrase_turns=[int(x) for x in a.logit_turns.split(",")] if a.logit_turns else None,
-                      allow_other_model=a.allow_other_model, budget_s=a.budget_min * 60 if a.budget_min else None,
+                      allow_other_model=a.allow_other_model, allow_other_backend=a.allow_other_backend, budget_s=a.budget_min * 60 if a.budget_min else None,
                       limit=a.limit, require_scan=not a.allow_slow_logit, no_server_ids=a.no_server_ids)
     except ReadError as exc:
         sys.exit(str(exc))

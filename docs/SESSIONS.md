@@ -143,6 +143,7 @@ The steps come from `explore/interp/read_run.sh`, on a Colab VM or a Hopper node
 
 | `READ_PARTS` (`PARTS`) | What | Engine | Pilot, minutes |
 | --- | --- | --- | --- |
+| `vectors` | Hopper only: the vector file on this backend, with its checks. Colab's is the `readings` step | vLLM | about 8 |
 | `check` | The first GPU run: the reading paths on the longest and shortest episode | vLLM, then transformers | about 15 |
 | `proj` | Projections, prompt ends, turn curves, SAE latents | vLLM (`READ_ENGINE=hf` to change) | about 15 |
 | `logit` | The logit monitor. Needs `READ_PHRASES`, so the judge first | transformers | about 25 |
@@ -154,11 +155,13 @@ STEPS="setup run ids read" READ_VECTORS=logs/interp/... MIX=c3 ADMIT_FOR=14 expl
 # after the judge: a short second session
 STEPS=read READ_PARTS="logit transfer" READ_PHRASES=<file> MIX=c3 explore/colab_probe/session.sh configs/coding/pilot.yaml 12
 # Hopper
-LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." VECTORS=<file> PARTS="check proj" explore/hopper/submit_read.sh configs/coding/pilot.yaml
+LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." PARTS="vectors check proj" explore/hopper/submit_read.sh configs/coding/pilot.yaml
 ```
 
-- **Vectors.** `READ_VECTORS` is a file on the laptop. Without it, `proj` uses the file the `readings`
-  step builds on that VM, so name `readings` in `STEPS`.
+- **Vectors.** They are built on the backend that runs the episodes (BACKENDS.md, "What each use
+  needs"), and `read()` refuses a file from another card. `READ_VECTORS` is a file on the laptop. Without
+  it, `proj` uses the file the `readings` step builds on that VM, so name `readings` in `STEPS`. On Hopper,
+  `PARTS` starts with `vectors`; a later job takes them back as `VECTORS=logs/read/<name>/readings/vectors/vectors.safetensors`.
 - **Chunks and resuming.** Colab allows one SSH session, so a read can't copy results out while it
   runs. `session.sh` runs `read_run.sh` for `READ_CHUNK_MIN` minutes (20), which `proj` and `logit`
   share in equal parts, copies the readings back to `logs/read/<name>/readings/`, and goes on until
@@ -177,7 +180,7 @@ LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." V
 - **Hopper.** `submit_read.sh` sends the code, the episodes, the readings so far, the vectors and the
   sentences to `WORK`, and submits `read.slurm` (one GPU). The login host must see `WORK`. The time
   limit is a parameter; `CHUNK_MIN`, which `proj` and `logit` share, is that limit less 10 minutes, and
-  less 15 for each `check` or `transfer`. The job's exit code is the reader's: 3
+  less 15 for each `check` or `transfer` and 10 for `vectors`. The job's exit code is the reader's: 3
   means episodes are left, and submitting again resumes. It prints the command that brings the
   readings back.
 

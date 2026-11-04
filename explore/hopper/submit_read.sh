@@ -4,8 +4,11 @@
 # Runs on the laptop, from the repo root. Puts what a read needs on the cluster and submits read.slurm:
 #
 #   LOGIN=<user@login host> TIME_LIMIT=<hours> WORK=<scratch on the nodes> \
-#   SBATCH_ARGS="--partition=... --account=..." VECTORS=<file> [PHRASES=<file>] [PARTS="proj logit transfer"] \
-#   [NO_SERVER_IDS=1] explore/hopper/submit_read.sh CONFIG
+#   SBATCH_ARGS="--partition=... --account=..." [VECTORS=<file>] [PHRASES=<file>] [PARTS="vectors check proj"] \
+#   [NO_SERVER_IDS=1] [ALLOW_OTHER_BACKEND=1] explore/hopper/submit_read.sh CONFIG
+#
+# PARTS=vectors builds the vector file in the job, on this backend, which is how a Hopper pilot gets one
+# (docs/BACKENDS.md). A later job takes it back as VECTORS=<READ_DIR>/readings/vectors/vectors.safetensors.
 #
 # 1. Refuses unless the tree is clean, the parameters are given, the episodes exist (simtest interp
 #    export) with the server's token IDs (run_chunks.sh takes them; NO_SERVER_IDS=1 reads without
@@ -14,7 +17,7 @@
 # 2. Sends the code at HEAD (a git bundle, so it records the commit), the episodes and the readings so
 #    far (a second job resumes), the vectors and the sentences to WORK. The login host must see WORK.
 # 3. Submits read.slurm by stdin. CHUNK_MIN is the minutes proj and logit share: the time limit less
-#    10, less 15 for each check or transfer part, which have no budget.
+#    10, less 15 for each check or transfer part and 10 for vectors, which have no budget.
 # 4. Prints the commands to follow the job and to bring the readings back.
 #
 # DRY_RUN=1 prints every command and runs none of them.
@@ -37,8 +40,10 @@ if ! [[ ${TIME_LIMIT:-} =~ $NUM ]]; then problems+=("set TIME_LIMIT to the hours
 if [[ -z ${WORK:-} ]]; then problems+=("set WORK to a scratch directory on the nodes (about 110 GB free)")
 elif [[ $WORK != /* ]]; then problems+=("WORK must be an absolute path on the nodes (got $WORK)"); fi
 [[ -f $READ_DIR/episodes/manifest.json ]] || problems+=("no episodes at $READ_DIR/episodes: run 'uv run simtest interp export'")
-if [[ " $PARTS " == *" proj "* || " $PARTS " == *" check "* ]] && [[ ! -f ${VECTORS:-} ]]; then
-  problems+=("the proj and check parts need vectors: VECTORS")
+if [[ " $PARTS " == *" vectors "* ]]; then
+  [[ -z ${VECTORS:-} ]] || problems+=("PARTS builds the vectors and VECTORS sends a file: one or the other")
+elif [[ " $PARTS " == *" proj "* || " $PARTS " == *" check "* ]] && [[ ! -f ${VECTORS:-} ]]; then
+  problems+=("the proj and check parts need vectors: VECTORS, or the vectors part, which builds them here")
 fi
 if [[ " $PARTS " == *" logit "* || " $PARTS " == *" check "* ]] && [[ ! -f ${PHRASES:-} ]]; then
   problems+=("the logit and check parts need sentences: PHRASES")
@@ -52,7 +57,7 @@ fi
 
 chunk=$(( int(TIME_LIMIT * 60) - 10 ))
 for p in ${=PARTS}; do
-  case $p in check|transfer) chunk=$(( chunk - 15 )) ;; esac
+  case $p in check|transfer) chunk=$(( chunk - 15 )) ;; vectors) chunk=$(( chunk - 10 )) ;; esac
 done
 (( chunk > 0 )) || { print -u2 "submit_read.sh: refused: a time limit of $TIME_LIMIT h leaves no room"; exit 1; }
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sim-read.XXXXXX")
@@ -76,6 +81,7 @@ exports="ALL,WORK=$remote,PARTS=${PARTS// /+},CHUNK_MIN=$chunk"
 [[ -z ${LAYERS:-} ]] || exports+=",LAYERS=$LAYERS"
 [[ -z ${SAE_LAYERS:-} ]] || exports+=",SAE_LAYERS=$SAE_LAYERS"
 [[ ${NO_SERVER_IDS:-} != 1 ]] || exports+=",NO_SERVER_IDS=1"
+[[ ${ALLOW_OTHER_BACKEND:-} != 1 ]] || exports+=",ALLOW_OTHER_BACKEND=1"
 x -i explore/hopper/read.slurm ssh $LOGIN "cd $remote && sbatch --parsable --time=$(( int(TIME_LIMIT * 60) )) --job-name=sim-read-$name \
   --output=read/read-%j.out --export=$exports $SBATCH_ARGS" || { print -u2 "submit_read.sh: sbatch failed"; exit 1; }
 say "next: ssh $LOGIN squeue -u \\\$USER; when it ends:"
