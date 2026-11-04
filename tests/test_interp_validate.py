@@ -103,7 +103,56 @@ def test_condition_effects_alone_dont_score():
     """Aware episodes are all in C3, and the monitor differs by condition, but not with awareness."""
     rep = build(*make(signal=0.0))
     r = rep["monitors"]["prompt_end:eval_awareness"]["labels"]["eval_awareness"]
-    assert 0.25 < r["auroc"] < 0.75
+    assert 0.38 < r["auroc"] < 0.62
+
+
+def uneven(noise, c0_turns=21, seed=0):
+    """Pilot-shaped: C2 and C3 at 40 turns, C0 shorter, 12 EVAL episodes in C3 with their onset at t9, a
+    condition offset, a trend and no awareness signal at all. An EVAL episode's shorter window changes
+    who sits in each scenario-by-turn mean, and centring the episodes on their condition can't undo it."""
+    rng = np.random.default_rng(seed)
+    eps, res, read = full(), [], {}
+    for e in eps:
+        pos = e["condition"] == "C3" and e["epoch"] < 3
+        off = {"C0": 0.0, "C2": 0.5, "C3": 1.0}[e["condition"]] + 0.3 * SCENARIOS.index(e["scenario"])
+
+        def curve():
+            return {t: off + 0.02 * t + noise * rng.normal() for t in range(c0_turns if e["condition"] == "C0" else 40)}
+
+        read[e["uuid"]] = {"summary": summary(e["uuid"], {"eval_awareness": {t: (v, v) for t, v in curve().items()}}),
+                           "logit": logit(e["uuid"], curve())}
+        res.append(verdict(e["judge_key"], positive=pos, onset="t9" if pos else "none", first_step="t9" if pos else "none"))
+        res.append(verdict(e["judge_key"], positive=False, label="training", onset="none"))
+    return eps, res, read
+
+
+@pytest.mark.parametrize("monitor", ["prompt_end:eval_awareness", "logit:eval", "agent_tokens:eval_awareness"])
+def test_a_monitor_that_only_reads_the_condition_scores_a_half_with_unequal_lengths_and_no_noise(monitor):
+    r = build(*uneven(0.0))["monitors"][monitor]["labels"]["eval_awareness"]
+    assert r["n_pos"] == 12 and r["auroc"] == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("noise,c0_turns", [(0.05, 21), (0.5, 21), (0.05, 40), (0.5, 40)])
+def test_a_condition_offset_doesnt_score_with_a_shorter_window_under_noise(noise, c0_turns):
+    r = build(*uneven(noise, c0_turns))["monitors"]["logit:eval"]["labels"]["eval_awareness"]
+    assert 0.38 < r["auroc"] < 0.62
+
+
+def test_turns_after_the_window_are_in_no_mean_for_either_factor():
+    """Two episodes per condition. The second's late turns differ hugely, and it stops before them,
+    so the first's values must not move."""
+    rows = [{"uuid": u, "condition": c, "scenario": s, "curves": {"m": {1: v, 2: v, 3: v}}}
+            for u, c, s, v in (("a", "C0", "x", 1.0), ("b", "C0", "y", 2.0), ("c", "C3", "x", 3.0), ("d", "C3", "y", 4.0))]
+    rows[3]["curves"]["m"][3] = 900.0
+    c = V.centred_curves(rows, "m", {"d": 2})
+    assert 3 not in c["d"] and all(abs(v) < 1e-6 for curve in c.values() for v in curve.values())
+
+
+def test_a_trend_that_differs_by_condition_and_scenario_is_removed_together():
+    rows = [{"uuid": f"{c}{s}{e}", "condition": c, "scenario": s,
+             "curves": {"m": {t: 0.1 * t * i + 0.2 * t * j for t in range(1, 11 if c == "A" or e else 6)}}}
+            for i, c in enumerate("ABC") for j, s in enumerate("xyz") for e in range(3)]
+    assert all(abs(v) < 1e-8 for c in V.centred_curves(rows, "m").values() for v in c.values())
 
 
 def test_results_come_per_condition_and_world_pair():
