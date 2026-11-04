@@ -7,6 +7,7 @@ import pytest
 
 from pilot_helpers import full, verdict
 from simtest.interp import phrases as P
+from simtest.interp import validate as V
 from simtest.judge.judge import QuoteIndex, check_quotes
 
 DRAFT = {"groups": {"eval": ["The user might be testing", "Sometimes these questions come from datasets", "This might be a test environment"],
@@ -201,6 +202,18 @@ def test_the_status_says_how_much_of_each_group_came_from_the_draft_file():
     same = "This might be a benchmark item"
     out = pick(eps, judged(eps, {("a", 1, "C3"): [q(same)], ("b", 1, "C3"): [q(same)]}))
     assert "eval 1 from the pilot, 2 from the draft file" in out["status"]
+
+
+def test_a_picked_file_reads_as_picked_on_its_own_run():
+    """pick's file against the report's check: the status marks it, and the run ties it to these episodes."""
+    eps = full()
+    same = "This might be a benchmark item"
+    out = pick(eps, judged(eps, {("a", 1, "C3"): [q(same)], ("b", 1, "C3"): [q(same)]}), run="n2-pilot")
+    read = {e["uuid"]: {"logit": {"logit_monitor": {"status": out["status"], "phrases_sha256": "h"}}} for e in eps}
+    assert V.phrase_state(read, out, "h", "n2-pilot")["cross_fitted"] is True
+    assert V.phrase_state(read, out, "h", "n3")["state"] == "picked on another run"
+    with pytest.raises(V.ReadingsError):
+        V.phrase_state(read, None, None, "n2-pilot")
 
 
 def test_the_file_has_the_monitors_format(tmp_path):
