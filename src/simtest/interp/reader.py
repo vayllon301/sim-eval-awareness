@@ -331,6 +331,31 @@ def prompt_ends(prompts: Sequence[Sequence[int]], ids: Sequence[int]) -> np.ndar
                      for p in prompts], dtype=np.int32)
 
 
+def completion_checks(ids: Sequence[int], ends: np.ndarray, recorded: Sequence[int] | None,
+                      end_ids: frozenset[int]) -> dict:
+    """Each agent turn as re-rendered, against what the server generated. The span runs from the
+    token after the turn's prompt to its end-of-turn token, and `recorded` is the server's completion
+    count, which includes that token. A difference means the reply's parsing changed the text (real
+    logs: 9 of 1,420 turns, by 1 to 3 tokens): the pass reads the turn as the agent read it back,
+    which is what its next prompt held. `differences` counts them by size."""
+    ids = np.asarray(ids)
+    is_end = np.isin(ids, list(end_ids))
+    out: dict = {"n": 0, "equal": 0, "differences": {}}
+    for k, e in enumerate(np.asarray(ends).tolist()):
+        if recorded is None or k >= len(recorded) or recorded[k] is None or e < 0:
+            continue
+        after = np.flatnonzero(is_end[e + 1:])
+        if not len(after):
+            continue
+        diff = int(after[0]) + 1 - int(recorded[k])
+        out["n"] += 1
+        if diff == 0:
+            out["equal"] += 1
+        else:
+            out["differences"][str(diff)] = out["differences"].get(str(diff), 0) + 1
+    return out
+
+
 # ---------------------------------------------------------------- reading
 
 
@@ -380,6 +405,12 @@ def summarize(r: Reading) -> dict:
                            "tokens_by_role": {k: int((r.role == R[k]).sum()) for k in ROLES}, "by_group": {}, "by_turn": {}}
     if "logit_monitor" in r.meta:
         out["logit_monitor"] = r.meta["logit_monitor"]
+    for key in ("ids_check", "prompt_mismatches", "completion_checks", "episode_sha256"):   # a run's checks (readrun.py)
+        if key in r.meta:
+            out[key] = r.meta[key]
+    if "episode" in r.meta:
+        out["episode"] = {k: r.meta["episode"].get(k) for k in ("adapter", "uuid", "sample_id", "epoch", "n_turns")}
+    out["vectors_sha256"] = r.meta.get("vectors_sha256")
     turns = sorted(int(t) for t in set(r.turn.tolist()) if t >= 0)
     for li, L in enumerate(r.layers):
         for vi, name in enumerate(r.names):
@@ -400,6 +431,7 @@ def summarize(r: Reading) -> dict:
                 for gname in ("agent", "tool_output"):
                     m = (r.turn == t) & np.isin(r.role, [R[x_] for x_ in GROUPS[gname]])
                     row[gname] = float(x[m].mean()) if m.any() else None
+                row["agent_centred"] = None if row["agent"] is None or off is None else row["agent"] - off
                 pos = int(r.prompt_end[t]) if r.prompt_end is not None and t < len(r.prompt_end) else -1
                 row["prompt_end"] = float(x[pos]) if pos >= 0 else None
                 row["prompt_end_centred"] = None if row["prompt_end"] is None or off is None else row["prompt_end"] - off
