@@ -7,6 +7,8 @@
 # simulator (Qwen-AgentWorld-35B-A3B, official bf16 weights quantized to FP8 by vLLM at load) on
 # :8001 as "simulator". Writes the GPU, versions, model revisions, the served command lines and
 # each step's time to $WORK/probe/, and each server's log to $WORK/probe/<name>.log.
+# $WORK/probe/server.txt holds what the setup check reads (explore/sim_quant.py): the GPU, the
+# simulator's served line, and what vLLM says it quantized.
 #
 # From the laptop (session "probe"; every Colab command uses gcloud ADC):
 #   colab --auth adc new -s probe --gpu G4          # or A100, H100 (80 GB: shorter contexts, below)
@@ -34,12 +36,14 @@
 # downloaded, created or started. GPU_MIB and GPU_COUNT stand in for nvidia-smi there. The G4's
 # lines are pinned by tests/test_serve_script.py.
 #
-# SIM_QUANT: how vLLM quantizes the simulator at load. fp8 (the default; every episode so far): in
-# vLLM 0.32 the deprecated name of fp8_per_tensor, whose MoE scales its activations over the whole
-# batch. fp8_per_channel: per-channel weight scales, per-token activations in every layer, the MoE
-# included; it pins the MoE kernel to Triton, the one fp8 uses on the G4 and the H100. Nothing else
-# is accepted (docs/BACKENDS.md). SIM_ONLY=1 (re)starts the simulator alone next to a running agent:
-# it stops the simulator an earlier run started in this WORK, and keeps its log as simulator.<time>.log.
+# SIM_QUANT: how vLLM quantizes the simulator at load. fp8_per_channel (the default; every condition
+# and phase from the pilot on; LOG.md, 02-11-2026): per-channel weight scales, per-token activations
+# in every layer, the MoE included; it pins the MoE kernel to Triton, the one fp8 uses on the G4 and
+# the H100. fp8, by name only: every session before the pilot, for reproducing those. In vLLM 0.32 it
+# is the deprecated name of fp8_per_tensor, whose MoE scales its activations over the whole batch.
+# Nothing else is accepted (docs/BACKENDS.md). SIM_ONLY=1 (re)starts the simulator alone next to a
+# running agent: it stops the simulator an earlier run started in this WORK, and keeps its log as
+# simulator.<time>.log.
 #
 # Settings can be overridden with environment variables (the defaults are the plan's).
 set -euo pipefail
@@ -49,10 +53,11 @@ SIM_REPO=${SIM_REPO:-Qwen/Qwen-AgentWorld-35B-A3B}
 die() { echo "serve.sh: $*" >&2; exit 1; }
 # One backend per experiment (AGENTS.md): every episode so far ran on vLLM 0.32.0.
 [ "$VLLM_VERSION" = 0.32.0 ] || die "vLLM is pinned at 0.32.0 (got $VLLM_VERSION): another version is another backend"
-SIM_QUANT=${SIM_QUANT:-fp8}
+SIM_QUANT=${SIM_QUANT:-fp8_per_channel}
 case "$SIM_QUANT" in
-  fp8) SIM_QUANT_ARGS=(--quantization fp8) ;;
   fp8_per_channel) SIM_QUANT_ARGS=(--quantization fp8_per_channel --moe-backend triton) ;;
+  fp8) SIM_QUANT_ARGS=(--quantization fp8)
+    echo "!!! WARNING: SIM_QUANT=fp8 is for reproducing the old sessions; the pilot on runs fp8_per_channel" >&2 ;;
   *) die "SIM_QUANT is fp8 or fp8_per_channel (got $SIM_QUANT): another quantization is another backend" ;;
 esac
 
@@ -233,6 +238,11 @@ else
   serve agent 8000 "$MODELS/agent" "$AGENT_MEM" "$AGENT_LEN" "$AGENT_GPU" "${AGENT_ARGS[@]}"
 fi
 serve simulator 8001 "$MODELS/simulator" "$SIM_MEM" "$SIM_LEN" "$SIM_GPU" "${SIM_ARGS[@]}"
+{
+  echo "gpu: $(nvidia-smi --query-gpu=name --format=csv,noheader | sort -u | paste -s -d, -)"
+  grep -- "--served-model-name simulator" "$OUT/versions.txt" | tail -1
+  grep -h -E "Quantizing|Fp8 MoE backend|Selected .* for Fp8" "$OUT/simulator.log" || true
+} >"$OUT/server.txt"
 nvidia-smi --query-gpu=memory.used,memory.total --format=csv | tee -a "$OUT/gpu.txt"
 grep -h -i -E "KV cache|maximum concurrency|prefix cach" "$OUT/agent.log" "$OUT/simulator.log" | tee "$OUT/kv.txt" || true
 stamp done
