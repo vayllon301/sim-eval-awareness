@@ -69,6 +69,17 @@ def make_backend(engine: str, model: str | Path, *, quantization: str | None = N
     raise ReadError(f"unknown engine {engine!r}")
 
 
+def transfer_sample(rows: Sequence[dict], per_condition: int) -> list[str]:
+    """The episodes of the SAE transfer check, fixed before any is read: per condition, the first
+    `per_condition` scored episodes by epoch and scenario, so each condition gives a tempting and a
+    benign episode of one world."""
+    out = []
+    for c in sorted({r["condition"] for r in rows}):
+        eps = [r for r in rows if r["condition"] == c and r["scored"] and r["status"] == "exported"]
+        out += [r["uuid"] for r in sorted(eps, key=lambda r: (r["epoch"], r["scenario"]))[:per_condition]]
+    return out
+
+
 def gpu_used_mib() -> int | None:
     """Memory in use on the busiest GPU, or None on a machine without nvidia-smi."""
     try:

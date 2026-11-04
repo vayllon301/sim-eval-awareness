@@ -21,14 +21,23 @@ replaced (its residual norm is an outlier). Qwen-Scope publishes no FVU or loss 
 so the comparison is the same measurement on Qwen3.5-27B (the SAEs' own model) at the
 same quantization.
 
-Development only: 8-bit and 4-bit weights shift activations, so FVU here is not the bf16
-number. Compare models at the same quantization only.
+Development only on the laptop: 8-bit and 4-bit weights shift activations, so FVU there is not the
+bf16 number. Compare models at the same quantization only.
+
+On the pilot's transcripts (N2): --episodes takes a run's exported episodes, and --per-condition picks
+them (readrun.transfer_sample); the sample is whole episodes with their token roles, no prose. --engine
+hf splices on the same FP8 files that generated the episodes: clean, spliced and zero all on that one
+engine. --engine vllm reads FVU on the episodes' own engine; it can't splice, so it needs --fvu-only.
+--sae-device runs the encoder on the GPU.
 
 Run (free, local; one model at a time):
     uv run --extra interp python -I explore/interp/sae_transfer.py \\
         ~/.lmstudio/models/lmstudio-community/Qwen3.8-27B-MLX-8bit \\
         ~/.cache/huggingface/hub/models--Qwen--SAE-Res-Qwen3.5-27B-W80K-L0_50/snapshots/<rev> \\
         --layers 32,42,48 --out logs/interp/sae/qwen3.8-27b-mlx8.json
+On the GPU (the session's read step does this):
+    python -I explore/interp/sae_transfer.py MODEL SAE_DIR --layers 32,42,48 --engine hf --episodes EPISODES \\
+        --per-condition 2 --sae-device cuda --sample OUT/sample.json --out OUT/sae-transfer-hf.json
 """
 import argparse, gc, json, sys, time
 from pathlib import Path
@@ -38,8 +47,8 @@ import numpy as np
 from simtest.interp.backend import encode
 from simtest.interp.build import load_rows
 from simtest.interp.meta import file_sha256, git_commit, now
-from simtest.interp.mlx_backend import MLXBackend
-from simtest.interp.reader import AGENT_ROLES, R, colab_probe_prompts, load_colab_probe, render
+from simtest.interp.reader import AGENT_ROLES, R, colab_probe_prompts, load_colab_probe, load_episode, render
+from simtest.interp.readrun import make_backend, transfer_sample
 from simtest.interp.sae import fvu, load_qwen_scope
 
 EPISODE = "logs/colab-probe/smoke-or-20261027.jsonl"
@@ -81,18 +90,35 @@ def sample(tok):
     return {"episode": rd.ids.tolist(), "prose": b}, {"episode": rd.role.tolist(), "prose": [PROSE] * len(b)}, used
 
 
+def run_sample(tok, episodes, per_condition):
+    """Whole episodes of a run, with their token roles."""
+    d = Path(episodes)
+    rows = json.loads((d / "manifest.json").read_text())["episodes"]
+    uuids = transfer_sample(rows, per_condition)
+    if not uuids:
+        sys.exit(f"no scored episodes in {d}")
+    rds = {u: render(load_episode(d / f"{u}.json"), tok) for u in uuids}
+    return {u: r.ids.tolist() for u, r in rds.items()}, {u: r.role.tolist() for u, r in rds.items()}, uuids
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("model"), ap.add_argument("sae_dir")
     ap.add_argument("--layers", required=True), ap.add_argument("--out", required=True)
     ap.add_argument("--fvu-only", action="store_true")
     ap.add_argument("--sample", default="logs/interp/sae/sample.json")
+    ap.add_argument("--engine", default="mlx", choices=["mlx", "hf", "vllm"])
+    ap.add_argument("--episodes", help="a run's exported episodes: the sample is its transcripts")
+    ap.add_argument("--per-condition", type=int, default=2)
+    ap.add_argument("--sae-device", help="torch device for the encoder (cuda)")
     a = ap.parse_args()
     if Path(a.out).exists():
         sys.exit(f"{a.out} exists; refusing to overwrite")
+    if a.engine == "vllm" and not a.fvu_only:
+        sys.exit("the vLLM backend can't splice: give --fvu-only, or use --engine hf (docs/INTERP.md)")
     layers = [int(x) for x in a.layers.split(",")]
     t0 = time.time()
-    b = MLXBackend(a.model)
+    b = make_backend(a.engine, a.model)
     print(f"loaded {b.info['model']} ({b.info['quantization']}) in {time.time() - t0:.0f}s", flush=True)
     tok_sha = file_sha256(Path(a.model).expanduser() / "tokenizer.json")
     if Path(a.sample).exists():
@@ -103,9 +129,9 @@ def main():
         if max(max(v) for v in seqs.values()) >= len(b.tokenizer):
             sys.exit("the saved sample has token IDs outside this model's vocabulary")
     else:
-        seqs, roles, used = sample(b.tokenizer)
+        seqs, roles, used = run_sample(b.tokenizer, a.episodes, a.per_condition) if a.episodes else sample(b.tokenizer)
         saved = {"tokenizer_sha256": tok_sha, "tokenizer_model": str(a.model), "ids": seqs, "roles": roles,
-                 "prose_rows": used, "episode": EPISODE, "texts": TEXTS}
+                 "prose_rows": used, "episode": a.episodes or EPISODE, "texts": None if a.episodes else TEXTS}
         Path(a.sample).parent.mkdir(parents=True, exist_ok=True)
         Path(a.sample).write_text(json.dumps(saved))
     acts = {name: b.activations(ids, layers) for name, ids in seqs.items()}
@@ -113,13 +139,14 @@ def main():
     print(f"activations{'' if a.fvu_only else ' and clean losses'} in {time.time() - t0:.0f}s", flush=True)
     roles = {k: np.asarray(v) for k, v in roles.items()}
     names = list(seqs)
-    res = {"model": b.info, "layers": {}, "sample": {k: len(v) for k, v in seqs.items()}, "sample_file": a.sample, "prose_rows": saved["prose_rows"],
+    res = {"model": b.info, "layers": {}, "engine": a.engine, "sample": {k: len(v) for k, v in seqs.items()}, "sample_file": a.sample, "prose_rows": saved["prose_rows"],
            "sample_tokenizer_sha256": saved["tokenizer_sha256"], "model_tokenizer_sha256": tok_sha,
            "tokens_by_group": {g: int(sum(np.isin(roles[n][1:], c).sum() for n in names)) for g, c in GROUPS.items()},
-           "episode": EPISODE, "texts": TEXTS, "created": now(), "git_commit": git_commit()}
+           "episode": saved["episode"], "texts": saved["texts"], "created": now(), "git_commit": git_commit()}
     pos = lambda codes: {n: np.isin(roles[n][1:], codes) for n in names}  # positions 1.. (FVU) = CE targets
     for L in layers:
         sae = load_qwen_scope(Path(a.sae_dir).expanduser() / f"layer{L}.sae.pt")
+        sae.device = a.sae_device
         if sae.d_model != b.d_model:
             sys.exit(f"SAE d_model {sae.d_model} != model d_model {b.d_model}")
         x = {n: acts[n][L][1:] for n in names}

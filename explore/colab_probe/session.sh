@@ -12,7 +12,8 @@
 #   3. If run or equiv is selected: serve.sh once, as it is (MIX given), then the tunnel, then waits
 #      until both /v1/models answer. On an attached VM, old servers are stopped first, so the
 #      servers run what serve.sh says.
-#   4. The steps in STEPS (default "run equiv"; add readings to run them), always in this order:
+#   4. The steps in STEPS (default "run equiv"; add ids, readings and read to run them), always in
+#      this order:
 #        run       uv run --env-file ENV_FILE simtest run CONFIG [--epochs EPOCHS] [--admit-for
 #                  ADMIT_FOR] [--carry-under CARRY_UNDER]. Exit 3 (incomplete, resumable) is
 #                  reported, and the next steps run.
@@ -22,14 +23,23 @@
 #                  contexts file doesn't exist yet and the run is a step, it is built first from
 #                  this run's own logs (simtest equiv contexts); keep it: every backend is scored
 #                  on the same contexts.
-#        readings  the GPU readings after the episodes: explore/interp/gpu_smoke.sh, the one GPU
-#                  script of docs/INTERP.md so far. It reads no episode yet (about 50 GPU
-#                  minutes), so it runs only when STEPS names it. It needs the GPU alone, so the servers are
-#                  stopped first. The code goes over at HEAD (a git bundle, so it records the
-#                  commit). READINGS_STEPS and READINGS_BUDGET_MIN are its STEPS and BUDGET_MIN.
+#        ids       simtest interp export, then simtest interp server-ids: the run's episodes for the
+#                  reader, and the token IDs of the agent server's own renderer for each one. Needs
+#                  the servers up, no GPU time (vLLM's /tokenize), and changes no episode.
+#        readings  explore/interp/gpu_smoke.sh: the steering smoke test, which builds the vector files
+#                  on these weights (about 50 GPU minutes), so it runs only when STEPS names it. It
+#                  needs the GPU alone, so the servers are stopped first. The code goes over at HEAD
+#                  (a git bundle, so it records the commit). READINGS_STEPS and READINGS_BUDGET_MIN
+#                  are its STEPS and BUDGET_MIN.
+#        read      explore/interp/read_run.sh: reads the run's episodes (docs/INTERP.md, "Reading a
+#                  run"). The GPU alone, as readings. READ_PARTS picks proj, logit and transfer
+#                  (default proj). It runs in chunks of READ_CHUNK_MIN minutes, and each chunk's
+#                  readings come back to READ_DIR at once, so a VM lost mid-run loses one chunk. A
+#                  second session resumes: the readings go over first. Stops when a chunk finishes
+#                  nothing more.
 #   5. Always stops the VM at the end, also on an error or Ctrl-C, unless KEEP=1 (the watchdog
 #      still guards a kept VM). The VM's logs ($WORK/probe: serve.sh's logs, timings, versions)
-#      and the readings come back to OUTDIR first. Inspect's logs are on the laptop already.
+#      and the smoke test's outputs come back to OUTDIR first. Inspect's logs are on the laptop already.
 #
 #   MIX=c3 ADMIT_FOR=14 explore/colab_probe/session.sh configs/coding/pilot.yaml 180 2>&1 | tee /tmp/session.log
 #   DRY_RUN=1 MIX=c3 explore/colab_probe/session.sh configs/coding/pilot.yaml 180   # prints, does nothing
@@ -42,7 +52,9 @@
 # is part of the run's record), EAGER, SIM_QUANT (to serve.sh), AGENT_MEM and SIM_MEM (to serve.sh; for STEPS=equiv), STEPS, EPOCHS, ADMIT_FOR, CARRY_UNDER, IDLE_MIN (20), MAX_MIN,
 # ENV_FILE (../.env), EQUIV_CONTEXTS (logs/equiv/contexts.jsonl), EQUIV_CONCURRENCY ("1 12"),
 # EQUIV_LABEL, READINGS_STEPS, READINGS_BUDGET_MIN, OUTDIR (logs/sessions/<name>-<UTC time>), KEEP,
-# DRY_RUN. Deadlines in minutes: NEW_MIN (20), SERVE_MIN (45), READY_MIN (5), READINGS_MIN (100).
+# DRY_RUN; for read: READ_DIR (logs/read/<name>), READ_PARTS (proj), READ_VECTORS (default: the one the
+# readings step builds), READ_PHRASES, READ_LAYERS, READ_SAE_LAYERS, READ_ENGINE (vllm), READ_CHUNK_MIN (20).
+# Deadlines in minutes: NEW_MIN (20), SERVE_MIN (45), READY_MIN (5), READINGS_MIN (100), READ_MIN (40, a chunk).
 #
 # Exit: 0 when every step passed, 3 when the run is incomplete and nothing failed, 1 otherwise.
 set -u
@@ -65,6 +77,8 @@ EQUIV_CONTEXTS=${EQUIV_CONTEXTS:-$LOGS/equiv/contexts.jsonl}
 EQUIV_CONCURRENCY=${EQUIV_CONCURRENCY:-1 12}
 VM_WORK=/content   # serve.sh's and gpu_smoke.sh's work directory on Colab
 name=$(config_name $CONFIG 2>/dev/null)
+READ_DIR=${READ_DIR:-$LOGS/read/$name}
+READ_PARTS=${READ_PARTS:-proj}
 OUTDIR=${OUTDIR:-$LOGS/sessions/${name:-session}-$(date -u +%Y%m%d-%H%M%S)}
 PROXY="colab --auth adc ssh --proxy-mode -s $SESSION"
 SSH=(ssh -o "ProxyCommand=$PROXY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
@@ -76,7 +90,7 @@ FREE_GPU='pkill -f "[v]llm serve" || true; for i in $(seq 120); do
 
 want() { [[ " ${=STEPS} " == *" $1 "* ]]; }
 need_servers=0
-if want run || want equiv; then need_servers=1; fi
+if want run || want equiv || want ids; then need_servers=1; fi
 
 # 1. Everything that would make the session fail or waste units, before any VM exists.
 problems=()
@@ -87,12 +101,26 @@ case ${MIX:-} in
   *) problems+=("set MIX=c3 (a run mostly C1-C3) or MIX=default (serve.sh's 0.47 / 0.47): the split is part of the run's record") ;;
 esac
 for s in ${=STEPS}; do
-  case $s in run|equiv|readings) ;; *) problems+=("unknown step '$s' (STEPS: run equiv readings)") ;; esac
+  case $s in run|equiv|ids|readings|read) ;; *) problems+=("unknown step '$s' (STEPS: run equiv ids readings read)") ;; esac
 done
 [[ ! -f $CONFIG ]] || problems+=(${(f)"$(preflight_problems $CONFIG)"})
 if want run && [[ ! -f $ENV_FILE ]]; then problems+=("no env file $ENV_FILE (ENV_FILE): simtest run reads its keys there"); fi
 if want equiv && [[ ! -f $EQUIV_CONTEXTS ]] && ! want run; then
   problems+=("no contexts at $EQUIV_CONTEXTS: build them with 'uv run simtest equiv contexts' (docs/BACKENDS.md)")
+fi
+if want read; then
+  if ! want ids && [[ ! -f $READ_DIR/episodes/manifest.json ]]; then
+    problems+=("no episodes at $READ_DIR/episodes: run 'uv run simtest interp export' or add the ids step")
+  fi
+  for p in ${=READ_PARTS}; do
+    case $p in proj|logit|transfer) ;; *) problems+=("unknown read part '$p' (READ_PARTS: proj logit transfer)") ;; esac
+  done
+  if [[ " $READ_PARTS " == *" proj "* ]] && ! want readings && [[ ! -f ${READ_VECTORS:-} ]]; then
+    problems+=("the proj part needs vectors: READ_VECTORS, or the readings step, which builds them")
+  fi
+  if [[ " $READ_PARTS " == *" logit "* && ! -f ${READ_PHRASES:-} ]]; then
+    problems+=("the logit part needs sentences: READ_PHRASES")
+  fi
 fi
 if (( need_servers )); then
   for p in 18000 18001; do
@@ -258,8 +286,15 @@ if want equiv; then
     --label "${EQUIV_LABEL:-$GPU, ${OUTDIR:t}}" || fail "equiv: FAILED"
   note "equiv: scored ($OUTDIR/equiv-c*.jsonl)"
 fi
-if want readings; then
+if want ids; then
   guard
+  x uv run simtest interp export $LOGS/$name --out $READ_DIR/episodes || fail "ids: could not export the episodes"
+  x uv run simtest interp server-ids $READ_DIR/episodes --url http://localhost:18000 || fail "ids: the server's IDs failed"
+  note "ids: exported, and the server's token IDs saved ($READ_DIR/episodes)"
+fi
+gpu_alone=0
+alone_on_the_gpu() {   # once per session: the servers stop and the code goes over
+  (( gpu_alone )) && return 0
   if (( need_servers )); then
     [[ -z $tunnel_pid ]] || _kill $tunnel_pid
     tunnel_pid=""
@@ -268,6 +303,11 @@ if want readings; then
   x -o $OUTDIR/bundle.log git bundle create $OUTDIR/code.bundle HEAD || fail "git bundle failed"
   vm -i $OUTDIR/code.bundle -o $OUTDIR/code.log -t 600 "cat > $VM_WORK/sim.bundle && rm -rf $VM_WORK/sim &&
     git -c advice.detachedHead=false clone -q $VM_WORK/sim.bundle $VM_WORK/sim" || fail "could not copy the code over"
+  gpu_alone=1
+}
+if want readings; then
+  guard
+  alone_on_the_gpu
   r_env=""
   [[ -z ${READINGS_STEPS:-} ]] || r_env+="STEPS=${(qq)READINGS_STEPS} "
   [[ -z ${READINGS_BUDGET_MIN:-} ]] || r_env+="BUDGET_MIN=$READINGS_BUDGET_MIN "
@@ -280,6 +320,47 @@ if want readings; then
     note "readings: exit $rc (a check FAILED or INCOMPLETE, or an error: see $OUTDIR/readings.log and interp-smoke/report.txt)"
     final=1
   fi
+fi
+if want read; then
+  guard
+  alone_on_the_gpu
+  inputs=(episodes)
+  [[ ! -d $READ_DIR/readings ]] || inputs+=(readings)
+  x tar czf $OUTDIR/read-in.tgz -C $READ_DIR $inputs || fail "read: could not pack the episodes"
+  vm -i $OUTDIR/read-in.tgz -o $OUTDIR/read-in.log -t 900 "mkdir -p $VM_WORK/read && tar xzf - -C $VM_WORK/read" \
+    || fail "read: could not copy the episodes over"
+  r_env="PARTS=${(qq)READ_PARTS} CHUNK_MIN=${READ_CHUNK_MIN:-20} "
+  [[ -z ${READ_ENGINE:-} ]] || r_env+="PROJ_ENGINE=${(qq)READ_ENGINE} "
+  [[ -z ${READ_LAYERS:-} ]] || r_env+="LAYERS=${(qq)READ_LAYERS} "
+  [[ -z ${READ_SAE_LAYERS:-} ]] || r_env+="SAE_LAYERS=${(qq)READ_SAE_LAYERS} "
+  if [[ -n ${READ_VECTORS:-} ]]; then
+    vm -i $READ_VECTORS -o $OUTDIR/read-in.log -t 300 "cat > $VM_WORK/read/vectors.safetensors" || fail "read: could not copy the vectors"
+  fi
+  if [[ -n ${READ_PHRASES:-} ]]; then
+    vm -i $READ_PHRASES -o $OUTDIR/read-in.log -t 300 "cat > $VM_WORK/read/phrases.json" || fail "read: could not copy the phrases"
+  fi
+  finished() { print -r -- $(( ${#${(f)"$(print -l $READ_DIR/readings/*.npz(N) $READ_DIR/readings/logit/*.logit.json(N))"}} )); }
+  round=0 before=-1
+  while :; do
+    round=$((round + 1))
+    guard
+    vm -o $OUTDIR/read-$round.log -t $(( ${READ_MIN:-40} * 60 )) \
+      ": sim-session-step read; ${r_env}bash $VM_WORK/sim/explore/interp/read_run.sh"
+    rc=$?
+    [[ $DRY == 1 ]] && { note "read: chunks of ${READ_CHUNK_MIN:-20} minutes, until nothing is left"; break; }
+    if vm -O $OUTDIR/readings.tgz -t 900 "tar czf - -C $VM_WORK/read readings"; then
+      x tar xzf $OUTDIR/readings.tgz -C $READ_DIR && x rm -f $OUTDIR/readings.tgz
+    else
+      say "could not copy the readings back"
+    fi
+    case $rc in
+      0) note "read: done ($READ_DIR/readings)"; break ;;
+      3) now=$(finished)
+         if (( now <= before )); then note "read: a chunk finished nothing more (see $OUTDIR/read-$round.log)"; final=1; break; fi
+         before=$now ;;
+      *) note "read: exit $rc (see $OUTDIR/read-$round.log)"; final=1; break ;;
+    esac
+  done
 fi
 if (( refused )); then final=1; fi   # a dry run of a session that would refuse
 exit $final

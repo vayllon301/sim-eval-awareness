@@ -43,6 +43,15 @@ case $cmd in
   *"sim-session-step serve"*) cat > "$STATE/serve-stdin"; echo "agent-ready"; echo "simulator-ready" ;;
   *"sim-session-step free-gpu"*) echo "GPU free" ;;
   *"sim-session-step readings"*) echo "$cmd" > "$STATE/readings-cmd"; echo "report"; exit "${READINGS_RC:-0}" ;;
+  *"sim-session-step read;"*)
+    echo "$cmd" >> "$STATE/read-cmds"
+    n=$(wc -l < "$STATE/read-cmds" | tr -d ' ')
+    [ "$n" -gt "${READ_ROUNDS_PROGRESS:-0}" ] || { touch "$STATE/vm/read/readings/$n.npz"; exit 3; }
+    exit "${READ_RC:-0}" ;;
+  *"tar xzf - -C /content/read"*) cat > "$STATE/read-in.tgz"; mkdir -p "$STATE/vm/read/readings" ;;
+  *"cat > /content/read/vectors.safetensors"*) cat > "$STATE/read-vectors" ;;
+  *"cat > /content/read/phrases.json"*) cat > "$STATE/read-phrases" ;;
+  *"tar czf - -C /content/read readings"*) tar czf - -C "$STATE/vm/read" readings ;;
   *"cat > /content/sim.bundle"*) cat > "$STATE/sim.bundle" ;;
   *"tar czf - -C /content probe"*) tar czf - -C "$STATE/vm" probe ;;
   *"tar czf - -C /content interp-smoke"*) tar czf - -C "$STATE/vm" interp-smoke ;;
@@ -52,6 +61,8 @@ esac
 UV = REC + """case "$*" in
   *"simtest run "*) exit "${RUN_RC:-0}" ;;
   *"simtest equiv score "*) exit "${EQUIV_RC:-0}" ;;
+  *"simtest interp export "*) exit "${EXPORT_RC:-0}" ;;
+  *"simtest interp server-ids "*) exit "${IDS_RC:-0}" ;;
   *) echo "unexpected uv call: $*" >&2; exit 99 ;;
 esac
 """
@@ -307,12 +318,12 @@ def test_the_script_is_zsh_and_executable():
 # --- defaults (02-11-2026) -----------------------------------------------------------------------------
 
 def test_by_default_no_gpu_time_goes_to_the_smoke_test(tmp_path):
-    """The readings step runs gpu_smoke.sh, which reads no episode (about 50 GPU minutes). Until a
-    reader for the pilot's episodes exists it runs only when STEPS asks for it."""
+    """The readings step runs gpu_smoke.sh (about 50 GPU minutes) and the read step reads the episodes:
+    each runs only when STEPS asks for it."""
     proc, calls, out, state = run(tmp_path, {"DRY_RUN": "1"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "simtest run" in proc.stdout and "simtest equiv score" in proc.stdout
-    assert "gpu_smoke.sh" not in proc.stdout and "free-gpu" not in proc.stdout
+    assert "gpu_smoke.sh" not in proc.stdout and "free-gpu" not in proc.stdout and "read_run.sh" not in proc.stdout
 
 
 def test_missing_contexts_are_built_from_the_runs_own_episodes(tmp_path):
@@ -338,3 +349,137 @@ def test_sim_quant_reaches_serve_sh(tmp_path):
     assert "SIM_QUANT=fp8_per_channel bash -s" in proc.stdout
     proc, *_ = run(tmp_path / "d", {"DRY_RUN": "1"})
     assert "SIM_QUANT" not in proc.stdout
+
+
+# --- reading the run's episodes -------------------------------------------------------------------------
+
+READ_ENV = {"STEPS": "read"}
+
+
+def episodes(logs):
+    d = logs / "read" / "n2-pilot" / "episodes"
+    d.mkdir(parents=True)
+    (d / "manifest.json").write_text("{}")
+    return d
+
+
+def read_run(tmp_path, env=None, *, with_episodes=True, vectors=True, **kw):
+    """A read session, with the inputs it needs laid out first."""
+    full = {**READ_ENV, **(env or {})}
+    if vectors:
+        (tmp_path / "v.safetensors").write_text("vectors")
+        full.setdefault("READ_VECTORS", str(tmp_path / "v.safetensors"))
+
+    def before(state):
+        (state / "vm" / "read" / "readings").mkdir(parents=True, exist_ok=True)
+        (state / "vm" / "read" / "readings" / "a.npz").write_text("reading")
+        if with_episodes:
+            episodes(tmp_path / "logs")
+
+    return run(tmp_path, full, before=before, **kw)
+
+
+def test_the_ids_step_exports_and_asks_the_server_while_it_is_up(tmp_path):
+    proc, calls, out, state = run(tmp_path, {"STEPS": "ids"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    exp = index(calls, "simtest interp export")
+    assert index(calls, "sim-session-step serve") < exp < index(calls, "simtest interp server-ids")
+    assert "--url http://localhost:18000" in calls[index(calls, "simtest interp server-ids")]
+    assert "logs/read/n2-pilot/episodes" in calls[exp]
+
+
+def test_a_failed_export_stops_the_session_and_the_vm(tmp_path):
+    proc, calls, out, state = run(tmp_path, {"STEPS": "ids", "EXPORT_RC": "1"})
+    assert proc.returncode == 1 and "ids:" in proc.stdout
+    assert not (state / "alive").exists()
+
+
+def test_read_runs_alone_on_the_gpu_and_brings_the_readings_back(tmp_path):
+    proc, calls, out, state = read_run(tmp_path)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert not [c for c in calls if "sim-session-step serve" in c]
+    cmd = (state / "read-cmds").read_text()
+    assert "read_run.sh" in cmd and "PARTS='proj'" in cmd and "CHUNK_MIN=20" in cmd
+    assert (state / "sim.bundle").read_text().strip() == "bundle"
+    assert (state / "read-vectors").read_text() == "vectors"
+    assert (tmp_path / "logs" / "read" / "n2-pilot" / "readings" / "a.npz").read_text() == "reading"
+    assert "read: done" in proc.stdout and not (state / "alive").exists()
+
+
+def test_after_a_run_the_servers_stop_once_for_the_readings_and_the_read(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, {"STEPS": "run ids readings read"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert sum("sim-session-step free-gpu" in c for c in calls) == 1
+    assert sum("git bundle create" in c or "bundle create" in c for c in calls) == 1
+    order = ["simtest run", "simtest interp export", "sim-session-step free-gpu", "sim-session-step readings", "sim-session-step read;"]
+    assert [index(calls, o) for o in order] == sorted(index(calls, o) for o in order)
+
+
+def test_a_read_goes_on_in_chunks_while_each_one_finishes_something(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, {"READ_ROUNDS_PROGRESS": "2"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert len((state / "read-cmds").read_text().splitlines()) == 3
+
+
+def test_a_chunk_that_finishes_nothing_stops_the_read(tmp_path):
+    """exit 3 from every chunk, with nothing new: not an endless loop on a billing VM."""
+    def script(tmp):
+        pass
+    (tmp_path / "x").mkdir()
+    proc, calls, out, state = read_run(tmp_path, {"READ_ROUNDS_PROGRESS": "0", "READ_RC": "3"})
+    assert proc.returncode == 1 and "finished nothing more" in proc.stdout
+    assert len((state / "read-cmds").read_text().splitlines()) == 2
+
+
+def test_a_failed_read_is_reported_and_what_it_read_still_comes_back(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, {"READ_RC": "1"})
+    assert proc.returncode == 1 and "read: exit 1" in proc.stdout
+    assert (tmp_path / "logs" / "read" / "n2-pilot" / "readings" / "a.npz").exists()
+    assert not (state / "alive").exists()
+
+
+def test_read_refuses_to_start_a_vm_without_its_inputs(tmp_path):
+    proc, calls, *_ = read_run(tmp_path, with_episodes=False)
+    assert proc.returncode == 1 and "no episodes" in proc.stderr and not any(" new " in c for c in calls)
+    proc, calls, *_ = read_run(tmp_path / "b" if (tmp_path / "b").mkdir() is None else None, vectors=False)
+    assert proc.returncode == 1 and "needs vectors" in proc.stderr
+    proc, calls, *_ = read_run(tmp_path / "c" if (tmp_path / "c").mkdir() is None else None, {"READ_PARTS": "logit"}, vectors=False)
+    assert proc.returncode == 1 and "needs sentences" in proc.stderr
+    proc, calls, *_ = read_run(tmp_path / "d" if (tmp_path / "d").mkdir() is None else None, {"READ_PARTS": "nope"})
+    assert proc.returncode == 1 and "unknown read part" in proc.stderr
+
+
+def test_the_logit_part_sends_its_sentences(tmp_path):
+    (tmp_path / "p.json").write_text("sentences")
+    proc, calls, out, state = read_run(tmp_path, {"READ_PARTS": "logit transfer", "READ_PHRASES": str(tmp_path / "p.json")}, vectors=False)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert (state / "read-phrases").read_text() == "sentences"
+    assert "PARTS='logit transfer'" in (state / "read-cmds").read_text()
+
+
+def test_read_settings_reach_the_vm(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, {"READ_ENGINE": "hf", "READ_LAYERS": "36,42", "READ_SAE_LAYERS": "42", "READ_CHUNK_MIN": "9"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    cmd = (state / "read-cmds").read_text()
+    assert "PROJ_ENGINE='hf'" in cmd and "LAYERS='36,42'" in cmd and "SAE_LAYERS='42'" in cmd and "CHUNK_MIN=9" in cmd
+
+
+def test_readings_so_far_go_over_first_so_a_second_session_resumes(tmp_path):
+    def setup_readings():
+        d = tmp_path / "logs" / "read" / "n2-pilot" / "readings"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "old.npz").write_text("old")
+
+    (tmp_path / "v.safetensors").write_text("vectors")
+
+    def before(state):
+        (state / "vm" / "read" / "readings").mkdir(parents=True, exist_ok=True)
+        episodes(tmp_path / "logs")
+        setup_readings()
+
+    proc, calls, out, state = run(tmp_path, {**READ_ENV, "READ_VECTORS": str(tmp_path / "v.safetensors")}, before=before)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    import tarfile
+
+    with tarfile.open(state / "read-in.tgz") as t:
+        assert any(n.endswith("old.npz") for n in t.getnames())

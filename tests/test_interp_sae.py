@@ -128,3 +128,20 @@ def test_splicing_into_the_fake_model():
     zero = b.token_losses(ids, replace={3: lambda h, start: np.zeros_like(h)})
     assert not np.allclose(clean, zero)
     assert clean.shape == (len(ids) - 1,)
+
+
+def test_the_encoder_runs_on_a_torch_device_with_the_same_latents():
+    """80K latents at every token of a run are too slow on a CPU, so the reader encodes on the GPU."""
+    torch = pytest.importorskip("torch")
+    rng = np.random.default_rng(3)
+    d, m = 16, 64
+    sae = TopKSAE(W_enc=rng.standard_normal((m, d)).astype(np.float32), b_enc=rng.standard_normal(m).astype(np.float32),
+                  W_dec=rng.standard_normal((d, m)).astype(np.float32), b_dec=np.zeros(d, np.float32), k=8)
+    x = rng.standard_normal((200, d)).astype(np.float32)
+    idx, val = sae.encode(x, chunk=64)
+    sae.device = "cpu"
+    idx2, val2 = sae.encode(x, chunk=64)
+    assert idx2.dtype == np.int32 and val2.dtype == np.float32
+    assert np.array_equal(np.sort(idx, 1), np.sort(idx2, 1)) and torch is not None
+    np.testing.assert_allclose(val, val2, rtol=1e-4, atol=1e-4)
+    assert (np.diff(val2, axis=1) <= 0).all()

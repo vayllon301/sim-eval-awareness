@@ -107,7 +107,9 @@ class TopKSAE:
     b_dec: np.ndarray  # (d_model,)
     k: int
     info: dict = field(default_factory=dict)
+    device: str | None = None  # a torch device for `encode`: 80K latents at every token are too slow on a CPU
     _rows: np.ndarray | None = field(default=None, repr=False)
+    _enc: tuple | None = field(default=None, repr=False)
 
     def __post_init__(self):
         d_sae, d = self.W_enc.shape
@@ -128,6 +130,8 @@ class TopKSAE:
         """(tokens, d_model) -> (indices (tokens, k) int32, values (tokens, k) float32),
         each row sorted by value, largest first."""
         x = np.asarray(x, dtype=np.float32)
+        if self.device:
+            return self._encode_torch(x, chunk)
         idx = np.empty((len(x), self.k), dtype=np.int32)
         val = np.empty((len(x), self.k), dtype=np.float32)
         for a in range(0, len(x), chunk):
@@ -139,6 +143,22 @@ class TopKSAE:
             idx[a:a + chunk] = np.take_along_axis(top, order, axis=1)
             val[a:a + chunk] = np.take_along_axis(v, order, axis=1)
         return idx, val
+
+    def _encode_torch(self, x: np.ndarray, chunk: int) -> tuple[np.ndarray, np.ndarray]:
+        import torch
+
+        if self._enc is None:
+            self._enc = (torch.from_numpy(np.array(self.W_enc, dtype=np.float32)).to(self.device),
+                         torch.from_numpy(np.array(self.b_enc, dtype=np.float32)).to(self.device))
+        w, b = self._enc
+        idx, val = [], []
+        with torch.inference_mode():
+            for a in range(0, len(x), chunk):
+                pre = torch.from_numpy(x[a:a + chunk].copy()).to(self.device) @ w.T + b
+                v, i = torch.topk(torch.relu(pre), self.k, dim=1)
+                idx.append(i.cpu().numpy().astype(np.int32))
+                val.append(v.float().cpu().numpy())
+        return np.concatenate(idx), np.concatenate(val)
 
     def decode(self, idx: np.ndarray, val: np.ndarray, chunk: int = 256) -> np.ndarray:
         if self._rows is None:  # decoder columns as contiguous rows, copied once (gathers from a memmap are slow)

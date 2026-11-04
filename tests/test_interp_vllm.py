@@ -139,3 +139,10 @@ def test_wrong_or_missing_activations_are_errors(tmp_path):
     b.llm.generate = lambda prompts, sp, use_tqdm=True: [SimpleNamespace(activations=None)]
     with pytest.raises(RuntimeError, match="no activations"):
         b.activations(ids, [1])
+
+
+def test_reading_a_run_uses_the_served_context():
+    """vllm_backend.ENGINE's 16K is the smoke test's. Session 5's agent prompts reach 80K tokens."""
+    from simtest.interp.readrun import READ_ENGINE
+
+    assert READ_ENGINE["max_model_len"] == 131072

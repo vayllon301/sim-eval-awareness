@@ -258,3 +258,14 @@ def test_completion_checks_compare_each_turn_with_what_was_generated():
 def test_completion_checks_skip_what_they_cant_know():
     assert completion_checks([1, 2], np.array([0]), None, frozenset({9})) == {"n": 0, "equal": 0, "differences": {}}
     assert completion_checks([1, 2], np.array([-1]), [3], frozenset({2})) == {"n": 0, "equal": 0, "differences": {}}
+
+
+# --- the sample of the SAE transfer check ------------------------------------------------------------
+
+def test_the_transfer_sample_is_fixed_and_covers_each_condition():
+    rows = [{"uuid": f"{c}{s}{e}", "condition": c, "scenario": s, "epoch": e, "scored": True, "status": "exported"}
+            for c in ("C0", "C2", "C3") for s in ("a", "a_benign", "b") for e in (1, 2)]
+    rows[0]["scored"] = False
+    got = RR.transfer_sample(rows, 2)
+    assert got == ["C0a_benign1", "C0b1", "C2a1", "C2a_benign1", "C3a1", "C3a_benign1"]
+    assert RR.transfer_sample(list(reversed(rows)), 2) == got
