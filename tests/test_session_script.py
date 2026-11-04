@@ -442,9 +442,9 @@ def test_read_refuses_to_start_a_vm_without_its_inputs(tmp_path):
     proc, calls, *_ = read_run(tmp_path, with_episodes=False)
     assert proc.returncode == 1 and "no episodes" in proc.stderr and not any(" new " in c for c in calls)
     proc, calls, *_ = read_run(tmp_path / "b" if (tmp_path / "b").mkdir() is None else None, vectors=False)
-    assert proc.returncode == 1 and "needs vectors" in proc.stderr
+    assert proc.returncode == 1 and "need vectors" in proc.stderr
     proc, calls, *_ = read_run(tmp_path / "c" if (tmp_path / "c").mkdir() is None else None, {"READ_PARTS": "logit"}, vectors=False)
-    assert proc.returncode == 1 and "needs sentences" in proc.stderr
+    assert proc.returncode == 1 and "need sentences" in proc.stderr
     proc, calls, *_ = read_run(tmp_path / "d" if (tmp_path / "d").mkdir() is None else None, {"READ_PARTS": "nope"})
     assert proc.returncode == 1 and "unknown read part" in proc.stderr
 

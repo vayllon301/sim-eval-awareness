@@ -121,6 +121,14 @@ def test_it_refuses_missing_inputs(tmp_path):
     assert proc.returncode == 1 and "no episodes" in proc.stdout
 
 
+def test_the_first_gpu_run_checks_both_paths_then_compares(tmp_path):
+    proc, calls, work = run(tmp_path, {"PARTS": "check"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    runs = [c for c in calls if "read_check.py" in c]
+    assert "run" in runs[0] and "--engine vllm" in runs[0] and "--engine hf" in runs[1] and "--chunk 2048" in runs[2]
+    assert " compare " in runs[3]
+
+
 def test_a_plus_stands_for_a_space_in_parts(tmp_path):
     """sbatch --export can't carry spaces."""
     proc, calls, _ = run(tmp_path, {"PARTS": "proj+logit"})
@@ -192,7 +200,7 @@ def test_submit_sends_everything_and_submits_one_job(tmp_path):
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
 @pytest.mark.parametrize("env, needle", [({"LOGIN": None}, "LOGIN"), ({"TIME_LIMIT": None}, "TIME_LIMIT"), ({"WORK": "rel/path"}, "absolute"),
-                                         ({"VECTORS": None}, "needs vectors"), ({"PARTS": "logit"}, "needs sentences"),
+                                         ({"VECTORS": None}, "need vectors"), ({"PARTS": "logit"}, "need sentences"),
                                          ({"GIT_DIRTY": " M x"}, "dirty")])
 def test_submit_refusals(tmp_path, env, needle):
     proc, calls, _ = submit(tmp_path, env)

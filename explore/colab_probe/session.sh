@@ -32,7 +32,7 @@
 #                  (a git bundle, so it records the commit). READINGS_STEPS and READINGS_BUDGET_MIN
 #                  are its STEPS and BUDGET_MIN.
 #        read      explore/interp/read_run.sh: reads the run's episodes (docs/INTERP.md, "Reading a
-#                  run"). The GPU alone, as readings. READ_PARTS picks proj, logit and transfer
+#                  run"). The GPU alone, as readings. READ_PARTS picks check, proj, logit and transfer
 #                  (default proj). It runs in chunks of READ_CHUNK_MIN minutes, and each chunk's
 #                  readings come back to READ_DIR at once, so a VM lost mid-run loses one chunk. A
 #                  second session resumes: the readings go over first. Stops when a chunk finishes
@@ -113,13 +113,13 @@ if want read; then
     problems+=("no episodes at $READ_DIR/episodes: run 'uv run simtest interp export' or add the ids step")
   fi
   for p in ${=READ_PARTS}; do
-    case $p in proj|logit|transfer) ;; *) problems+=("unknown read part '$p' (READ_PARTS: proj logit transfer)") ;; esac
+    case $p in check|proj|logit|transfer) ;; *) problems+=("unknown read part '$p' (READ_PARTS: check proj logit transfer)") ;; esac
   done
-  if [[ " $READ_PARTS " == *" proj "* ]] && ! want readings && [[ ! -f ${READ_VECTORS:-} ]]; then
-    problems+=("the proj part needs vectors: READ_VECTORS, or the readings step, which builds them")
+  if [[ " $READ_PARTS " == *" proj "* || " $READ_PARTS " == *" check "* ]] && ! want readings && [[ ! -f ${READ_VECTORS:-} ]]; then
+    problems+=("the proj and check parts need vectors: READ_VECTORS, or the readings step, which builds them")
   fi
-  if [[ " $READ_PARTS " == *" logit "* && ! -f ${READ_PHRASES:-} ]]; then
-    problems+=("the logit part needs sentences: READ_PHRASES")
+  if [[ " $READ_PARTS " == *" logit "* || " $READ_PARTS " == *" check "* ]] && [[ ! -f ${READ_PHRASES:-} ]]; then
+    problems+=("the logit and check parts need sentences: READ_PHRASES")
   fi
 fi
 if (( need_servers )); then

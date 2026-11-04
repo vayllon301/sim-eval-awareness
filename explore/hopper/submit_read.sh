@@ -35,8 +35,12 @@ if ! [[ ${TIME_LIMIT:-} =~ $NUM ]]; then problems+=("set TIME_LIMIT to the hours
 if [[ -z ${WORK:-} ]]; then problems+=("set WORK to a scratch directory on the nodes (about 110 GB free)")
 elif [[ $WORK != /* ]]; then problems+=("WORK must be an absolute path on the nodes (got $WORK)"); fi
 [[ -f $READ_DIR/episodes/manifest.json ]] || problems+=("no episodes at $READ_DIR/episodes: run 'uv run simtest interp export'")
-[[ " $PARTS " != *" proj "* || -f ${VECTORS:-} ]] || problems+=("the proj part needs vectors: VECTORS")
-[[ " $PARTS " != *" logit "* || -f ${PHRASES:-} ]] || problems+=("the logit part needs sentences: PHRASES")
+if [[ " $PARTS " == *" proj "* || " $PARTS " == *" check "* ]] && [[ ! -f ${VECTORS:-} ]]; then
+  problems+=("the proj and check parts need vectors: VECTORS")
+fi
+if [[ " $PARTS " == *" logit "* || " $PARTS " == *" check "* ]] && [[ ! -f ${PHRASES:-} ]]; then
+  problems+=("the logit and check parts need sentences: PHRASES")
+fi
 [[ -z "$(git status --porcelain)" ]] || problems+=("the tree is dirty: a read records its commit, so commit first")
 if (( ${#problems} )); then
   for p in $problems; do print -u2 -r -- "submit_read.sh: refused: $p"; done

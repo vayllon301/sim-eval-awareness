@@ -269,3 +269,56 @@ def test_the_transfer_sample_is_fixed_and_covers_each_condition():
     got = RR.transfer_sample(rows, 2)
     assert got == ["C0a_benign1", "C0b1", "C2a1", "C2a_benign1", "C3a1", "C3a_benign1"]
     assert RR.transfer_sample(list(reversed(rows)), 2) == got
+
+
+# --- the first GPU run: do the reading paths agree on a real episode? --------------------------------
+
+def noisy(backend, scale, seed=1):
+    """The same model, with kernels that differ a little."""
+    rng = np.random.default_rng(seed)
+    real_acts, real_losses = backend.activations, backend.token_losses
+
+    def activations(ids, layers, **kw):
+        return {L: a + rng.normal(0, scale, a.shape).astype(np.float32) for L, a in real_acts(ids, layers, **kw).items()}
+
+    def token_losses(ids, **kw):
+        x = real_losses(ids, **kw)
+        return x + rng.normal(0, scale, x.shape)
+
+    backend.activations, backend.token_losses = activations, token_losses
+    return backend
+
+
+def checked(tmp_path, vectors, backend, name):
+    eps = exported(tmp_path)
+    from simtest.interp.reader import load_episode
+
+    vs, _ = vectors
+    return RR.path_check(backend, load_episode(eps / "u1.json"), vs, 4, PHRASES["groups"], label=name)
+
+
+def test_a_path_check_says_what_it_took_and_read(tmp_path, vectors):
+    a = checked(tmp_path, vectors, FakeBackend(), "a")
+    assert a["label"] == "a" and a["engine"] == "fake" and a["tokens"] > 100 and a["path"] == "token_losses"
+    assert a["seconds"]["pass"] >= 0 and a["seconds"]["phrases"] >= 0
+    assert len(a["turns"]) == 3 and len(a["logprobs"]) == 3 * 5 + 3 * 3   # tokens of both phrases at each turn
+    assert len(a["projection"]) == a["tokens"]
+
+
+def test_two_identical_paths_agree_exactly(tmp_path, vectors):
+    out = RR.compare_paths(checked(tmp_path, vectors, FakeBackend(), "a"), checked(tmp_path / "b" if (tmp_path / "b").mkdir() is None else None, vectors, FakeBackend(), "b"))
+    assert out["projection_correlation"] == pytest.approx(1.0) and out["projection_rel_rmse"] == pytest.approx(0.0)
+    assert out["logprob_rms"] == pytest.approx(0.0) and out["monitor_error_over_turn_sd"] == pytest.approx(0.0)
+
+
+def test_noisy_kernels_show_in_the_comparison(tmp_path, vectors):
+    a = checked(tmp_path, vectors, FakeBackend(), "a")
+    b = checked(tmp_path / "b" if (tmp_path / "b").mkdir() is None else None, vectors, noisy(FakeBackend(), 0.5), "b")
+    out = RR.compare_paths(a, b)
+    assert 0 < out["projection_correlation"] < 1 and out["logprob_rms"] > 0.1
+
+
+def test_paths_on_different_tokens_arent_compared(tmp_path, vectors):
+    a = checked(tmp_path, vectors, FakeBackend(), "a")
+    with pytest.raises(RR.ReadError, match="same tokens"):
+        RR.compare_paths(a, {**a, "tokens": a["tokens"] + 1})

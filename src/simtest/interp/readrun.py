@@ -34,6 +34,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+import numpy as np
+
 from .meta import file_sha256, git_commit, now
 from .reader import Reading, completion_checks, load_episode, read, render
 
@@ -252,6 +254,58 @@ def read_run(backend, episodes_dir: str | Path, out_dir: str | Path, *, parts: S
               "backend": backend.info.get("engine"), "updated": now(), "git_commit": git_commit()}
     _write_json(out_dir / "status.json", status, indent=1, sort_keys=True)
     return status
+
+
+def path_check(backend, ep, vectors, layer: int, groups: Mapping[str, Sequence[str]], *, label: str = "") -> dict:
+    """One episode down a reading path, for the first GPU run (docs/INTERP.md, "What the first GPU run
+    measures"): the time and result of the pass and of the phrases at the first, middle and last turn."""
+    from .backend import encode
+    from .monitors import continuation_scan, reasoning_starts, scan_path
+
+    rd = render(ep, backend.tokenizer)
+    ids = rd.ids.tolist()
+    starts = reasoning_starts(rd.role, rd.turn)
+    turns = [t for t in sorted(starts) if starts[t] is not None]
+    turns = sorted({turns[0], turns[len(turns) // 2], turns[-1]})
+    t0 = time.monotonic()
+    acts = backend.activations(ids, [layer])[layer]
+    t1 = time.monotonic()
+    projection = (acts @ vectors.get("eval_awareness", layer)).astype(float).tolist()
+    del acts
+    names = [(g, text) for g, texts in groups.items() for text in texts]
+    pids = [encode(backend.tokenizer, text) for _, text in names]
+    t2 = time.monotonic()
+    scores = continuation_scan(backend, ids, [starts[t] for t in turns], pids)
+    t3 = time.monotonic()
+    logprobs = [float(v) for t in turns for x in scores[starts[t]] for v in x]
+    eval_i = [i for i, (g, _) in enumerate(names) if g == "eval"]
+    control_i = [i for i, (g, _) in enumerate(names) if g == "control"]
+    monitor = [float(np.mean([scores[starts[t]][i].mean() for i in eval_i]) - np.mean([scores[starts[t]][i].mean() for i in control_i]))
+               for t in turns]
+    return {"label": label, "engine": backend.info.get("engine"), "fingerprint": backend.info.get("fingerprint"),
+            "uuid": ep.meta.get("uuid"), "tokens": len(ids), "turns": turns, "path": scan_path(backend), "layer": int(layer),
+            "seconds": {"pass": round(t1 - t0, 3), "phrases": round(t3 - t2, 3)}, "gpu_used_mib": gpu_used_mib(),
+            "projection": projection, "logprobs": logprobs, "monitor": monitor}
+
+
+def compare_paths(a: dict, b: dict) -> dict:
+    """How far two reading paths are apart on the same tokens. `monitor_error_over_turn_sd` is the
+    number that matters for the logit monitor: their difference against how much the monitor moves
+    from turn to turn."""
+    if a["tokens"] != b["tokens"] or a["turns"] != b["turns"] or len(a["logprobs"]) != len(b["logprobs"]):
+        raise ReadError("these two checks didn't read the same tokens")
+    p, q = np.array(a["projection"]), np.array(b["projection"])
+    x, y = np.array(a["logprobs"]), np.array(b["logprobs"])
+    m, n = np.array(a["monitor"]), np.array(b["monitor"])
+    sd = float(m.std())
+    return {"paths": [a["label"], b["label"]], "tokens": a["tokens"],
+            "projection_correlation": float(np.corrcoef(p, q)[0, 1]),
+            "projection_rel_rmse": float(np.sqrt(((p - q) ** 2).mean()) / p.std()),
+            "logprob_rms": float(np.sqrt(((x - y) ** 2).mean())), "logprob_max": float(np.abs(x - y).max()),
+            "monitor": {a["label"]: a["monitor"], b["label"]: b["monitor"]},
+            "monitor_error_over_turn_sd": float(np.sqrt(((m - n) ** 2).mean()) / sd) if sd else None,
+            "tokens_per_second": {c["label"]: round(c["tokens"] / c["seconds"]["pass"]) if c["seconds"]["pass"] else None
+                                  for c in (a, b)}, "seconds": {c["label"]: c["seconds"] for c in (a, b)}}
 
 
 def _post(url: str, body: dict) -> dict:

@@ -7,6 +7,9 @@
 # each, in the venv of gpu_env.sh.
 #
 # Steps, in PARTS' order (default: proj):
+#   check     explore/interp/read_check.py, on the first GPU run: the longest and the shortest episode
+#             on vllm and on hf, the agreement of the two paths, and the chunk noise. About 15 minutes.
+#             Needs VECTORS and PHRASES. Skipped once read-check.json exists. Pass rules: docs/INTERP.md.
 #   proj      explore/interp/read_run.py on PROJ_ENGINE (vllm, the episodes' engine and the vectors';
 #             hf if vllm-lens fails on long prompts): projections, prompt ends, SAE top-k latents
 #             at SAE_LAYERS. Needs VECTORS. Resumable, episode by episode.
@@ -17,8 +20,8 @@
 #             at TRANSFER_LAYERS. Skipped once its output exists.
 #
 # Estimated minutes for the pilot's 54 episodes (2.3M tokens), from LOG.md's numbers and the laptop's
-# scaling, not measured on a GPU: proj about 15 (5 with no latents), logit about 25, transfer about
-# 10, plus about 1 per engine load. Setup: 3 install, 5 download when the VM has neither.
+# scaling, not measured on a GPU: proj about 15, logit about 25, transfer about 10, plus about 1 per
+# engine load. Setup: 3 install, 5 download when the VM has neither.
 #
 # Colab's SSH allows one session, so a read step can't copy results out while it runs. CHUNK_MIN
 # ends proj and logit between episodes, and session.sh calls this again after fetching what is done;
@@ -61,11 +64,11 @@ t0=$(date +%s)
 stamp() { echo "$1 $(($(date +%s) - t0))s" | tee -a "$OUT/read-timings.txt"; }
 
 for p in $PARTS; do
-  case $p in proj|logit|transfer) ;; *) echo "read_run.sh: unknown part $p (PARTS: proj logit transfer)"; exit 1 ;; esac
+  case $p in check|proj|logit|transfer) ;; *) echo "read_run.sh: unknown part $p (PARTS: check proj logit transfer)"; exit 1 ;; esac
 done
 [ -f "$IN/episodes/manifest.json" ] || { echo "read_run.sh: no episodes in $IN/episodes: run simtest interp export"; exit 1; }
-case " $PARTS " in *" proj "*) [ -f "$VECTORS" ] || { echo "read_run.sh: no vector file at $VECTORS"; exit 1; } ;; esac
-case " $PARTS " in *" logit "*) [ -f "$PHRASES" ] || { echo "read_run.sh: no phrase file at $PHRASES"; exit 1; } ;; esac
+case " $PARTS " in *" proj "*|*" check "*) [ -f "$VECTORS" ] || { echo "read_run.sh: no vector file at $VECTORS"; exit 1; } ;; esac
+case " $PARTS " in *" logit "*|*" check "*) [ -f "$PHRASES" ] || { echo "read_run.sh: no phrase file at $PHRASES"; exit 1; } ;; esac
 used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | sort -n | tail -1)
 if [ "$used" -gt 2000 ]; then echo "read_run.sh: the GPU has $used MiB in use: stop serve.sh's servers first"; exit 1; fi
 
@@ -88,6 +91,14 @@ reader() { "$PY" -I "$CODE/explore/interp/read_run.py" "$MODELS/agent" --episode
 for p in $PARTS; do
   stamp "$p start"
   case $p in
+    check)
+      [ ! -e "$OUT/read-check.json" ] || continue
+      check() { "$PY" -I "$CODE/explore/interp/read_check.py" "$@" 2>&1 | tee -a "$OUT/check.log"; note "${PIPESTATUS[0]}"; }
+      common=(--episodes "$IN/episodes" --vectors "$VECTORS" --phrases "$PHRASES" --out "$OUT")
+      check run "$MODELS/agent" --engine vllm "${common[@]}"
+      check run "$MODELS/agent" --engine hf "${common[@]}"
+      check run "$MODELS/agent" --engine hf --chunk 2048 --label hf-2048 "${common[@]}"
+      check compare --out "$OUT" ;;
     proj)
       args=(--engine "$PROJ_ENGINE" --out "$OUT" --parts proj --vectors "$VECTORS" --budget-min "$CHUNK_MIN")
       [ -z "$LAYERS" ] || args+=(--layers "$LAYERS")
