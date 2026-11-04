@@ -571,10 +571,11 @@ def as_slurm(calls) -> dict:
 def test_layer_lists_survive_sbatchs_export_and_reach_the_reader_whole(tmp_path):
     laptop, node = tmp_path / "laptop", tmp_path / "node"
     laptop.mkdir(), node.mkdir()
-    proc, calls, _ = submit(laptop, {"LAYERS": "30,42,48", "SAE_LAYERS": "32,42,48", "NO_SERVER_IDS": "1"})
+    proc, calls, _ = submit(laptop, {"LAYERS": "30,42,48", "SAE_LAYERS": "32,42,48", "TRANSFER_LAYERS": "32,48", "NO_SERVER_IDS": "1"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     job = as_slurm(calls)
-    assert set(job) >= {"WORK", "PARTS", "CHUNK_MIN", "LAYERS", "SAE_LAYERS", "NO_SERVER_IDS"}
+    assert set(job) >= {"WORK", "PARTS", "CHUNK_MIN", "LAYERS", "SAE_LAYERS", "TRANSFER_LAYERS", "NO_SERVER_IDS"}
+    assert job["TRANSFER_LAYERS"] == "32+48"
     env = {k: job[k] for k in ("PARTS", "CHUNK_MIN", "LAYERS", "SAE_LAYERS", "NO_SERVER_IDS")}
     proc, calls, _ = run(node, env)
     assert proc.returncode == 0, proc.stdout + proc.stderr

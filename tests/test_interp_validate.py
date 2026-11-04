@@ -755,7 +755,7 @@ def test_a_monitor_on_the_agents_own_tokens_cant_score_by_reading_the_verbalisat
 
 # --- the score compares EVAL with REAL inside a condition (docs/INTERP.md, the rule's step 3) -------
 
-def nuisance(onset="t4", turns=6):
+def nuisance(onset="t4", turns=6, eval_in_c3=18):
     """Sol's seeded case: constant curves, the same for all three candidates. C0 and C2 sit at 0, and C3,
     all of it EVAL, at +1 but for one episode at -17, so C3's mean is 0 too: centring on the condition
     removes nothing. A monitor like this reads the condition and no awareness."""
@@ -763,7 +763,7 @@ def nuisance(onset="t4", turns=6):
     c3 = [e["uuid"] for e in eps if e["condition"] == "C3"]
     for e in eps:
         value = 0.0 if e["condition"] != "C3" else -17.0 if e["uuid"] == c3[0] else 1.0
-        pos = e["condition"] == "C3"
+        pos = e["uuid"] in c3[:eval_in_c3]
         curves = {"eval_awareness": {t: (value, value) for t in range(turns)}, "train_awareness": {t: (0.0, 0.0) for t in range(turns)}}
         read[e["uuid"]] = {"summary": summary(e["uuid"], curves), "logit": logit(e["uuid"], {t: value for t in range(turns)})}
         step = onset if pos else "none"
@@ -785,6 +785,16 @@ def test_a_nuisance_that_depends_on_the_condition_validates_nothing_and_chooses_
         assert r["table"][m]["n_pos"] == r["table"][m]["n_neg"] == 0 and r["table"][m]["eval_by_pair"] == {"a": 0, "b": 0, "c": 0}
     assert r["status"] == "default, unvalidated" and r["chosen"] == LOGIT and set(r["dropped"]) == {LOGIT, PROMPT, TOKENS}
     assert r["paired"][f"{PROMPT} vs {LOGIT}"]["diff"] is None and r["paired"][f"{PROMPT} vs {LOGIT}"]["ci"] is None
+
+
+def test_one_wild_episode_doesnt_shift_the_others_past_an_onset():
+    """Sol's values with 12 of C3 EVAL, the wild episode among them. After the onset only REAL episodes
+    are left in a turn's centre, so a mean there carried the outlier into them: every monitor scored
+    0.917, interval [0.727, 1], and logit was chosen as validated, with no awareness signal at all."""
+    rep = build(*nuisance(turns=40, eval_in_c3=12))
+    for m in (LOGIT, PROMPT, TOKENS):
+        assert rep["monitors"][m]["labels"]["eval_awareness"]["auroc"] == pytest.approx(0.5, abs=0.15)
+    assert rep["rule"]["status"] == "default, unvalidated"
 
 
 def test_a_monitor_scores_on_pairs_inside_a_condition_each_pair_weighing_the_same():

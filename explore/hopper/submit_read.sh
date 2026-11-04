@@ -82,6 +82,7 @@ exports="ALL,WORK=$remote,PARTS=${PARTS// /+},CHUNK_MIN=$chunk"
 # sbatch --export splits on commas, so a list goes with plus signs, as PARTS does, and read_run.sh decodes it.
 [[ -z ${LAYERS:-} ]] || exports+=",LAYERS=${LAYERS//,/+}"
 [[ -z ${SAE_LAYERS:-} ]] || exports+=",SAE_LAYERS=${SAE_LAYERS//,/+}"
+[[ -z ${TRANSFER_LAYERS:-} ]] || exports+=",TRANSFER_LAYERS=${TRANSFER_LAYERS//,/+}"
 [[ ${NO_SERVER_IDS:-} != 1 ]] || exports+=",NO_SERVER_IDS=1"
 [[ ${ALLOW_OTHER_BACKEND:-} != 1 ]] || exports+=",ALLOW_OTHER_BACKEND=1"
 x -i explore/hopper/read.slurm ssh $LOGIN "cd $remote && sbatch --parsable --time=$(( int(TIME_LIMIT * 60) )) --job-name=sim-read-$name \

@@ -811,8 +811,10 @@ uv run simtest interp report logs/n2-pilot --readings R --judge J --kappa K --ph
   `logit:eval`, `logit:training` (minus control, mean per token).
 - **An episode's value.** Turn 0 is left out, since its prompt is the same in every condition; it checks
   the engine instead (`turn0_spread`, at the report's layer). Each turn is centred on its condition at
-  that turn and its scenario at that turn, together (alternating passes, a two-way fit), since monitors
-  drift through an episode and a shorter window changes who sits in each mean. Against a label, the
+  that turn and its scenario at that turn, together (alternating passes on medians, a two-way fit), since
+  monitors drift through an episode and a shorter window changes who sits in each centre. Medians, since
+  after an onset only REAL episodes are left in a turn's centre, and a mean would carry one wild episode
+  into the others. Against a label, the
   window ends at the label's onset turn, kept: the earlier of the judge's first step and the first
   verified quote in the agent's own words. A prompt-end or logit reading comes before the agent writes,
   and later prompts hold its own words, so reading on would read the label. `agent_tokens` reads what the
