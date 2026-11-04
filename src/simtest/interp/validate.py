@@ -1,7 +1,7 @@
 """Each internal monitor against the judge's labels and behaviour, on the pilot (PLAN.md, Measures;
 N2's exit). Reference: docs/INTERP.md, "The monitors against the labels".
 
-    simtest interp report logs/n2-pilot --readings READINGS --judge judge.jsonl --kappa pass.json [--json]
+    simtest interp report logs/n2-pilot --readings READINGS --judge judge.jsonl --kappa pass.json --phrases FILE [--json]
 
 No model calls. Pilot episodes calibrate: nothing here is evidence for a comparison.
 
