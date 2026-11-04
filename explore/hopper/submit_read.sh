@@ -5,11 +5,12 @@
 #
 #   LOGIN=<user@login host> TIME_LIMIT=<hours> WORK=<scratch on the nodes> \
 #   SBATCH_ARGS="--partition=... --account=..." VECTORS=<file> [PHRASES=<file>] [PARTS="proj logit transfer"] \
-#   explore/hopper/submit_read.sh CONFIG
+#   [NO_SERVER_IDS=1] explore/hopper/submit_read.sh CONFIG
 #
 # 1. Refuses unless the tree is clean, the parameters are given, the episodes exist (simtest interp
-#    export) and each part has its inputs. Hopper's login host, partition, account and scratch are
-#    unknown here: they are parameters, never defaults.
+#    export) with the server's token IDs (run_chunks.sh takes them; NO_SERVER_IDS=1 reads without
+#    them, and each reading says so) and each part has its inputs. Hopper's login host, partition,
+#    account and scratch are unknown here: they are parameters, never defaults.
 # 2. Sends the code at HEAD (a git bundle, so it records the commit), the episodes and the readings so
 #    far (a second job resumes), the vectors and the sentences to WORK. The login host must see WORK.
 # 3. Submits read.slurm by stdin, with CHUNK_MIN set to end 10 minutes before the time limit.
@@ -41,6 +42,7 @@ fi
 if [[ " $PARTS " == *" logit "* || " $PARTS " == *" check "* ]] && [[ ! -f ${PHRASES:-} ]]; then
   problems+=("the logit and check parts need sentences: PHRASES")
 fi
+[[ ${NO_SERVER_IDS:-} == 1 ]] || problems+=(${(f)"$(ids_problems $READ_DIR/episodes $PARTS)"})
 [[ -z "$(git status --porcelain)" ]] || problems+=("the tree is dirty: a read records its commit, so commit first")
 if (( ${#problems} )); then
   for p in $problems; do print -u2 -r -- "submit_read.sh: refused: $p"; done
@@ -69,6 +71,7 @@ exports="ALL,WORK=$remote,PARTS=${PARTS// /+},CHUNK_MIN=$chunk"
 [[ -z ${PROJ_ENGINE:-} ]] || exports+=",PROJ_ENGINE=$PROJ_ENGINE"
 [[ -z ${LAYERS:-} ]] || exports+=",LAYERS=$LAYERS"
 [[ -z ${SAE_LAYERS:-} ]] || exports+=",SAE_LAYERS=$SAE_LAYERS"
+[[ ${NO_SERVER_IDS:-} != 1 ]] || exports+=",NO_SERVER_IDS=1"
 x -i explore/hopper/read.slurm ssh $LOGIN "cd $remote && sbatch --parsable --time=$(( int(TIME_LIMIT * 60) )) --job-name=sim-read-$name \
   --output=read/read-%j.out --export=$exports $SBATCH_ARGS" || { print -u2 "submit_read.sh: sbatch failed"; exit 1; }
 say "next: ssh $LOGIN squeue -u \\\$USER; when it ends:"

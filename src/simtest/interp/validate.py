@@ -297,11 +297,13 @@ def _coverage(episodes: list[dict], rows: list[dict], scored: list[dict], readin
 
     missing = sorted(str(e["uuid"]) for e in scored if e["uuid"] not in readings or not readings[e["uuid"]].get("summary"))
     checks = [(readings[r["uuid"]].get("summary") or {}).get("ids_check") or {} for r in rows]
+    unchecked = sum(any(((readings[r["uuid"]].get(part) or {}).get("ids_check") or {}).get("no_server_ids")
+                        for part in ("summary", "logit")) for r in rows)
     return {"episodes": len(episodes), "scored": len(scored), "flagged": sum(A.is_excluded(e) for e in episodes),
             "no_reading": missing, "turn0_spread": _turn0_spread(rows),
             "ids": {"server": sum(c.get("source") == "server" for c in checks),
                     "lengths": sum(c.get("source") == "lengths" for c in checks),
-                    "failed": sum(c.get("equal") is False for c in checks)}}
+                    "failed": sum(c.get("equal") is False for c in checks), "no_server_ids": unchecked}}
 
 
 def apply_rule(table: dict[str, dict], *, n_pos: int, n_neg: int, pairs: int) -> dict:
@@ -429,7 +431,7 @@ def format_report(rep: dict) -> str:
            f"Episodes {cov['episodes']}: {cov['scored']} scored, {cov['flagged']} flagged (not used), "
            f"{len(cov['no_reading'])} scored with no reading.",
            f"Token IDs: {cov['ids']['server']} checked against the server's, {cov['ids']['lengths']} on lengths only, "
-           f"{cov['ids']['failed']} failed.",
+           f"{cov['ids']['failed']} failed, {cov['ids']['no_server_ids']} read with --no-server-ids.",
            "Readings of one scenario's first prompt, largest difference (should be about 0): "
            + (", ".join(f"{k} {v:.4g}" for k, v in sorted(cov["turn0_spread"].items())) or "none")]
     if rep["cross_fitted"]:

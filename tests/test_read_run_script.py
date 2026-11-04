@@ -3,6 +3,7 @@ for python, nvidia-smi, hf, uv and ssh: nothing reads a model and nothing reache
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -135,6 +136,18 @@ def test_a_plus_stands_for_a_space_in_parts(tmp_path):
     assert proc.returncode == 0 and any("--parts logit" in c for c in calls)
 
 
+def test_the_reader_needs_the_servers_ids_unless_told_otherwise(tmp_path):
+    proc, calls, _ = run(tmp_path, {"PARTS": "proj logit"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not any("--no-server-ids" in c for c in calls)
+
+
+def test_no_server_ids_reaches_both_parts_of_the_reader(tmp_path):
+    proc, calls, _ = run(tmp_path, {"PARTS": "proj logit", "NO_SERVER_IDS": "1"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert sum("--no-server-ids" in c for c in calls if "read_run.py" in c) == 2
+
+
 def test_the_estimate_is_in_the_header():
     assert "Estimated minutes for the pilot" in SCRIPT.read_text()
 
@@ -205,6 +218,39 @@ def test_submit_sends_everything_and_submits_one_job(tmp_path):
 def test_submit_refusals(tmp_path, env, needle):
     proc, calls, _ = submit(tmp_path, env)
     assert proc.returncode == 1 and needle in proc.stderr and not any(c.startswith("ssh") for c in calls)
+
+
+def manifest(tmp_path, exported, with_ids):
+    d = tmp_path / "logs" / "read" / "n2-pilot" / "episodes"
+    d.mkdir(parents=True)
+    rows = [{"status": "exported", "uuid": f"u{i}"} for i in range(exported)]
+    (d / "manifest.json").write_text(json.dumps({"episodes": rows}, indent=1, sort_keys=True))
+    for i in range(with_ids):
+        (d / f"u{i}.ids.json").write_text("{}")
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_submit_says_so_before_the_cluster_when_the_servers_ids_are_missing(tmp_path):
+    manifest(tmp_path, 2, 1)
+    proc, calls, _ = submit(tmp_path, with_episodes=False)
+    assert proc.returncode == 1 and "1 of 2 exported episodes have no server IDs" in proc.stderr
+    assert not any(c.startswith("ssh") for c in calls)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_submit_passes_on_a_read_without_a_server_by_name(tmp_path):
+    manifest(tmp_path, 2, 0)
+    proc, calls, _ = submit(tmp_path, {"NO_SERVER_IDS": "1"}, with_episodes=False)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "NO_SERVER_IDS=1" in next(c for c in calls if "sbatch --parsable" in c)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_submit_with_every_id_says_nothing_about_them(tmp_path):
+    manifest(tmp_path, 2, 2)
+    proc, calls, _ = submit(tmp_path, with_episodes=False)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "NO_SERVER_IDS" not in next(c for c in calls if "sbatch --parsable" in c)
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")

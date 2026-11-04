@@ -184,7 +184,19 @@ def test_ids_and_lengths_that_failed_are_reported():
     read[eps[0]["uuid"]]["summary"]["ids_check"] = {"source": "lengths", "n": 3, "equal": False, "first_difference": 1}
     read[eps[1]["uuid"]]["summary"]["ids_check"] = {"source": "lengths", "n": 3, "equal": True, "first_difference": None}
     cov = build(eps, res, read)["coverage"]
-    assert cov["ids"] == {"server": 52, "lengths": 2, "failed": 1}
+    assert cov["ids"] == {"server": 52, "lengths": 2, "failed": 1, "no_server_ids": 0}
+
+
+def test_readings_made_without_the_servers_ids_are_counted_and_said():
+    """Per episode: --no-server-ids on either part counts it once, so the report can't read as checked."""
+    eps, res, read = make()
+    both = {"source": "lengths", "n": 3, "equal": True, "first_difference": None, "no_server_ids": True}
+    read[eps[0]["uuid"]]["summary"]["ids_check"] = both
+    read[eps[0]["uuid"]]["logit"]["ids_check"] = {"source": "none", "no_server_ids": True}
+    read[eps[1]["uuid"]]["logit"]["ids_check"] = {"source": "none", "no_server_ids": True}
+    rep = build(eps, res, read)
+    assert rep["coverage"]["ids"]["no_server_ids"] == 2
+    assert "2 read with --no-server-ids" in V.format_report(rep)
 
 
 def test_disagreements_are_listed_not_resolved():

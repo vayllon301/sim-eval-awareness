@@ -96,6 +96,17 @@ preflight_problems() {
   fi
 }
 
+# ids_problems EPISODES_DIR PARTS: why a read must not start, one line (nothing when it may). proj and
+# logit refuse an episode without the server's token IDs, so a read with some missing would pay for a
+# VM or a job only to say so (readrun.py).
+ids_problems() {
+  [[ " $2 " == *" proj "* || " $2 " == *" logit "* ]] || return 0
+  local have=($1/*.ids.json(N)) want
+  want=$(grep -c '"status": "exported"' $1/manifest.json 2>/dev/null)
+  (( ${want:-0} <= ${#have} )) || print -r -- "$(( want - ${#have} )) of $want exported episodes have no server IDs at $1: \
+run the ids step while the servers are up, or set ${3:-NO_SERVER_IDS}=1 for a read with no server behind it"
+}
+
 # The simulator's setup check (explore/sim_quant.py, docs/BACKENDS.md). SETUP_DIR holds one commit's
 # check on one backend, so a pass here never counts for another commit or another backend, and a
 # failed check stays as it is.

@@ -651,8 +651,10 @@ are not equal IDs, and the 9 turns that differ were read back by the agent in th
 form, which is what the pass reads too. The first limit closes without touching an episode: vLLM's
 `/tokenize` uses the renderer of chat completions, so `simtest interp server-ids` asks for each
 episode's last request while the servers are up (no GPU work, and every earlier prompt is a prefix
-of that one). The tokenizer files differ between the laptop's MLX copy and the FP8 checkpoint, so
-rendering happens on the GPU, with the model's own files.
+of that one). The check is what this argument rests on, so it can't be skipped in silence: the reader
+refuses an episode without those IDs unless told otherwise (["Reading a run"](#reading-a-run)). The
+tokenizer files differ between the laptop's MLX copy and the FP8 checkpoint, so rendering happens on
+the GPU, with the model's own files.
 
 **The adapter** (`episodes.from_inspect`) builds an episode from the last request's messages, plus
 the last reply as the provider would replay it. Tools come from the request. Tool outputs no turn
@@ -660,7 +662,8 @@ read are dropped and counted, and failed calls are counted. Each check stays in 
 `prompt_tokens`, `completion_tokens`, `requests_are_prefixes`, `replay_differs`, `partial_last_turn`.
 
 **End to end on real logs:** session 4's 6 C0 episodes went through `export`, `proj`, `logit`, `proj` with
-latents, `sae_transfer.py` and `report` on the laptop's 8-bit weights, with no failure. Prompt lengths all
+latents, `sae_transfer.py` and `report` on the laptop's 8-bit weights, with no failure (no server was
+up: that flow now needs `--no-server-ids`). Prompt lengths all
 equal, 122 of 124 generated turns equal, and readings of one scenario's first prompt identical. FP8
 vectors with the training twin exist from session 4 (`logs/interp/gpu-smoke-s4/`: layers 36 to 48,
 chosen layer 36); the laptop's older files have no twin.
@@ -684,14 +687,21 @@ python -I explore/interp/read_run.py MODEL --engine hf --parts logit --episodes 
 uv run simtest interp report logs/n2-pilot --readings R --judge J --kappa K                  # laptop
 ```
 
-`STEPS` and `PARTS` run this in a session ([`SESSIONS.md`](SESSIONS.md)).
+`STEPS` and `PARTS` run this in a session ([`SESSIONS.md`](SESSIONS.md)). On Hopper, `run_chunks.sh`
+takes the IDs on the last job.
 
+- **Server IDs:** `<uuid>.ids.json` from `server-ids`. An episode without it is refused and listed as
+  failed. `--no-server-ids` is for what has no server behind it, such as the laptop's dev reads and old
+  sessions' logs: add it to the `read_run.py` lines above (`NO_SERVER_IDS=1` for `read_run.sh`). A
+  missing file then passes: `proj`'s `ids_check` says `source: lengths`, `logit`'s says `source: none`,
+  both say `no_server_ids: true`, and `read.json` holds the flag. IDs that exist are checked either way.
+  `simtest interp report` counts these episodes. They are never evidence.
 - **`proj`:** one forward pass per episode. `<uuid>.npz` and `<uuid>.summary.json`: projections onto
   every vector in the file, per token, at the chosen layers; the prompt-end reading and the turn
   curve of every vector, the eval-awareness vector and its training twin among them; SAE top-k
   latents when asked. Never raw activations. The summary's `by_turn` has `prompt_end`,
   `prompt_end_centred`, `agent`, `agent_centred` and `tool_output`.
-- **`logit`:** the logit monitor, `<uuid>.logit.json`.
+- **`logit`:** the logit monitor, `<uuid>.logit.json`, with its `ids_check`.
 - **Ties:** every output names its episode (uuid and the sha256 of the export), the vector file's
   sha256, the phrases' sha256 and the backend. `read.json` holds the run's settings; other settings
   are refused in the same directory.

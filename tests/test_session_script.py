@@ -524,8 +524,9 @@ def episodes(logs):
     return d
 
 
-def read_run(tmp_path, env=None, *, with_episodes=True, vectors=True, **kw):
-    """A read session, with the inputs it needs laid out first."""
+def read_run(tmp_path, env=None, *, with_episodes=True, vectors=True, exported=0, with_ids=0, **kw):
+    """A read session, with the inputs it needs laid out first. `exported`: episodes in the manifest
+    (and one that wasn't exported), `with_ids` of them with the server's IDs."""
     full = {**READ_ENV, **(env or {})}
     if vectors:
         (tmp_path / "v.safetensors").write_text("vectors")
@@ -535,7 +536,12 @@ def read_run(tmp_path, env=None, *, with_episodes=True, vectors=True, **kw):
         (state / "vm" / "read" / "readings").mkdir(parents=True, exist_ok=True)
         (state / "vm" / "read" / "readings" / "a.npz").write_text("reading")
         if with_episodes:
-            episodes(tmp_path / "logs")
+            d = episodes(tmp_path / "logs")
+            if exported:
+                rows = [{"status": "exported", "uuid": f"u{i}"} for i in range(exported)] + [{"status": "not_read", "uuid": "x"}]
+                (d / "manifest.json").write_text(json.dumps({"episodes": rows}, indent=1, sort_keys=True))
+            for i in range(with_ids):
+                (d / f"u{i}.ids.json").write_text("{}")
 
     return run(tmp_path, full, before=before, **kw)
 
@@ -609,6 +615,35 @@ def test_read_refuses_to_start_a_vm_without_its_inputs(tmp_path):
     assert proc.returncode == 1 and "need sentences" in proc.stderr
     proc, calls, *_ = read_run(tmp_path / "d" if (tmp_path / "d").mkdir() is None else None, {"READ_PARTS": "nope"})
     assert proc.returncode == 1 and "unknown read part" in proc.stderr
+
+
+def test_read_says_so_before_any_vm_when_the_servers_ids_are_missing(tmp_path):
+    proc, calls, *_ = read_run(tmp_path, exported=2, with_ids=1)
+    assert proc.returncode == 1 and "1 of 2 exported episodes have no server IDs" in proc.stderr
+    assert "--no-server-ids" not in proc.stderr and "READ_NO_SERVER_IDS=1" in proc.stderr
+    assert not any(" new " in c for c in calls)
+
+
+def test_read_goes_ahead_with_every_id(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, exported=2, with_ids=2)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "NO_SERVER_IDS" not in (state / "read-cmds").read_text()
+
+
+def test_an_ids_step_in_the_same_session_is_enough(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, {"STEPS": "ids read"}, exported=2)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+def test_a_read_without_a_server_says_so_by_name(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, {"READ_NO_SERVER_IDS": "1"}, exported=2)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "NO_SERVER_IDS=1 " in (state / "read-cmds").read_text()
+
+
+def test_parts_that_read_no_ids_dont_need_them(tmp_path):
+    proc, calls, out, state = read_run(tmp_path, {"READ_PARTS": "transfer"}, vectors=False, exported=2)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
 
 
 def test_the_logit_part_sends_its_sentences(tmp_path):

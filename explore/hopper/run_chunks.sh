@@ -17,11 +17,17 @@
 #   5. the gate (lib.zsh): a PASS on this commit, and this job's own lines show the scheme and the
 #      check's GPU. It writes the scheme to logs/<name>/backend.jsonl. Refused: everything stops;
 #   6. uv run --env-file ENV_FILE simtest run CONFIG --epochs <chunk> --admit-for <hours>;
-#   7. closes the tunnel and cancels the job, so the next one (afterany) can start.
+#   7. the last chunk only, if simtest run ended with 0 or 3: the ids step on this job's servers, the
+#      last that will be up: simtest interp export, then simtest interp server-ids. It asks the agent's
+#      server alone for /tokenize (no GPU work), and the episodes are over by then. It covers every
+#      episode of the run so far, and keeps the IDs it already has, so a resumed run takes only the
+#      new ones;
+#   8. closes the tunnel and cancels the job, so the next one (afterany) can start.
 #
 # --admit-for: the plan's hours for the chunk, cut by however much later than planned the servers
 # came up and the setup check took. The plan keeps TIME_LIMIT - SETUP_HOURS - <plan's hours> for the
-# longest episode; this keeps the same room before the job's real end. A job killed at its time limit interrupts the
+# longest episode; this keeps the same room before the job's real end, and on the last chunk IDS_MIN
+# minutes more, since the ids step runs after the last episode. A job killed at its time limit interrupts the
 # episodes still running, and interrupted long episodes come back as re-runs that favour short ones,
 # so the room is never given up: a chunk without it is skipped (and re-submitted later).
 #
@@ -32,12 +38,18 @@
 # (incomplete, resumable) is reported, and the next chunk runs. On any exit, every job of the file is
 # cancelled (scancel; harmless for jobs that ended) unless KEEP=1, so no job holds GPUs for nobody.
 #
+# A failed ids step changes no episode: the last line says so, and the exit is 1. If the last chunk
+# never reached it (skipped, or a run error), there are no servers left, and the last line says that
+# too. That chunk is submitted again anyway, and its job takes the IDs of the whole run. Without them
+# the reader refuses the episodes (docs/INTERP.md, "Reading a run").
+#
 # Settings: ENV_FILE (../.env), CARRY_UNDER, POLL (seconds between job polls, 60), READY_MIN (15),
 # SERVE_MIN (90), EQUIV_CONTEXTS (logs/equiv/contexts.jsonl), BAKEOFF (logs/bakeoff), SETUP_DIR
-# (logs/setup/<name>-hopper-<commit>), SPEED_OK, OUTDIR, KEEP, DRY_RUN.
+# (logs/setup/<name>-hopper-<commit>), SPEED_OK, READ_DIR (logs/read/<name>), IDS_MIN (5), OUTDIR, KEEP,
+# DRY_RUN.
 #
-# Exit: 0 when every chunk is complete, 3 when one is incomplete or skipped and nothing failed, 1
-# otherwise.
+# Exit: 0 when every chunk is complete and the IDs are saved, 3 when one is incomplete or skipped and
+# nothing failed, 1 otherwise.
 set -u
 cd ${0:A:h:h:h} || exit 1
 source explore/colab_probe/lib.zsh
@@ -68,6 +80,7 @@ TIME_LIMIT=${H[time_limit]:-} SETUP_HOURS=${H[setup_hours]:-} COMMIT=${H[commit]
 name=$(config_name $CONFIG 2>/dev/null)
 OUTDIR=${OUTDIR:-$LOGS/sessions/${name:-hopper}-hopper-$(date -u +%Y%m%d-%H%M%S)}
 SETUP_DIR=${SETUP_DIR:-$(setup_dir ${name:-hopper} hopper "$COMMIT")}
+READ_DIR=${READ_DIR:-$LOGS/read/$name}
 node_user=""
 [[ $LOGIN != *@* ]] || node_user=${LOGIN%%@*}@
 ids=(${rows%% *})
@@ -97,6 +110,7 @@ if (( ${#problems} )); then
 fi
 
 results=()
+ids_step_ran=""
 note() {
   [[ $DRY != 1 ]] || set -- "(dry run) $*"
   results+=("$*")
@@ -112,6 +126,7 @@ finish() {
   close_tunnel
   if [[ ${KEEP:-} == 1 ]]; then say "KEEP=1: the jobs stay queued or running: ${ids}"
   else cancel $ids; fi
+  [[ -n $ids_step_ran ]] || note "ids: NOT RUN (no job reached the end of the last chunk): the reader refuses episodes without IDs, and the job that runs the chunks left takes them"
   say "run_chunks over (exit $rc): ${(j:; :)results:-nothing ran}"
   exit $rc
 }
@@ -164,6 +179,18 @@ wait_job() {
   done
 }
 
+# ids_step: the reader's episodes and the agent server's IDs, while the last job's servers are up.
+ids_step() {
+  ids_step_ran=1
+  if x uv run simtest interp export $LOGS/$name --out $READ_DIR/episodes \
+      && x uv run simtest interp server-ids $READ_DIR/episodes --url http://localhost:18000; then
+    note "ids: exported, and the server's token IDs saved ($READ_DIR/episodes)"
+  else
+    note "ids: FAILED on job $id (see above; no episode changed): the reader refuses episodes without IDs, so run the last chunk again"
+    final=1
+  fi
+}
+
 final=0
 k=0
 setup_done=0
@@ -205,6 +232,7 @@ for row in $rows; do
   # The admission window, against the job's real end (the dry run assumes the plan's timing).
   reserve=$(( TIME_LIMIT - SETUP_HOURS - plan_admit ))
   (( reserve > 0 )) || say "warning: the plan keeps no time for the longest episode ($reserve h)"
+  (( k < ${#rows} )) || reserve=$(( reserve + ${IDS_MIN:-5} / 60.0 ))   # the ids step, after the last episode
   if [[ -n $END ]]; then
     left=$(( (END - EPOCHSECONDS) / 3600.0 ))
     eff=$(( floor(100 * (left - reserve < plan_admit ? left - reserve : plan_admit)) / 100.0 ))
@@ -223,6 +251,7 @@ for row in $rows; do
   [[ -z ${CARRY_UNDER:-} ]] || args+=(--carry-under $CARRY_UNDER)
   x $args
   rc=$?
+  if (( k == ${#rows} && (rc == 0 || rc == 3) )); then ids_step; fi
   close_tunnel
   cancel $id
   case $rc in

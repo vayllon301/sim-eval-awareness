@@ -7,7 +7,7 @@
 # 3 means episodes are left, and submitting again resumes.
 #
 # Required (sbatch --export): WORK. Optional: read_run.sh's settings (PARTS, PROJ_ENGINE, LAYERS,
-# SAE_LAYERS, TRANSFER_LAYERS, CHUNK_MIN). The time limit is a parameter of sbatch, not set here:
+# SAE_LAYERS, TRANSFER_LAYERS, CHUNK_MIN, NO_SERVER_IDS). The time limit is a parameter of sbatch, not set here:
 # CHUNK_MIN must end before it, since a job killed mid-episode loses that episode.
 #SBATCH --job-name=sim-read
 #SBATCH --nodes=1

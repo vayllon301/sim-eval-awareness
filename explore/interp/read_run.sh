@@ -31,7 +31,8 @@
 # resume), OUT ($IN/readings), VENV ($WORK/interp-venv), MODELS ($WORK/models), PARTS, PROJ_ENGINE,
 # VECTORS ($IN/vectors.safetensors, else $WORK/interp-smoke/agent/vectors.safetensors), LAYERS (the
 # vector file's chosen layer), PHRASES ($IN/phrases.json), SAE_REPO, SAE_LAYERS (none),
-# TRANSFER_LAYERS (32,42,48), TRANSFER_PER_CONDITION (2), CHUNK_MIN (20).
+# TRANSFER_LAYERS (32,42,48), TRANSFER_PER_CONDITION (2), CHUNK_MIN (20), NO_SERVER_IDS (1: proj and
+# logit read episodes that have no server IDs, and each reading says so; docs/INTERP.md).
 # Exit: 0 when every part is complete, 3 when some are left (run it again), 1 on an error.
 set -uo pipefail
 VLLM_VERSION=${VLLM_VERSION:-0.32.0}
@@ -87,7 +88,9 @@ rc=0
 note() {   # an exit code of read_run.py: 3 (some left) must not hide an error
   case $1 in 0) ;; 3) [ "$rc" = 1 ] || rc=3 ;; *) rc=1 ;; esac
 }
-reader() { "$PY" -I "$CODE/explore/interp/read_run.py" "$MODELS/agent" --episodes "$IN/episodes" "$@"; }
+no_ids=()
+[ "${NO_SERVER_IDS:-}" != 1 ] || no_ids=(--no-server-ids)
+reader() { "$PY" -I "$CODE/explore/interp/read_run.py" "$MODELS/agent" --episodes "$IN/episodes" ${no_ids[@]+"${no_ids[@]}"} "$@"; }
 for p in $PARTS; do
   stamp "$p start"
   case $p in

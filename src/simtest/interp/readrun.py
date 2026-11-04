@@ -22,7 +22,11 @@ The token IDs. The pass uses the rendering of `reader.render`, checked against w
 - `<uuid>.ids.json`, from `server_ids`: the IDs of the server's own renderer for the episode's last
   request (vLLM's /tokenize, the same renderer as chat completions, so no GPU work and no change to
   any episode). Every earlier prompt is a prefix of that one. Different IDs refuse the episode.
-- Without it, the check is lengths only: each turn's rendered prompt against the server's count.
+- Without it, the episode is refused: the argument that the pilot needs no `return_token_ids` rests on
+  this check. `no_server_ids` (`--no-server-ids`) is for what has no server behind it, such as the
+  laptop's dev reads and old sessions' logs: a missing file then passes, and each reading says so, in
+  `read.json` and in its `ids_check`. `proj` then has lengths only, each turn's rendered prompt against
+  the server's count, and `logit` has no check. IDs that exist are checked either way.
 """
 
 from __future__ import annotations
@@ -104,9 +108,14 @@ def _rows(episodes_dir: Path) -> list[dict]:
     return sorted(rows, key=lambda r: (-(r.get("tokens") or 0), r["uuid"]))
 
 
-def _server_ids(episodes_dir: Path, uuid: str) -> list[int] | None:
+def _server_ids(episodes_dir: Path, uuid: str, no_server_ids: bool) -> list[int] | None:
     p = episodes_dir / f"{uuid}.ids.json"
-    return json.loads(p.read_text())["ids"] if p.exists() else None
+    if p.exists():
+        return json.loads(p.read_text())["ids"]
+    if no_server_ids:
+        return None
+    raise ReadError(f"no server IDs for this episode ({p.name}): run `simtest interp server-ids` while the agent's server "
+                    "is up, or read it with --no-server-ids, which each reading records")
 
 
 def _check_ids(ids, server: list[int] | None) -> dict | None:
@@ -133,14 +142,14 @@ def _write_json(path: Path, obj: Any, **kw) -> None:
 
 
 def _read_proj(backend, ep, row: dict, episodes_dir: Path, out_dir: Path, vectors, layers, names, saes, vectors_path,
-               allow_other_model) -> int:
-    server = _check_ids(render(ep, backend.tokenizer).ids, _server_ids(episodes_dir, row["uuid"]))
+               allow_other_model, no_server_ids) -> int:
+    server = _check_ids(render(ep, backend.tokenizer).ids, _server_ids(episodes_dir, row["uuid"], no_server_ids))
     r = read(backend, ep, vectors, layers, names=names, saes=saes, vectors_path=str(vectors_path) if vectors_path else None,
              allow_other_model=allow_other_model)
     bad = _mismatches(r.meta["prompt_checks"])
     r.meta["episode_sha256"] = row["sha256"]
     r.meta["ids_check"] = server or {"source": "lengths", "n": len(r.meta["prompt_checks"]), "equal": not bad,
-                                     "first_difference": bad[0] if bad else None}
+                                     "first_difference": bad[0] if bad else None, "no_server_ids": True}
     r.meta["prompt_mismatches"] = bad
     r.meta["completion_checks"] = completion_checks(r.token_ids, r.prompt_end, ep.meta.get("completion_tokens"),
                                                     backend.eos_token_ids)
@@ -151,15 +160,16 @@ def _read_proj(backend, ep, row: dict, episodes_dir: Path, out_dir: Path, vector
     return len(r.token_ids)
 
 
-def _read_logit(backend, ep, row: dict, episodes_dir: Path, out_dir: Path, phrases, phrases_path, phrase_turns) -> int:
+def _read_logit(backend, ep, row: dict, episodes_dir: Path, out_dir: Path, phrases, phrases_path, phrase_turns,
+                no_server_ids) -> int:
     from .monitors import logit_monitor
 
     rd = render(ep, backend.tokenizer)
-    _check_ids(rd.ids, _server_ids(episodes_dir, row["uuid"]))
+    server = _check_ids(rd.ids, _server_ids(episodes_dir, row["uuid"], no_server_ids))
     mon = logit_monitor(backend, rd.ids, rd.role, rd.turn, phrases["groups"], turns=phrase_turns)
     _write_json(out_dir / f"{row['uuid']}.logit.json",
                 {"episode": ep.meta, "episode_sha256": row["sha256"], "backend": backend.info, "created": now(),
-                 "git_commit": git_commit(), "logit_monitor": {
+                 "git_commit": git_commit(), "ids_check": server or {"source": "none", "no_server_ids": True}, "logit_monitor": {
                      "phrases_path": str(phrases_path) if phrases_path else None, "status": phrases.get("status"),
                      "phrases_sha256": _sha(phrases_path), **mon}}, sort_keys=True)
     return len(rd.ids)
@@ -169,9 +179,12 @@ def _sha(path) -> str | None:
     return file_sha256(path) if path and Path(path).exists() else None
 
 
-def _settings(backend, parts, vectors, vectors_path, layers, names, saes, phrases, phrases_path, phrase_turns) -> dict:
+def _settings(backend, parts, vectors, vectors_path, layers, names, saes, phrases, phrases_path, phrase_turns,
+              no_server_ids) -> dict:
     out: dict[str, Any] = {"parts": sorted(parts), "fingerprint": backend.info.get("fingerprint"),
                            "engine": backend.info.get("engine")}
+    if no_server_ids:   # only then, so a directory from before the flag still resumes
+        out["no_server_ids"] = True
     if "proj" in parts:
         out.update(vectors_sha256=_sha(vectors_path), layers=sorted(int(L) for L in layers),
                    names=sorted(names or vectors.names),
@@ -189,7 +202,8 @@ def read_run(backend, episodes_dir: str | Path, out_dir: str | Path, *, parts: S
              vectors_path: str | Path | None = None, layers: Sequence[int] = (), names: Sequence[str] | None = None,
              saes: Mapping[int, Any] | None = None, phrases: dict | None = None, phrases_path: str | Path | None = None,
              phrase_turns: Sequence[int] | None = None, allow_other_model: bool = False, budget_s: float | None = None,
-             limit: int | None = None, require_scan: bool = False, clock: Callable[[], float] = time.monotonic) -> dict:
+             limit: int | None = None, require_scan: bool = False, no_server_ids: bool = False,
+             clock: Callable[[], float] = time.monotonic) -> dict:
     """Module docstring. Returns the status, also in `out_dir/status.json`."""
     from .monitors import scan_path
 
@@ -205,7 +219,8 @@ def read_run(backend, episodes_dir: str | Path, out_dir: str | Path, *, parts: S
             raise ReadError(f"this backend has no continuation_scan (it would use {scan_path(backend)}): one pass over the "
                             "prefix per turn and phrase. Use the HF backend for the logit part, or allow it explicitly")
     rows = _rows(episodes_dir)
-    settings = _settings(backend, parts, vectors, vectors_path, layers, names, saes, phrases, phrases_path, phrase_turns)
+    settings = _settings(backend, parts, vectors, vectors_path, layers, names, saes, phrases, phrases_path, phrase_turns,
+                         no_server_ids)
     out_dir.mkdir(parents=True, exist_ok=True)
     state = out_dir / "read.json"
     if state.exists() and json.loads(state.read_text()) != settings:
@@ -232,9 +247,9 @@ def read_run(backend, episodes_dir: str | Path, out_dir: str | Path, *, parts: S
             ep = load_episode(episodes_dir / f"{row['uuid']}.json")
             if part == "proj":
                 n = _read_proj(backend, ep, row, episodes_dir, out_dir, vectors, list(layers), names, saes, vectors_path,
-                               allow_other_model)
+                               allow_other_model, no_server_ids)
             else:
-                n = _read_logit(backend, ep, row, episodes_dir, out_dir, phrases, phrases_path, phrase_turns)
+                n = _read_logit(backend, ep, row, episodes_dir, out_dir, phrases, phrases_path, phrase_turns, no_server_ids)
         except Exception as exc:
             failed.append({"uuid": row["uuid"], "part": part, "error": f"{type(exc).__name__}: {exc}"[:500]})
             in_a_row += 1

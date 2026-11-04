@@ -30,7 +30,8 @@
 #                  without episodes, such as a retry with other AGENT_MEM and SIM_MEM.
 #        ids       simtest interp export, then simtest interp server-ids: the run's episodes for the
 #                  reader, and the token IDs of the agent server's own renderer for each one. Needs
-#                  the servers up, no GPU time (vLLM's /tokenize), and changes no episode.
+#                  the servers up, no GPU time (vLLM's /tokenize), and changes no episode. The reader
+#                  refuses an episode without them, so a read without them stops before any VM.
 #        readings  explore/interp/gpu_smoke.sh: the steering smoke test, which builds the vector files
 #                  on these weights (about 50 GPU minutes), so it runs only when STEPS names it. It
 #                  needs the GPU alone, so the servers are stopped first. The code goes over at HEAD
@@ -41,7 +42,8 @@
 #                  (default proj). It runs in chunks of READ_CHUNK_MIN minutes, and each chunk's
 #                  readings come back to READ_DIR at once, so a VM lost mid-run loses one chunk. A
 #                  second session resumes: the readings go over first. Stops when a chunk finishes
-#                  nothing more.
+#                  nothing more. READ_NO_SERVER_IDS=1 reads episodes with no server IDs, and each
+#                  reading says so: for logs whose servers are gone, never for evidence.
 #   5. Always stops the VM at the end, also on an error or Ctrl-C, unless KEEP=1 (the watchdog
 #      still guards a kept VM). The VM's logs ($WORK/probe: serve.sh's logs, timings, versions)
 #      and the smoke test's outputs come back to OUTDIR first. Inspect's logs are on the laptop already.
@@ -62,7 +64,8 @@
 # (logs/bakeoff), SETUP_DIR (logs/setup/<name>-<GPU>-<commit>), SPEED_OK, READINGS_STEPS,
 # READINGS_BUDGET_MIN, OUTDIR (logs/sessions/<name>-<UTC time>), KEEP, DRY_RUN; for read: READ_DIR
 # (logs/read/<name>), READ_PARTS (proj), READ_VECTORS (default: the one the readings step builds),
-# READ_PHRASES, READ_LAYERS, READ_SAE_LAYERS, READ_ENGINE (vllm), READ_CHUNK_MIN (20). Deadlines in
+# READ_PHRASES, READ_LAYERS, READ_SAE_LAYERS, READ_ENGINE (vllm), READ_CHUNK_MIN (20),
+# READ_NO_SERVER_IDS. Deadlines in
 # minutes: NEW_MIN (20), SERVE_MIN (45), READY_MIN (5), READINGS_MIN (100), READ_MIN (40, a chunk).
 #
 # Exit: 0 when every step passed, 3 when the run is incomplete and nothing failed, 1 otherwise.
@@ -133,6 +136,7 @@ if want read; then
   if ! want ids && [[ ! -f $READ_DIR/episodes/manifest.json ]]; then
     problems+=("no episodes at $READ_DIR/episodes: run 'uv run simtest interp export' or add the ids step")
   fi
+  want ids || [[ ${READ_NO_SERVER_IDS:-} == 1 ]] || problems+=(${(f)"$(ids_problems $READ_DIR/episodes $READ_PARTS READ_NO_SERVER_IDS)"})
   for p in ${=READ_PARTS}; do
     case $p in check|proj|logit|transfer) ;; *) problems+=("unknown read part '$p' (READ_PARTS: check proj logit transfer)") ;; esac
   done
@@ -362,6 +366,7 @@ if want read; then
   [[ -z ${READ_ENGINE:-} ]] || r_env+="PROJ_ENGINE=${(qq)READ_ENGINE} "
   [[ -z ${READ_LAYERS:-} ]] || r_env+="LAYERS=${(qq)READ_LAYERS} "
   [[ -z ${READ_SAE_LAYERS:-} ]] || r_env+="SAE_LAYERS=${(qq)READ_SAE_LAYERS} "
+  [[ ${READ_NO_SERVER_IDS:-} != 1 ]] || r_env+="NO_SERVER_IDS=1 "
   if [[ -n ${READ_VECTORS:-} ]]; then
     vm -i $READ_VECTORS -o $OUTDIR/read-in.log -t 300 "cat > $VM_WORK/read/vectors.safetensors" || fail "read: could not copy the vectors"
   fi

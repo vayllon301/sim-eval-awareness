@@ -51,7 +51,8 @@ One VM session does all of a config's GPU work, so the setup is paid once (741 s
      backend is scored on the same contexts.
    - `ids`: `simtest interp export`, then `simtest interp server-ids`: the run's episodes for the
      reader, and the token IDs of the agent server's own renderer for each one. It needs the servers
-     up, no GPU time, and it changes no episode. It takes a minute or two.
+     up, no GPU time, and it changes no episode. It takes a minute or two. The reader refuses an
+     episode without them, so `STEPS=read` with some missing stops before any VM exists.
    - `readings`: stops the servers to free the GPU, sends the code at HEAD (a git bundle), and runs
      `explore/interp/gpu_smoke.sh` (INTERP.md, "GPU smoke test"). It builds the vector files and
      takes about 50 GPU minutes.
@@ -117,13 +118,23 @@ refuses `SIM_QUANT=fp8`.
   passes the gate on its own job's lines, runs `simtest run
   --epochs <chunk> --admit-for <hours>`, and cancels the job so the next one starts. When it exits,
   it cancels every job in the file, unless `KEEP=1`.
+- **The token IDs on Hopper.** A job's servers go with the job, so `run_chunks.sh` runs what `ids`
+  runs on Colab on the last job, after the last chunk's episodes and before cancelling it:
+  `simtest interp export`, then `simtest interp server-ids`, which asks only the agent's server, for
+  `/tokenize`. Every episode is over by then, so it shares no batch with any. It covers the whole run
+  so far and keeps the IDs it has, so a resumed run takes the new ones on its own last job. An
+  incomplete last chunk (exit 3) still takes them. A failure there changes no episode: the last line
+  says so and the exit is 1. If the last chunk never got there (skipped, or a run error), no servers
+  are left: the last line says `ids: NOT RUN`, and the exit is already 3 or 1. That chunk is submitted
+  again anyway, and its job takes the IDs of the whole run.
 
 The job's time limit, the login host, the partition and the scratch path are unknown, so they are
 parameters only. A job killed at its time limit cuts the episodes still running, so `--admit-for`
 must leave room for the longest one. The plan keeps `TIME_LIMIT − SETUP_HOURS − admit_for` hours of
 room. `run_chunks.sh` keeps the same room before the job's real end: if the servers come up late,
 or the setup check takes time from the first job, the window shrinks, and a chunk with no room left
-is skipped and submitted again later.
+is skipped and submitted again later. That room is the longest measured episode and nothing else, so
+the last chunk keeps `IDS_MIN` minutes more (5) for the IDs. A job with spare time doesn't lose them.
 
 ## 5. Reading a run on the GPU
 
@@ -156,6 +167,10 @@ LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." V
 - **Order of a session.** `ids` runs while the servers are up. `readings` and `read` share one stop of
   the servers. The sentences don't exist until the judge has read the episodes, so `logit` is a
   second, short session: about 45 minutes with setup. On Hopper it is a second job.
+- **No server IDs.** `proj` and `logit` refuse an episode without them (INTERP.md, "Reading a run").
+  `session.sh` and `submit_read.sh` refuse a read with some missing before any VM or job. For logs
+  whose servers are gone, `READ_NO_SERVER_IDS=1` on `session.sh` or `NO_SERVER_IDS=1` on
+  `submit_read.sh` reads them anyway, and each reading says so. It is never for evidence.
 - **Hopper.** `submit_read.sh` sends the code, the episodes, the readings so far, the vectors and the
   sentences to `WORK`, and submits `read.slurm` (one GPU). The login host must see `WORK`. The time
   limit is a parameter; `CHUNK_MIN` ends 10 minutes before it. The job's exit code is the reader's: 3

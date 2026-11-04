@@ -1,8 +1,12 @@
 """Reading a run: every exported episode once, on any backend; a run stopped half way resumes; a
-reading says which episode and which vector file it came from; the server's own token IDs are checked
-when they exist; a failure is listed, never dropped. On the fake tokenizer and backend."""
+reading says which episode and which vector file it came from; the server's own token IDs are checked,
+and an episode without them is refused unless the run says so; a failure is listed, never dropped. On
+the fake tokenizer and backend."""
 
+import importlib.util
 import json
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -54,10 +58,22 @@ def exported(tmp_path, uuids=("u1", "u2"), **sample_kw):
     return tmp_path / "eps"
 
 
-def run(tmp_path, vectors, parts=("proj",), backend=None, **kw):
+def run(tmp_path, vectors, parts=("proj",), backend=None, no_server_ids=True, **kw):
+    """Fake episodes have no server behind them, as a laptop's dev read: the flag is on unless a test turns it off."""
     vs, path = vectors
     return RR.read_run(backend or FakeBackend(), tmp_path / "eps", tmp_path / "out", parts=parts, vectors=vs,
-                       vectors_path=path, layers=LAYERS, **kw)
+                       vectors_path=path, layers=LAYERS, no_server_ids=no_server_ids, **kw)
+
+
+def give_ids(eps, uuid, change=None):
+    """The server's IDs for an episode, as `simtest interp server-ids` saves them."""
+    from simtest.interp.reader import load_episode, turn_prompts
+
+    ids = turn_prompts(load_episode(eps / f"{uuid}.json"), FakeTokenizer())[-1]
+    if change is not None:
+        ids = ids[:change] + [ids[change] + 1] + ids[change + 1:]
+    (eps / f"{uuid}.ids.json").write_text(json.dumps({"ids": ids, "count": len(ids)}))
+    return ids
 
 
 def test_every_episode_is_read_and_tied_to_its_vector_file(tmp_path, vectors):
@@ -191,31 +207,106 @@ def test_saes_keep_top_k_latents_only(tmp_path, vectors):
 
 def test_the_servers_ids_are_checked_when_they_exist(tmp_path, vectors):
     eps = exported(tmp_path, uuids=("u1",))
-    from simtest.interp.reader import load_episode, turn_prompts
-
-    ep = load_episode(eps / "u1.json")
-    good = turn_prompts(ep, FakeTokenizer())[-1]
-    (eps / "u1.ids.json").write_text(json.dumps({"ids": good, "count": len(good)}))
-    run(tmp_path, vectors)
+    good = give_ids(eps, "u1")
+    run(tmp_path, vectors, no_server_ids=False)
     r = Reading.load(tmp_path / "out" / "u1.npz")
     assert r.meta["ids_check"] == {"source": "server", "n": len(good), "equal": True, "first_difference": None}
 
 
-def test_without_them_the_reading_says_it_checked_lengths_only(tmp_path, vectors):
+@pytest.mark.parametrize("part, kw", [("proj", {}), ("logit", {"phrases": PHRASES, "phrases_path": "p.json"})])
+def test_an_episode_without_the_servers_ids_is_refused_by_default(tmp_path, vectors, part, kw):
+    """The argument that the pilot needs no `return_token_ids` rests on this check, so a missing file
+    can't pass in silence: the episode is listed as failed and nothing is written for it."""
+    eps = exported(tmp_path, uuids=("u1", "u2"))
+    give_ids(eps, "u1")
+    st = run(tmp_path, vectors, parts=(part,), no_server_ids=False, **kw)
+    assert st["done"] == {part: 1} and st["complete"] is False
+    assert [f["uuid"] for f in st["failed"]] == ["u2"]
+    assert "no server IDs" in st["failed"][0]["error"] and "--no-server-ids" in st["failed"][0]["error"]
+    assert not list((tmp_path / "out").glob("u2*"))
+
+
+def test_with_the_flag_a_reading_says_it_checked_lengths_only(tmp_path, vectors):
     exported(tmp_path, uuids=("u1",))
     run(tmp_path, vectors)
     r = Reading.load(tmp_path / "out" / "u1.npz")
     assert r.meta["ids_check"]["source"] == "lengths" and r.meta["ids_check"]["equal"] is True
+    assert r.meta["ids_check"]["no_server_ids"] is True
+    assert json.loads((tmp_path / "out" / "u1.summary.json").read_text())["ids_check"]["no_server_ids"] is True
+    assert json.loads((tmp_path / "out" / "read.json").read_text())["no_server_ids"] is True
+
+
+def test_with_the_flag_a_logit_reading_says_nothing_was_checked(tmp_path, vectors):
+    exported(tmp_path, uuids=("u1",))
+    run(tmp_path, vectors, parts=("logit",), phrases=PHRASES, phrases_path="p.json")
+    d = json.loads((tmp_path / "out" / "u1.logit.json").read_text())
+    assert d["ids_check"] == {"source": "none", "no_server_ids": True}
+
+
+def test_a_logit_reading_records_the_check_against_the_server(tmp_path, vectors):
+    eps = exported(tmp_path, uuids=("u1",))
+    good = give_ids(eps, "u1")
+    run(tmp_path, vectors, parts=("logit",), phrases=PHRASES, phrases_path="p.json", no_server_ids=False)
+    d = json.loads((tmp_path / "out" / "u1.logit.json").read_text())
+    assert d["ids_check"] == {"source": "server", "n": len(good), "equal": True, "first_difference": None}
+
+
+def test_the_flag_only_allows_a_missing_file(tmp_path, vectors):
+    """IDs that exist are checked with it too: it never skips a check that can run."""
+    eps = exported(tmp_path, uuids=("u1", "u2"))
+    good = give_ids(eps, "u1")
+    give_ids(eps, "u2", change=5)
+    st = run(tmp_path, vectors)
+    assert st["done"] == {"proj": 1} and "first differ at token 5" in st["failed"][0]["error"]
+    r = Reading.load(tmp_path / "out" / "u1.npz")
+    assert r.meta["ids_check"] == {"source": "server", "n": len(good), "equal": True, "first_difference": None}
+
+
+def test_a_directory_read_with_the_flag_is_not_resumed_without_it(tmp_path, vectors):
+    exported(tmp_path)
+    run(tmp_path, vectors, limit=1)
+    with pytest.raises(RR.ReadError, match="other settings"):
+        run(tmp_path, vectors, no_server_ids=False)
+
+
+def test_a_directory_from_before_the_flag_resumes_as_it_was(tmp_path, vectors):
+    """Only a run that uses the flag has it in read.json, so older settings stay equal."""
+    eps = exported(tmp_path)
+    give_ids(eps, "u1"), give_ids(eps, "u2")
+    run(tmp_path, vectors, no_server_ids=False, limit=1)
+    assert "no_server_ids" not in json.loads((tmp_path / "out" / "read.json").read_text())
+    assert run(tmp_path, vectors, no_server_ids=False)["complete"] is True
+
+
+def read_cli(monkeypatch, tmp_path, vectors, *extra):
+    """explore/interp/read_run.py as the GPU venv runs it, on the fake backend."""
+    spec = importlib.util.spec_from_file_location("read_run_cli", Path(__file__).parents[1] / "explore" / "interp" / "read_run.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    monkeypatch.setattr(RR, "make_backend", lambda *a, **k: FakeBackend())
+    monkeypatch.setattr(sys, "argv", ["read_run.py", "model", "--engine", "hf", "--episodes", str(tmp_path / "eps"),
+                                      "--out", str(tmp_path / "out"), "--vectors", str(vectors[1]), "--layers", "2,4", *extra])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    return e.value.code
+
+
+def test_the_reader_command_refuses_without_ids_unless_it_is_told(monkeypatch, tmp_path, vectors):
+    exported(tmp_path, uuids=("u1",))
+    assert read_cli(monkeypatch, tmp_path, vectors) == 1
+    assert not (tmp_path / "out" / "u1.npz").exists()
+
+
+def test_the_reader_commands_flag_reaches_the_reading(monkeypatch, tmp_path, vectors):
+    exported(tmp_path, uuids=("u1",))
+    assert read_cli(monkeypatch, tmp_path, vectors, "--no-server-ids") == 0
+    assert Reading.load(tmp_path / "out" / "u1.npz").meta["ids_check"]["no_server_ids"] is True
 
 
 def test_ids_that_differ_from_the_servers_are_refused(tmp_path, vectors):
     eps = exported(tmp_path, uuids=("u1",))
-    from simtest.interp.reader import load_episode, turn_prompts
-
-    good = turn_prompts(load_episode(eps / "u1.json"), FakeTokenizer())[-1]
-    bad = good[:5] + [good[5] + 1] + good[6:]
-    (eps / "u1.ids.json").write_text(json.dumps({"ids": bad, "count": len(bad)}))
-    st = run(tmp_path, vectors)
+    give_ids(eps, "u1", change=5)
+    st = run(tmp_path, vectors, no_server_ids=False)
     assert st["done"] == {"proj": 0} and "first differ at token 5" in st["failed"][0]["error"]
 
 

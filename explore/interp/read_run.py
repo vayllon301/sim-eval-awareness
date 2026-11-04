@@ -7,8 +7,10 @@ so no `simtest` command. `simtest interp export` makes the episodes on the lapto
     python -I explore/interp/read_run.py MODEL_DIR --engine hf --episodes EPISODES --out OUT \\
         --parts logit --phrases explore/interp/data/logit_monitor_phrases.json
 
---layers defaults to the vector file's chosen layer. Exit: 0 when every episode is read, 3 when some
-are left (run it again: it resumes), 1 after an error or a failed episode.
+--layers defaults to the vector file's chosen layer. An episode without the server's token IDs (`simtest
+interp server-ids`) is refused unless --no-server-ids is given, which each reading records: for reads
+with no server behind them, such as the laptop's. Exit: 0 when every episode is read, 3 when some are
+left (run it again: it resumes), 1 after an error or a failed episode.
 """
 import argparse, json, sys, time
 from pathlib import Path
@@ -32,6 +34,7 @@ def main():
     ap.add_argument("--phrases"), ap.add_argument("--logit-turns", help="comma-separated (default: every turn)")
     ap.add_argument("--allow-slow-logit", action="store_true", help="let the logit part run without continuation_scan")
     ap.add_argument("--allow-other-model", action="store_true", help="vectors from other weights: a transfer test only")
+    ap.add_argument("--no-server-ids", action="store_true", help="read episodes that have no server IDs: each reading says so")
     ap.add_argument("--budget-min", type=float), ap.add_argument("--limit", type=int)
     a = ap.parse_args()
     parts = a.parts.split(",")
@@ -50,7 +53,7 @@ def main():
                       names=a.names.split(",") if a.names else None, saes=saes, phrases=phrases, phrases_path=a.phrases,
                       phrase_turns=[int(x) for x in a.logit_turns.split(",")] if a.logit_turns else None,
                       allow_other_model=a.allow_other_model, budget_s=a.budget_min * 60 if a.budget_min else None,
-                      limit=a.limit, require_scan=not a.allow_slow_logit)
+                      limit=a.limit, require_scan=not a.allow_slow_logit, no_server_ids=a.no_server_ids)
     except ReadError as exc:
         sys.exit(str(exc))
     print(json.dumps(st, indent=1, sort_keys=True))

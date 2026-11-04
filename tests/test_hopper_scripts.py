@@ -171,6 +171,8 @@ UV = REC + """case "$*" in
     n=$(grep -c 'simtest run ' "$STATE/calls.log"); rc=$(sed -n "${n}p" "$STATE/run-rcs" 2>/dev/null)
     exit "${rc:-0}" ;;
   *"simtest equiv score "*) exit 0 ;;
+  *"simtest interp export "*) exit "${EXPORT_RC:-0}" ;;
+  *"simtest interp server-ids "*) exit "${IDS_RC:-0}" ;;
   *) echo "unexpected uv call: $*" >&2; exit 99 ;;
 esac
 """
@@ -401,10 +403,24 @@ def test_a_late_start_shortens_the_admission_window(tmp_path):
     # 6 h left when its servers are ready: admit at most 4 h
     def jobs(state):
         job(state, "1001", ["RUNNING"], [ready("gpu07", 6)])
-    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], jobs)
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], jobs, env={"IDS_MIN": "0"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     a = admit(runs(calls_of(state))[0])
     assert 3.95 <= a <= 4.0
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_only_the_last_chunk_keeps_the_ids_steps_minutes(tmp_path):
+    """The plan keeps the longest episode's time and nothing else, so an episode admitted at the end of
+    the window could end with the job. The ids step runs after it: its 5 minutes come off the window."""
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 6)])
+        job(state, "1002", ["RUNNING"], [ready("gpu11", 6)])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5"), ("1002", "2-2", "9.5")], jobs)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    first, last = (admit(c) for c in runs(calls_of(state)))
+    assert 3.95 <= first <= 4.0
+    assert 3.87 <= last <= 3.92
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
@@ -456,6 +472,92 @@ def test_a_run_error_stops_and_cancels_every_remaining_job(tmp_path):
     assert "1002" in cancelled and "1003" in cancelled
 
 
+# --- the server's token IDs, on the last job's servers (docs/INTERP.md, "Inspect episodes") ---------
+
+def two_jobs(state):
+    job(state, "1001", ["RUNNING"], [ready("gpu07", 20)])
+    job(state, "1002", ["RUNNING"], [ready("gpu11", 20)])
+
+
+TWO = [("1001", "1-1", "9.5"), ("1002", "2-2", "9.5")]
+
+
+def over(proc) -> str:
+    return next(x for x in proc.stdout.splitlines() if "run_chunks over" in x)
+
+
+def at(calls, needle) -> list[int]:
+    return [i for i, c in enumerate(calls) if needle in c]
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_the_last_job_gives_the_token_ids_after_its_episodes_and_before_it_goes(tmp_path):
+    proc, state = run_chunks(tmp_path, TWO, two_jobs)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    calls = calls_of(state)
+    export, ids = at(calls, "simtest interp export"), at(calls, "simtest interp server-ids")
+    assert len(export) == len(ids) == 1                                  # once, for the whole run
+    last_run = at(calls, "simtest run ")[-1]
+    assert last_run < export[0] < ids[0] < at(calls, "scancel 1002")[0]
+    assert at(calls, "scancel 1001")[0] < last_run
+    assert f"{tmp_path}/logs/n2-pilot --out {tmp_path}/logs/read/n2-pilot/episodes" in calls[export[0]]
+    assert f"{tmp_path}/logs/read/n2-pilot/episodes --url http://localhost:18000" in calls[ids[0]]   # the agent's server
+    assert not any("18001" in c for c in (calls[export[0]], calls[ids[0]]))
+    assert "ids: " in over(proc) and "FAILED" not in over(proc)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_an_incomplete_last_chunk_still_gives_the_ids_of_what_ran(tmp_path):
+    proc, state = run_chunks(tmp_path, TWO, two_jobs, run_rcs=(0, 3))
+    assert proc.returncode == 3, proc.stderr + proc.stdout
+    assert len(at(calls_of(state), "simtest interp server-ids")) == 1
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+@pytest.mark.parametrize("env", [{"EXPORT_RC": "1"}, {"IDS_RC": "1"}], ids=["export", "server-ids"])
+@pytest.mark.parametrize("rcs", [(0, 0), (0, 3)], ids=["complete", "incomplete"])
+def test_a_failed_ids_step_is_reported_at_the_end_and_exits_1(tmp_path, env, rcs):
+    proc, state = run_chunks(tmp_path, TWO, two_jobs, env=env, run_rcs=rcs)
+    assert proc.returncode == 1, proc.stderr + proc.stdout
+    calls = calls_of(state)
+    assert "ids: FAILED" in over(proc) and "exit 1" in over(proc)
+    assert len(runs(calls)) == 2                                         # the episodes aren't touched
+    assert "2-2: " in over(proc)
+    assert at(calls, "scancel 1002")
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_last_job_that_never_came_up_is_said_at_the_end(tmp_path):
+    """Its chunk has to be submitted again, and that job takes the IDs of the whole run."""
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 20)])
+        job(state, "1002", ["RUNNING", ""], ["node=gpu11;state=failed;start=1;end=2"])
+    proc, state = run_chunks(tmp_path, TWO, jobs)
+    assert proc.returncode == 3, proc.stderr + proc.stdout
+    assert not at(calls_of(state), "simtest interp")
+    assert "ids: NOT RUN" in over(proc)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_run_error_takes_no_ids_and_says_so(tmp_path):
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], lambda s: job(s, "1001", ["RUNNING"], [ready("gpu07", 20)]),
+                             run_rcs=(1,))
+    assert proc.returncode == 1
+    assert not at(calls_of(state), "simtest interp")
+    assert "ids: NOT RUN" in over(proc)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_resumed_run_takes_the_ids_on_its_own_last_job(tmp_path):
+    """A second run_chunks.sh on a new jobs file: the same two commands, for the whole run by then.
+    server_ids keeps the IDs it has (test_interp_readrun.py)."""
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 20)])
+    proc, state = run_chunks(tmp_path, [("1001", "2-2", "9.5")], jobs)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert len(at(calls_of(state), "simtest interp server-ids")) == 1
+
+
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
 def test_run_chunks_refuses_another_commit(tmp_path):
     proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], lambda s: None,
@@ -477,6 +579,8 @@ def test_run_chunks_dry_run_touches_nothing(tmp_path):
     assert out.count("sim_quant.py gate ") == 2           # each chunk's own servers
     assert out.index("simtest equiv score") < out.index("sim_quant.py check ") < out.index("simtest run ")
     assert "scancel 1001" in out and "tunnel.sh" in out
+    assert out.count("simtest interp export") == out.count("simtest interp server-ids") == 1
+    assert out.rindex("simtest run ") < out.index("simtest interp export") < out.rindex("scancel 1002")
 
 
 def test_the_scripts_are_executable():
