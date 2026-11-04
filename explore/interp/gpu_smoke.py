@@ -54,7 +54,8 @@ DATA = Path(__file__).resolve().parent / "data"
 PRESETS = {"agent": {"texts": DATA / "texts-qwen3.8-27b.jsonl", "layers": [30, 33, 36, 39, 42, 45, 48], "steer": [39, 42, 45],
                      "read": 48, "quantization": None, "engine": {}},
            "simulator": {"texts": DATA / "texts-qwen3.5-35b-a3b.jsonl", "layers": [22, 24, 27, 30, 32], "steer": [24, 27, 30],
-                         "read": 32, "quantization": "fp8", "engine": {"trust_remote_code": True}}}
+                         "read": 32, "quantization": "fp8_per_channel",
+                         "engine": {"trust_remote_code": True, "moe_backend": "triton"}}}
 # vllm serve's settings in serve.sh on a 96 GB card; unset ones keep vLLM's defaults.
 SERVED = {"enforce_eager": False, "enable_prefix_caching": None, "max_model_len": 131072, "max_num_seqs": 64,
           "max_num_batched_tokens": 8192, "gpu_memory_utilization": 0.47, "language_model_only": True}

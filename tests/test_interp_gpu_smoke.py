@@ -82,8 +82,9 @@ def test_the_simulator_runs_with_vllms_fp8_and_has_no_hf_step(smoke, monkeypatch
     model, out = fake_dir(tmp_path / "simulator"), tmp_path / "out"
     run(smoke, monkeypatch, "lens", str(model), "--name", "simulator", "--out-dir", str(out))
     lens = json.loads((out / "simulator" / "lens.json").read_text())
-    assert lens["backend"]["fingerprint"].endswith("+vllm:fp8")
+    assert lens["backend"]["fingerprint"].endswith("+vllm:fp8_per_channel")   # vectors never cross schemes
     assert lens["backend"]["engine_settings"]["trust_remote_code"] is True
+    assert lens["backend"]["engine_settings"]["moe_backend"] == "triton"
     with pytest.raises(SystemExit, match="for the agent"):
         run(smoke, monkeypatch, "hf", str(model), "--name", "simulator", "--out-dir", str(out))
 
@@ -123,3 +124,12 @@ def test_report_marks_missing_checks_incomplete_and_fails(smoke, monkeypatch, tm
     assert set(rep["checks"]["simulator"]) == set(smoke.REQUIRED["simulator"])
     assert all(v is None for v in rep["checks"]["simulator"].values())
     assert rep["incomplete"]["agent"] == ["alpha0", "hf_alpha0", "hf_steer_applied"]
+
+
+def test_the_simulator_runs_the_scheme_and_kernel_serve_sh_serves(smoke):
+    """fp8_per_channel from the pilot on (LOG.md, 02-11-2026), with serve.sh's Triton pin: on an H100
+    vLLM's default MoE kernel for this scheme is another one. The agent is its own FP8 checkpoint."""
+    p = smoke.PRESETS["simulator"]
+    assert p["quantization"] == "fp8_per_channel" and p["engine"]["moe_backend"] == "triton"
+    assert "--quantization fp8_per_channel --moe-backend triton" in (ROOT / "explore" / "colab_probe" / "serve.sh").read_text()
+    assert smoke.PRESETS["agent"]["quantization"] is None and "moe_backend" not in smoke.PRESETS["agent"]["engine"]
