@@ -53,8 +53,28 @@ def test_several_layers_ask_for_one(tmp_path, monkeypatch):
     (tmp_path / "r").mkdir()
     s = summary("u", {"eval_awareness": {0: (1.0, 2.0)}})
     s["by_turn"]["eval_awareness@36"] = s["by_turn"]["eval_awareness@42"]
+    del s["chosen_layer"]
     (tmp_path / "r" / "u.summary.json").write_text(json.dumps(s))
     with pytest.raises(SystemExit, match="give --layer"):
+        C.main(report_args(tmp_path))
+
+
+def test_a_report_takes_the_chosen_layer_by_itself(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(C, "_run", lambda d: ([], DESIGN))
+    (tmp_path / "r").mkdir()
+    s = summary("u", {"eval_awareness": {0: (1.0, 2.0)}})
+    s["by_turn"]["eval_awareness@36"] = s["by_turn"]["eval_awareness@42"]
+    (tmp_path / "r" / "u.summary.json").write_text(json.dumps(s))
+    C.main(report_args(tmp_path))
+    assert "layer 42" in capsys.readouterr().out
+
+
+def test_two_vector_files_stop_the_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(C, "_run", lambda d: ([], DESIGN))
+    (tmp_path / "r").mkdir()
+    (tmp_path / "r" / "u.summary.json").write_text(json.dumps(summary("u", {"eval_awareness": {0: (1.0, 2.0)}})))
+    (tmp_path / "r" / "w.summary.json").write_text(json.dumps(summary("w", {"eval_awareness": {0: (1.0, 2.0)}}, layer=36)))
+    with pytest.raises(SystemExit, match="vector"):
         C.main(report_args(tmp_path))
 
 

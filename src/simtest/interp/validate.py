@@ -84,7 +84,7 @@ TWIN_MARGIN = 0.05   # a twin this close to the candidate means the reading isn'
 PICKED = "DRAFT rule, not frozen: "     # how a phrase file picked on a run starts its status (phrases.py)
 
 
-class PhraseError(ValueError):
+class ReadingsError(ValueError):
     pass
 
 
@@ -237,6 +237,14 @@ def _curves(reading: dict, layer: int | None, *, provenance: dict | None = None,
     return out
 
 
+def chosen_layer(readings: dict) -> int | None:
+    """The vector file's `chosen_layer`, as the readings record it; None if they don't."""
+    seen = {s.get("chosen_layer") for r in readings.values() if (s := r.get("summary"))}
+    if len(seen) > 1:
+        raise ReadingsError(f"these readings come from vector files with different chosen layers: {sorted(seen, key=str)}")
+    return next(iter(seen), None)
+
+
 def reading_layers(readings: dict) -> list[int]:
     return sorted({int(k.rpartition("@")[2]) for r in readings.values() for k in ((r.get("summary") or {}).get("by_turn") or {})})
 
@@ -258,20 +266,20 @@ def load_readings(path: str | Path) -> dict[str, dict]:
 
 def phrase_state(readings: dict, doc: dict | None, sha256: str | None, run: str | None) -> dict:
     """What the logit readings were read with, against the phrase file given (the module docstring).
-    Raises PhraseError when the file isn't theirs."""
+    Raises ReadingsError when the file isn't theirs."""
     logits = [m for r in readings.values() if (m := (r.get("logit") or {}).get("logit_monitor"))]
     seen = sorted({str(m.get("phrases_sha256")) for m in logits})
     base = {"file_sha256": sha256, "readings_sha256": seen, "cross_fitted": False, "provenance": None}
     if not logits:
         return {**base, "state": "no logit readings"}
     if len(seen) > 1:
-        raise PhraseError(f"these readings mix {len(seen)} phrase files: {seen}")
+        raise ReadingsError(f"these readings mix {len(seen)} phrase files: {seen}")
     if doc is None:
         if any(str(m.get("status")).startswith(PICKED) for m in logits):
-            raise PhraseError("these readings use sentences picked on a run: give --phrases with that file")
+            raise ReadingsError("these readings use sentences picked on a run: give --phrases with that file")
         return {**base, "state": "no phrase file"}
     if seen != [sha256]:
-        raise PhraseError(f"the readings used another phrase file: theirs is {seen[0]}, this one is {sha256}")
+        raise ReadingsError(f"the readings used another phrase file: theirs is {seen[0]}, this one is {sha256}")
     provenance = doc.get("provenance") or {}
     if not any(p.get("source") == "pilot" for p in provenance.values()):
         return {**base, "state": "draft sentences"}
@@ -380,18 +388,20 @@ def _disagreements(rows: list[dict], values: dict[str, dict], labels: dict[str, 
     return {"correlations": corr, "with_the_judge": judge}
 
 
-def _turn0_spread(rows: list[dict]) -> dict:
-    """Per vector, the largest difference between readings of one scenario's first prompt."""
+def _turn0_spread(rows: list[dict], layer: int | None) -> dict:
+    """Per vector at the report's layer, the largest difference between readings of one scenario's
+    first prompt."""
     by: dict = defaultdict(lambda: defaultdict(list))
     for r in rows:
         for key, turns in ((r.get("summary") or {}).get("by_turn") or {}).items():
+            name, _, at = key.rpartition("@")
             first = next((t for t in turns if t["turn"] == 0 and t.get("prompt_end") is not None), None)
-            if first:
-                by[key.rpartition("@")[0]][r["scenario"]].append(first["prompt_end"])
+            if first and int(at) == layer:
+                by[name][r["scenario"]].append(first["prompt_end"])
     return {name: max(max(v) - min(v) for v in s.values()) for name, s in by.items()}
 
 
-def _coverage(episodes: list[dict], rows: list[dict], scored: list[dict], readings: dict) -> dict:
+def _coverage(episodes: list[dict], rows: list[dict], scored: list[dict], readings: dict, layer: int | None) -> dict:
     from ..coding import analysis as A
 
     missing = sorted(str(e["uuid"]) for e in scored if e["uuid"] not in readings or not readings[e["uuid"]].get("summary"))
@@ -399,7 +409,7 @@ def _coverage(episodes: list[dict], rows: list[dict], scored: list[dict], readin
     unchecked = sum(any(((readings[r["uuid"]].get(part) or {}).get("ids_check") or {}).get("no_server_ids")
                         for part in ("summary", "logit")) for r in rows)
     return {"episodes": len(episodes), "scored": len(scored), "flagged": sum(A.is_excluded(e) for e in episodes),
-            "no_reading": missing, "turn0_spread": _turn0_spread(rows),
+            "no_reading": missing, "turn0_spread": _turn0_spread(rows, layer),
             "ids": {"server": sum(c.get("source") == "server" for c in checks),
                     "lengths": sum(c.get("source") == "lengths" for c in checks),
                     "failed": sum(c.get("equal") is False for c in checks), "no_server_ids": unchecked}}
@@ -486,7 +496,7 @@ def build(episodes: list[dict], design: dict, results: list[dict] | None, readin
     rep = {"run": run, "layer": layer, "judge": {"verdicts": bool(results), "kappa": kappa}, "cross_fitted": phrases["cross_fitted"],
            "phrases": {k: v for k, v in phrases.items() if k != "provenance"},
            "conditions": design["conditions"], "scenarios": design["scenarios"],
-           "coverage": _coverage(episodes, rows, scored, readings), "monitors": out,
+           "coverage": _coverage(episodes, rows, scored, readings, layer), "monitors": out, "chosen_layer": chosen_layer(readings),
            "disagreements": _disagreements(rows, primary_values, primary_labels)}
     rep["rule"] = _rule(rep, rows, primary_values, primary_labels, results, kappa)
     return rep
@@ -498,6 +508,11 @@ def _rule(rep: dict, rows: list[dict], values: dict, labels: dict, results, kapp
         return {**none, "status": "no verdicts", "why": "give --judge and --kappa"}
     if not (kappa and kappa.get("valid")):
         return {**none, "status": "not valid", "why": (kappa or {}).get("reason") or "no kappa pass"}
+    if rep["chosen_layer"] is None:
+        return {**none, "status": "no chosen layer", "why": "these readings don't record their vector file's chosen_layer"}
+    if rep["layer"] != rep["chosen_layer"]:
+        return {**none, "status": "not the chosen layer",
+                "why": f"the rule reads the vector file's chosen_layer, {rep['chosen_layer']}, and this report is at layer {rep['layer']}"}
     state = rep["phrases"]["state"]
     if state == "no phrase file":
         return {**none, "status": state, "why": "give --phrases: nothing shows where the logit sentences came from"}

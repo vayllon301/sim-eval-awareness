@@ -18,7 +18,7 @@ KAPPA_OK = {"valid": True, "kappa": 0.7, "ci95": [0.6, 0.8], "n": 100, "file": "
 def summary(uuid, curves, layer=LAYER):
     """curves: {vector: {turn: (prompt_end_centred, agent_centred)}}."""
     return {"episode": {"uuid": uuid}, "vectors_sha256": "v" * 64,
-            "ids_check": {"source": "server", "n": 10, "equal": True, "first_difference": None}, "prompt_mismatches": [],
+            "chosen_layer": layer, "ids_check": {"source": "server", "n": 10, "equal": True, "first_difference": None}, "prompt_mismatches": [],
             "completion_checks": {"n": 3, "equal": 3, "differences": {}},
             "by_turn": {f"{name}@{layer}": [{"turn": t, "agent": a, "agent_centred": a, "tool_output": 0.0, "prompt_end": p,
                                              "prompt_end_centred": p} for t, (p, a) in sorted(c.items())]
@@ -303,6 +303,16 @@ def test_turn_zero_is_the_same_prompt_so_the_engine_is_checked_on_it():
     assert build(eps, res, read)["coverage"]["turn0_spread"]["eval_awareness"] > 1
 
 
+def test_the_engine_check_stays_on_the_reports_layer():
+    """A projection at another layer is another number: mixed in, an exact engine would show a spread."""
+    eps, res, read = make()
+    for e in eps:
+        rows = read[e["uuid"]]["summary"]["by_turn"]
+        rows["eval_awareness@42"][0]["prompt_end"] = 1.0
+        rows["eval_awareness@36"] = [{**rows["eval_awareness@42"][0], "prompt_end": 9.0}]
+    assert build(eps, res, read)["coverage"]["turn0_spread"]["eval_awareness"] == pytest.approx(0.0)
+
+
 def test_ids_and_lengths_that_failed_are_reported():
     eps, res, read = make()
     read[eps[0]["uuid"]]["summary"]["ids_check"] = {"source": "lengths", "n": 3, "equal": False, "first_difference": 1}
@@ -508,14 +518,14 @@ PICKED = {"status": V.PICKED + "eval 3 from the pilot", "run": "n2-pilot", "grou
 
 def test_readings_of_another_phrase_file_are_refused():
     _, _, read = make()
-    with pytest.raises(V.PhraseError, match="other"):
+    with pytest.raises(V.ReadingsError, match="other"):
         state_of(read, PICKED, "q" * 64)
 
 
 def test_readings_of_two_phrase_files_are_refused():
     eps, _, read = make()
     read[eps[0]["uuid"]]["logit"]["logit_monitor"]["phrases_sha256"] = "q" * 64
-    with pytest.raises(V.PhraseError, match="mix"):
+    with pytest.raises(V.ReadingsError, match="mix"):
         state_of(read, PICKED, "p" * 64)
 
 
@@ -523,7 +533,7 @@ def test_readings_of_picked_sentences_need_their_file():
     eps, _, read = make()
     for r in read.values():
         r["logit"]["logit_monitor"]["status"] = PICKED["status"]
-    with pytest.raises(V.PhraseError, match="--phrases"):
+    with pytest.raises(V.ReadingsError, match="--phrases"):
         state_of(read)
     assert state_of(read, PICKED, "p" * 64)["cross_fitted"] is True
 
@@ -576,6 +586,32 @@ def test_the_logit_part_may_sit_in_its_own_directory(tmp_path):
     (tmp_path / "a.summary.json").write_text(json.dumps(summary("a", {"eval_awareness": {0: (1.0, 2.0)}})))
     (tmp_path / "logit" / "a.logit.json").write_text(json.dumps(logit("a", {0: 0.5})))
     assert V.load_readings(tmp_path)["a"]["logit"]["logit_monitor"]["status"] == "draft"
+
+
+def test_the_rule_reads_the_vector_files_chosen_layer():
+    eps, res, read = make(signal=1.5)
+    assert V.chosen_layer(read) == LAYER
+    assert build(eps, res, read)["rule"]["status"] == "chosen"
+    for r in read.values():
+        r["summary"]["by_turn"] = {k.replace("@42", "@36"): v for k, v in r["summary"]["by_turn"].items()} | r["summary"]["by_turn"]
+    rep = V.build(eps, DESIGN, res, read, layer=36, kappa=KAPPA_OK, phrases=V.phrase_state(read, {"groups": {}}, "p" * 64, "x"))
+    assert rep["rule"]["status"] == "not the chosen layer" and rep["rule"]["chosen"] is None and str(LAYER) in rep["rule"]["why"]
+    assert rep["monitors"]["prompt_end:eval_awareness"]["labels"]["eval_awareness"]["auroc"] is not None     # the numbers stay
+
+
+def test_readings_that_record_no_chosen_layer_choose_nothing():
+    eps, res, read = make(signal=1.5)
+    for r in read.values():
+        del r["summary"]["chosen_layer"]
+    rep = build(eps, res, read)
+    assert rep["rule"]["status"] == "no chosen layer" and rep["rule"]["chosen"] is None
+
+
+def test_readings_of_two_vector_files_are_refused():
+    eps, _, read = make()
+    read[eps[0]["uuid"]]["summary"]["chosen_layer"] = 36
+    with pytest.raises(V.ReadingsError, match="36"):
+        V.chosen_layer(read)
 
 
 def test_several_layers_need_a_choice():

@@ -405,7 +405,7 @@ def summarize(r: Reading) -> dict:
                            "tokens_by_role": {k: int((r.role == R[k]).sum()) for k in ROLES}, "by_group": {}, "by_turn": {}}
     if "logit_monitor" in r.meta:
         out["logit_monitor"] = r.meta["logit_monitor"]
-    for key in ("ids_check", "prompt_mismatches", "completion_checks", "episode_sha256"):   # a run's checks (readrun.py)
+    for key in ("chosen_layer", "ids_check", "prompt_mismatches", "completion_checks", "episode_sha256"):   # a run's checks (readrun.py)
         if key in r.meta:
             out[key] = r.meta[key]
     if "episode" in r.meta:
@@ -471,7 +471,7 @@ def read(backend: Backend, ep: Episode, vectors: VectorSet, layers: Sequence[int
         sae_out[int(L)] = sae.encode(acts[int(L)])
     offsets = {n: {str(L): v for L, v in (vectors.meta.get("offset", {}).get(n) or {}).items()} for n in names}
     meta = {"episode": ep.meta, "backend": backend.info, "vectors_model": vectors.meta.get("model"),
-            "vectors_path": vectors_path, "vectors_sha256": file_sha256(vectors_path) if vectors_path else None,
+            "chosen_layer": vectors.meta.get("chosen_layer"), "vectors_path": vectors_path, "vectors_sha256": file_sha256(vectors_path) if vectors_path else None,
             "offsets": offsets, "template_kwargs": ep.template_kwargs, "text_sha256": bytes_sha256(rd.text.encode()),
             "n_tokens": int(len(rd.ids)), "prompt_checks": prompt_checks(ep, backend.tokenizer, prompts),
             "prompt_end_not_prefix": [k for k, e in enumerate(ends.tolist()) if e < 0],

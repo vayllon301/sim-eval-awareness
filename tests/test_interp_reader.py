@@ -236,6 +236,14 @@ def test_older_readings_without_prompt_end_still_load(tmp_path):
     assert all(row["prompt_end"] is None for row in summarize(old)["by_turn"]["calm@2"])
 
 
+def test_a_reading_records_the_vector_files_chosen_layer(tmp_path):
+    """The report's rule reads that layer: nothing else in a reading says which one it was."""
+    b = FakeBackend()
+    vs = fake_vectors(b)
+    vs.meta["chosen_layer"] = 2
+    assert summarize(read(b, episode(), vs, [2]))["chosen_layer"] == 2
+
+
 def test_read_refuses_vectors_from_another_model():
     b = FakeBackend()
     vs = fake_vectors(b)

@@ -38,7 +38,8 @@ def add_parser(sub) -> None:
     r.add_argument("--readings", type=Path, default=None, help="default: logs/read/<name>/readings")
     r.add_argument("--judge", type=Path, default=None), r.add_argument("--kappa", type=Path, default=None)
     r.add_argument("--phrases", type=Path, default=None, help="the phrase file the logit readings used: its hash must be theirs")
-    r.add_argument("--layer", type=int, default=None), r.add_argument("--json", action="store_true")
+    r.add_argument("--layer", type=int, default=None, help="default: the vector file's chosen layer; at any other, the rule chooses nothing")
+    r.add_argument("--json", action="store_true")
 
 
 def _run(log_dir: Path) -> tuple[list[dict], dict]:
@@ -107,11 +108,12 @@ def main(args) -> None:
         doc = json.loads(args.phrases.read_text()) if args.phrases else None
         try:
             phrases = V.phrase_state(readings, doc, file_sha256(args.phrases) if args.phrases else None, args.log_dir.name)
-        except V.PhraseError as exc:
+            chosen = V.chosen_layer(readings)
+        except V.ReadingsError as exc:
             raise SystemExit(str(exc)) from exc
         layers = V.reading_layers(readings)
-        if args.layer is None and len(layers) > 1:
-            raise SystemExit(f"these readings hold layers {layers}: give --layer (the vector file's chosen layer)")
-        rep = V.build(episodes, design, results, readings, layer=args.layer or (layers[0] if layers else None), kappa=kappa,
-                      run=args.log_dir.name, phrases=phrases)
+        if args.layer is None and chosen is None and len(layers) > 1:
+            raise SystemExit(f"these readings hold layers {layers} and record no chosen layer: give --layer")
+        layer = next((x for x in (args.layer, chosen, *layers) if x is not None), None)
+        rep = V.build(episodes, design, results, readings, layer=layer, kappa=kappa, run=args.log_dir.name, phrases=phrases)
         print(V.dumps(rep) if args.json else V.format_report(rep))
