@@ -13,6 +13,9 @@ so an old session can be reproduced. The default changed on purpose: since LOG.m
 simulator runs fp8_per_channel from the pilot on, so fp8 needs its name.
 
 SIM_ONLY=1 restarts the simulator alone, next to a running agent (docs/BACKENDS.md).
+
+The downloads are pinned to the commits every session's versions.txt records. They were each repo's
+head during those sessions, so the pin changes no vllm line and no file those sessions served.
 """
 
 from __future__ import annotations
@@ -65,6 +68,8 @@ assert SIM_PC != SIM
 G4_DEFAULT = {k: [a, s.replace(OLD_SCHEME, FINAL_SCHEME)] for k, (a, s) in G4_LINES.items()}
 H100_DEFAULT = [H100_LINES[0], H100_LINES[1].replace(OLD_SCHEME, FINAL_SCHEME)]
 
+AGENT_REV, SIM_REV = "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a", "60d2b0434a53d2e62a7c00a489586815d94ebffb"
+
 FORBIDDEN = ("nvidia-smi", "pip", "uv", "hf", "vllm", "curl", "setsid", "python", "python3", "pgrep")
 
 
@@ -88,8 +93,9 @@ def _stubs(tmp_path: Path, record: Path | None = None) -> Path:
             "#!/bin/sh\ncase \"$*\" in *--query-gpu=name\\ *) printf 'NVIDIA H100 80GB HBM3\\nNVIDIA H100 80GB HBM3\\n' ;;\n"
             "*) echo 'name, memory.total [MiB], driver_version' ;; esac\n")
         (d / "python").write_text("#!/bin/sh\n[ \"$1\" = - ] && cat >/dev/null\necho stub-python\n")
-        for name in ("pip", "uv", "hf", "python3"):
+        for name in ("pip", "uv", "python3"):
             (d / name).write_text("#!/bin/sh\nexit 0\n")
+        (d / "hf").write_text(f"#!/bin/sh\necho \"$*\" >> {record.parent / 'hf.txt'}\n")
         (d / "setsid").write_text("#!/bin/sh\nexec \"$@\"\n")
         # -f PATTERN: the live pids in RUNNING (a test's stand-in for a simulator already serving),
         # each with the pattern recorded; -g PGID: whether that process group still has a member
@@ -223,6 +229,28 @@ def test_the_dry_run_prints_what_the_script_starts(tmp_path, env):
     assert rec.read_text().splitlines() == dry
     versions = (work / "probe" / "versions.txt").read_text()
     assert all(x in versions for x in dry)   # the served command lines are kept with the run's record
+
+
+@pytest.mark.parametrize("extra", [{}, {"SIM_QUANT": "fp8"}, {"SIM_ONLY": "1"}], ids=["default", "old-sessions", "sim-only"])
+def test_both_models_download_at_the_sessions_commits(tmp_path, extra):
+    """A setting can't move them: another commit is another backend, as another vLLM is."""
+    work, rec = tmp_path / "work", tmp_path / "rec.txt"
+    proc = run(tmp_path, {"WORK": str(work), "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "VENV": "", "AGENT_REVISION": "main",
+                          "SIM_REVISION": "main", **extra}, dry=False, record=rec)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert sorted((tmp_path / "hf.txt").read_text().splitlines()) == [
+        f"download Qwen/Qwen-AgentWorld-35B-A3B --revision {SIM_REV} --local-dir {work}/models/simulator",
+        f"download Qwen/Qwen3.8-27B-FP8 --revision {AGENT_REV} --local-dir {work}/models/agent"]
+    versions = (work / "probe" / "versions.txt").read_text()
+    assert f"Qwen/Qwen3.8-27B-FP8 {AGENT_REV}\n" in versions               # the line every session's file has
+    assert f"Qwen/Qwen-AgentWorld-35B-A3B {SIM_REV}\n" in versions
+
+
+def test_the_interp_environment_pins_the_same_commits():
+    """gpu_env.sh downloads on its own: the served files, the vectors and the readings are one revision."""
+    text = (SCRIPT.parents[1] / "interp" / "gpu_env.sh").read_text()
+    assert f"AGENT_REVISION={AGENT_REV}\n" in text and f"SIM_REVISION={SIM_REV}\n" in text
+    assert text.count('--revision "$AGENT_REVISION"') == text.count('--revision "$SIM_REVISION"') == 1
 
 
 def test_serve_script_has_no_colab_only_paths_outside_the_default():

@@ -3,8 +3,11 @@
 # The venv and the models. vLLM 0.32.0 (as serve.sh) and vllm-lens 1.3.0 go into a venv of their own:
 # vllm-lens loads into every vLLM process of its environment and forces eager mode, so it must not
 # share serve.sh's install. The two models come down only if serve.sh's copies aren't in MODELS (hf
-# download skips files it already has). Needs VLLM_VERSION, LENS_VERSION, AGENT_REPO, SIM_REPO, CODE,
-# OUT, VENV, MODELS and a function `stamp`. Sets PY.
+# download skips files it already has), at serve.sh's commits, so the vectors and readings use the
+# served files (tests/test_serve_script.py keeps the two equal). Needs VLLM_VERSION, LENS_VERSION,
+# AGENT_REPO, SIM_REPO, CODE, OUT, VENV, MODELS and a function `stamp`. Sets PY.
+AGENT_REVISION=017b9c7af6b5689d5dd426a76e0bc077eb5ca20a
+SIM_REVISION=60d2b0434a53d2e62a7c00a489586815d94ebffb
 PY="$VENV/bin/python"
 # The marker is written only after every install and .pth below succeeded, so a failed install is
 # redone from a clean venv on the next run (python appears in the venv before its packages do).
@@ -49,13 +52,8 @@ uv pip freeze --python "$PY" > "$OUT/pip-freeze.txt"
   | tee -a "$OUT/versions.txt"
 stamp installed
 
-"$VENV/bin/hf" download "$AGENT_REPO" --local-dir "$MODELS/agent" >"$OUT/download-agent.log" 2>&1 & a=$!
-"$VENV/bin/hf" download "$SIM_REPO" --local-dir "$MODELS/simulator" >"$OUT/download-simulator.log" 2>&1 & s=$!
+"$VENV/bin/hf" download "$AGENT_REPO" --revision "$AGENT_REVISION" --local-dir "$MODELS/agent" >"$OUT/download-agent.log" 2>&1 & a=$!
+"$VENV/bin/hf" download "$SIM_REPO" --revision "$SIM_REVISION" --local-dir "$MODELS/simulator" >"$OUT/download-simulator.log" 2>&1 & s=$!
 wait $a && wait $s
-"$PY" - "$AGENT_REPO" "$SIM_REPO" <<'EOF' | tee -a "$OUT/versions.txt"
-import sys
-from huggingface_hub import model_info
-for repo in sys.argv[1:]:
-    print(repo, model_info(repo).sha)
-EOF
+printf '%s %s\n' "$AGENT_REPO" "$AGENT_REVISION" "$SIM_REPO" "$SIM_REVISION" | tee -a "$OUT/versions.txt"
 stamp downloaded

@@ -45,11 +45,17 @@
 # running agent: it stops the simulator an earlier run started in this WORK, and keeps its log as
 # simulator.<time>.log.
 #
-# Settings can be overridden with environment variables (the defaults are the plan's).
+# The models come down at fixed commits: AGENT_REVISION and SIM_REVISION below, the ones every session
+# recorded. They are not settings: a new upstream commit would be another backend, so moving to one
+# is an edit here and in explore/interp/gpu_env.sh, which tests/test_serve_script.py keeps equal.
+#
+# Other settings can be overridden with environment variables (the defaults are the plan's).
 set -euo pipefail
 VLLM_VERSION=${VLLM_VERSION:-0.32.0}
 AGENT_REPO=${AGENT_REPO:-Qwen/Qwen3.8-27B-FP8}
 SIM_REPO=${SIM_REPO:-Qwen/Qwen-AgentWorld-35B-A3B}
+AGENT_REVISION=017b9c7af6b5689d5dd426a76e0bc077eb5ca20a
+SIM_REVISION=60d2b0434a53d2e62a7c00a489586815d94ebffb
 die() { echo "serve.sh: $*" >&2; exit 1; }
 # One backend per experiment (AGENTS.md): every episode so far ran on vLLM 0.32.0.
 [ "$VLLM_VERSION" = 0.32.0 ] || die "vLLM is pinned at 0.32.0 (got $VLLM_VERSION): another version is another backend"
@@ -178,16 +184,11 @@ fi
 python -c "import vllm, torch, transformers as t; print('vllm', vllm.__version__, 'torch', torch.__version__, 'transformers', t.__version__)" | tee "$OUT/versions.txt"
 stamp vllm-installed
 
-# Both downloads at once; the commit of each model goes in versions.txt.
-hf download "$AGENT_REPO" --local-dir "$MODELS/agent" >"$OUT/download-agent.log" 2>&1 & a=$!
-hf download "$SIM_REPO" --local-dir "$MODELS/simulator" >"$OUT/download-simulator.log" 2>&1 & s=$!
+# Both downloads at once, each at its commit, which goes in versions.txt.
+hf download "$AGENT_REPO" --revision "$AGENT_REVISION" --local-dir "$MODELS/agent" >"$OUT/download-agent.log" 2>&1 & a=$!
+hf download "$SIM_REPO" --revision "$SIM_REVISION" --local-dir "$MODELS/simulator" >"$OUT/download-simulator.log" 2>&1 & s=$!
 wait $a && wait $s
-python - "$AGENT_REPO" "$SIM_REPO" <<'EOF' | tee -a "$OUT/versions.txt"
-import sys
-from huggingface_hub import model_info
-for repo in sys.argv[1:]:
-    print(repo, model_info(repo).sha)
-EOF
+printf '%s %s\n' "$AGENT_REPO" "$AGENT_REVISION" "$SIM_REPO" "$SIM_REVISION" | tee -a "$OUT/versions.txt"
 stamp downloaded
 
 # serve NAME PORT MODEL_DIR MEM_FRACTION MAX_LEN GPU [extra vllm flags]: start one server and wait

@@ -18,6 +18,7 @@ SUBMIT = REPO / "explore" / "hopper" / "submit_read.sh"
 CONFIG = "configs/coding/pilot.yaml"
 BASH, ZSH = shutil.which("bash"), shutil.which("zsh")
 REC = 'echo "$(basename "$0") $*" >> "$STATE/calls.log"\n'
+AGENT_REV, SIM_REV = "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a", "60d2b0434a53d2e62a7c00a489586815d94ebffb"
 # The venv's python: exit codes by which script it runs and with what. Writes what the real one would.
 PYTHON = REC + """case "$*" in
   *read_run.py*"--parts proj"*) exit "${PROJ_RC:-0}" ;;
@@ -146,6 +147,17 @@ def test_no_server_ids_reaches_both_parts_of_the_reader(tmp_path):
     proc, calls, _ = run(tmp_path, {"PARTS": "proj logit", "NO_SERVER_IDS": "1"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert sum("--no-server-ids" in c for c in calls if "read_run.py" in c) == 2
+
+
+def test_the_interp_downloads_take_serve_shs_commits(tmp_path):
+    """The vectors and readings use the files the servers served."""
+    proc, calls, work = run(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    downloads = sorted(c for c in calls if c.startswith("hf download"))
+    assert downloads == [f"hf download Qwen/Qwen-AgentWorld-35B-A3B --revision {SIM_REV} --local-dir {work}/models/simulator",
+                         f"hf download Qwen/Qwen3.8-27B-FP8 --revision {AGENT_REV} --local-dir {work}/models/agent"]
+    versions = (work / "read" / "readings" / "versions.txt").read_text()
+    assert f"Qwen/Qwen3.8-27B-FP8 {AGENT_REV}\n" in versions and f"Qwen/Qwen-AgentWorld-35B-A3B {SIM_REV}\n" in versions
 
 
 def test_the_estimate_is_in_the_header():

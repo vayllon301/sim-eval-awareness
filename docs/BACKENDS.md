@@ -23,6 +23,13 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
 | `two-gpu` | two cards of 80 GB or more | its own card, 0.90, 128K | its own card, 0.90, 128K | `MIX` has no effect |
 
 - vLLM is pinned at 0.32.0. The script refuses another version.
+- Both models come down at fixed commits, the ones every session's `versions.txt` records (29-10 to
+  01-11-2026): `Qwen/Qwen3.8-27B-FP8` at `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a` and
+  `Qwen/Qwen-AgentWorld-35B-A3B` at `60d2b0434a53d2e62a7c00a489586815d94ebffb`. They are not settings:
+  a new upstream commit is another backend. `explore/interp/gpu_env.sh` downloads on its own, at the
+  same two, so the served files, the vectors and the readings are one revision (a test keeps them
+  equal). The pin changes no `vllm serve` line, and each commit was its repo's head through those
+  sessions, so `SIM_QUANT=fp8` still gives the old sessions' lines on the old sessions' files.
 - `WORK` is the work directory. It defaults to `/content` on Colab and must be given anywhere else.
   It needs about 110 GB free: the downloads are 29 + 67 GB.
 - Off Colab, vLLM goes into a venv (`$WORK/venv`, or `VENV`), and Hugging Face's cache goes into
