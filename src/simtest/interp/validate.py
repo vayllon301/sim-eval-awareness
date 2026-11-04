@@ -374,8 +374,7 @@ def _score(rows: list[dict], values: dict[str, float | None], labels: dict[str, 
     episodes with a value; `comparable_pos` and `comparable_neg` those in a condition holding both."""
     usable = [r for r in rows if values.get(r["uuid"]) is not None and r["uuid"] in labels]
     vals = _on_condition(usable, values)
-    holding = {b: {r["condition"] for r in usable if labels[r["uuid"]] is b} for b in (True, False)}
-    both = holding[True] & holding[False]
+    both = {r["condition"] for r in usable if labels[r["uuid"]]} & {r["condition"] for r in usable if not labels[r["uuid"]]}
 
     def cell(group: list[dict]) -> dict:
         pos = [r for r in group if labels[r["uuid"]]]
