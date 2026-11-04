@@ -40,6 +40,7 @@ LENS_VERSION=${LENS_VERSION:-1.3.0}
 AGENT_REPO=${AGENT_REPO:-Qwen/Qwen3.8-27B-FP8}
 SIM_REPO=${SIM_REPO:-Qwen/Qwen-AgentWorld-35B-A3B}
 SAE_REPO=${SAE_REPO:-Qwen/SAE-Res-Qwen3.5-27B-W80K-L0_50}
+SAE_REVISION=13d4221569f7ca5d3c1e605e3e3dc95117e4807c   # the repo's head on 04-11-2026; pinned as gpu_env.sh pins the models
 WORK=${WORK:-/content}
 CODE=${CODE:-$WORK/sim}
 IN=${IN:-$WORK/read}
@@ -80,7 +81,8 @@ sae_layers=$(printf '%s\n' "$SAE_LAYERS" "$TRANSFER_LAYERS" | tr ',' '\n' | grep
 if [ -n "$sae_layers" ] && { [ -n "$SAE_LAYERS" ] || [[ " $PARTS " == *" transfer "* ]]; }; then
   includes=(--include config.json)
   for L in $sae_layers; do includes+=(--include "layer$L.sae.pt"); done
-  "$VENV/bin/hf" download "$SAE_REPO" --local-dir "$SAE" "${includes[@]}" >"$OUT/download-sae.log" 2>&1
+  "$VENV/bin/hf" download "$SAE_REPO" --revision "$SAE_REVISION" --local-dir "$SAE" "${includes[@]}" >"$OUT/download-sae.log" 2>&1
+  printf '%s %s\n' "$SAE_REPO" "$SAE_REVISION" | tee -a "$OUT/versions.txt"
 fi
 set +e
 

@@ -30,6 +30,8 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
   same two, so the served files, the vectors and the readings are one revision (a test keeps them
   equal). The pin changes no `vllm serve` line, and each commit was its repo's head through those
   sessions, so `SIM_QUANT=fp8` still gives the old sessions' lines on the old sessions' files.
+  `read_run.sh` pins the SAEs the same way: `Qwen/SAE-Res-Qwen3.5-27B-W80K-L0_50` at
+  `13d4221569f7ca5d3c1e605e3e3dc95117e4807c`, recorded in the readings' `versions.txt`.
 - `WORK` is the work directory. It defaults to `/content` on Colab and must be given anywhere else.
   It needs about 110 GB free: the downloads are 29 + 67 GB.
 - Off Colab, vLLM goes into a venv (`$WORK/venv`, or `VENV`), and Hugging Face's cache goes into
