@@ -12,6 +12,7 @@ from inspect_ai.model import ModelOutput, get_model
 import simtest.coding.episode as episode
 from simtest import runqueue
 from simtest.cli import main
+from simtest.coding import analysis as E_analysis
 from simtest.coding import machine as machine_mod
 from simtest.coding.analysis import load_run
 from simtest.coding.run import run_config
@@ -201,6 +202,15 @@ def test_a_runs_scored_episodes_are_listed_and_the_rest_left_out(run_dir):
     uuids = {e["uuid"] for e in episodes if e["end_reason"] != "error"}
     assert {e["uuid"] for e in scored} == uuids and len(uuids) == 8
     assert all(E.read_sample(root, e).uuid == e["uuid"] for e in scored)     # each one reads from its log
+
+
+def test_a_flagged_episode_isnt_judged(run_dir, monkeypatch):
+    episodes, _ = load_run(run_dir)
+    flagged = next(e["uuid"] for e in episodes if e["end_reason"] != "error")
+    real = E_analysis.is_excluded
+    monkeypatch.setattr(E_analysis, "is_excluded", lambda e: e["uuid"] == flagged or real(e))
+    scored, _, left_out = E.scored_episodes(run_dir)
+    assert len(scored) == 7 and left_out == 2 and flagged not in {e["uuid"] for e in scored}
 
 
 def test_an_episodes_key_stays_when_a_resumed_run_copies_it_to_a_newer_log(run_dir):

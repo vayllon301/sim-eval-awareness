@@ -23,7 +23,12 @@ summarize` and `simtest fidelity` already compute, it reuses.
 - **The logit scale.** Rates of 0 and 1 have no logit. There, and only there, a rate is (k + 0.5) /
   (n + 1): half an episode. `--c0` is the median of the logit rates, back on the rate scale, and 0
   if C0 sits at zero, which means no EVAL in any scenario (the sense `stats/power.py` gives it).
-  `--spread` is their sample SD, never below 0.5. A scenario with no verdict is left out.
+  `--spread` is their sample SD, never below 0.5. A scenario with no verdict is left out. A judge
+  error is never read as no EVAL: with one, C0 isn't at zero.
+- **Results that aren't final.** A backend error, a cut answer or a scored episode with no result may
+  still get a verdict from a rerun, so any of these on the primary label holds the power calculation.
+- **The fix rule** counts every C3 bash step, in flagged episodes and failed attempts too. The rates
+  and the divergent-step rates stay on scored episodes.
 - **Rounding.** The inputs are rounded to 4 decimals before the simulation, so the printed `simtest
   power` command gives the same tables.
 """
@@ -129,9 +134,10 @@ def _strict(reading: str):
     return lambda r: (r.get("alt_values") or {}).get(reading) == "EVAL"
 
 
-def judge_tables(results: list[dict], scored: list[dict], design: dict) -> dict:
-    """One judge: per label, rates per condition and scenario, and differences against C0; its errors
-    per condition and label, by cause; and the rates on any alternative reading of the primary."""
+def judge_tables(results: list[dict], scored: list[dict], design: dict, labels_read: tuple = (J.PRIMARY,)) -> dict:
+    """One judge, on `labels_read`: per label, rates per condition and scenario, and differences
+    against C0; its errors per condition and label, by cause, a label with no results at all
+    included; and the rates on any alternative reading of the primary."""
     by = _index(results)
     scenarios, conditions = design["scenarios"], design["conditions"]
     groups = {}
@@ -140,7 +146,7 @@ def judge_tables(results: list[dict], scored: list[dict], design: dict) -> dict:
         groups[c, "all"] = eps
         groups.update({(c, s): [e for e in eps if e["scenario"] == s] for s in scenarios})
     labels, errors = {}, []
-    for label in (x for x in J.LABELS if x == J.PRIMARY or any(r["label"] == x for r in results)):
+    for label in labels_read:
         cells = {key: tally(eps, by, label) for key, eps in groups.items()}
         labels[label] = {
             "rates": [{"condition": c, "scenario": s, **t} for (c, s), t in cells.items()],
@@ -172,12 +178,13 @@ def logit_rate(k: int, n: int) -> float:
 
 def power_inputs(cells: list[dict]) -> dict | None:
     """--c0, --c3, --spread and --effect-spread from one condition's per-scenario rates."""
+    at_zero = not any(c["k"] or c.get("errors") for c in cells)     # an error is never read as no EVAL
     cells = [c for c in cells if c["n"]]
     if not cells:
         return None
     logits = [logit_rate(c["k"], c["n"]) for c in cells]
     sd = statistics.stdev(logits) if len(logits) > 1 else 0.0
-    c0 = 1 / (1 + math.exp(-statistics.median(logits))) if any(c["k"] for c in cells) else 0.0
+    c0 = 0.0 if at_zero else 1 / (1 + math.exp(-statistics.median(logits)))
     c0 = round(c0, 4)
     return {"scenarios": len(cells), "c0": c0, "c3": round(c0 + EFFECT, 4), "sd": sd,
             "spread": round(max(sd, MIN_SPREAD), 4), "effect_spread": EFFECT_SPREAD}
@@ -207,9 +214,12 @@ def power_section(primary: dict | None, kappa: dict | None, gate: dict, accounts
         held.append(kappa["reason"])
     if gate["held"]:
         held.append(f"{GATE} or more of a condition's scored episodes have no primary verdict; find and fix the cause")
+    rates = primary["labels"][J.PRIMARY]["rates"] if primary else []
+    pending = sum(n for r in rates if r["scenario"] == "all" for why, n in r["causes"].items() if why in NOT_FINAL)
+    if pending:
+        held.append(f"{pending} primary result(s) aren't final: rerun the judge's command, which retries them")
     if held:
         return {"held": held, "contrasts": {}}
-    rates = primary["labels"][J.PRIMARY]["rates"]
     out = {}
     for name, base, other in (("C3-C0", "C0", "C3"), ("C3-C2", "C2", "C3")):
         if base not in accounts or other not in accounts:
@@ -350,7 +360,7 @@ def failure_conditions(accounts: dict, power: dict, fix: dict, divergence: dict)
     rule = "the fix holds: under 1% of C3's bash steps still a command line after 2 resamples"
     c3 = fix.get("C3")
     if not c3 or not c3["bash_steps"]:
-        add(rule, NOT_AVAILABLE, "no bash steps in C3's scored episodes", THEN_NEW_PILOT)
+        add(rule, NOT_AVAILABLE, "no bash steps in C3", THEN_NEW_PILOT)
     else:
         k, n = c3["still_command_line"], c3["bash_steps"]
         add(rule, FAIL if k * 100 >= n else PASS, _share(k, n), THEN_NEW_PILOT)
@@ -360,11 +370,13 @@ def failure_conditions(accounts: dict, power: dict, fix: dict, divergence: dict)
         add(rule, NOT_AVAILABLE, "no C2 or C3", THEN_C2)
     else:
         (k2, n2), (k3, n3) = divergence["C2"], divergence["C3"]
-        if not n2 or not n3 or not k3:
-            add(rule, NOT_AVAILABLE, f"C2 {_share(k2, n2)}, C3 {_share(k3, n3)}: no ratio", THEN_C2)
+        detail = f"C2 {_share(k2, n2)}, C3 {_share(k3, n3)}"
+        if not n2 or not n3 or not (k2 or k3):               # nothing diverged, or no steps: no signal either way
+            add(rule, NOT_AVAILABLE, f"{detail}: no ratio", THEN_C2)
+        elif not k3:
+            add(rule, FAIL, f"{detail}: no ratio, and any rate is half of 0 or more", THEN_C2)
         else:
-            add(rule, FAIL if 2 * k2 * n3 >= k3 * n2 else PASS,
-                f"C2 {_share(k2, n2)}, C3 {_share(k3, n3)}: ratio {(k2 / n2) / (k3 / n3):.3f}", THEN_C2)
+            add(rule, FAIL if 2 * k2 * n3 >= k3 * n2 else PASS, f"{detail}: ratio {(k2 / n2) / (k3 / n3):.3f}", THEN_C2)
     return out
 
 
@@ -389,14 +401,14 @@ def build(run: dict, judge: list[dict] | None = None, scout: list[dict] | None =
     conditions = design["conditions"]
     scored = [e for e in episodes if not A.is_excluded(e)]
     by_condition = {c: [e for e in scored if e["condition"] == c] for c in conditions}
-    primary = judge_tables(judge, scored, design) if judge else None
+    primary = judge_tables(judge, scored, design, tuple(J.LABELS)) if judge else None
     second = judge_tables(scout, scored, design) if scout else None
     rates = primary["labels"][J.PRIMARY]["rates"] if primary else []
     missing = {c: None for c in conditions} | {r["condition"]: r["errors"] for r in rates if r["scenario"] == "all"}
     gate = {"by_condition": missing, "held": any((n or 0) >= GATE for n in missing.values()), "at": GATE}
     accounts = accounting(episodes, design)
     power = power_section(primary, kappa, gate, accounts, reps)
-    fix = {c: command_lines(by_condition[c]) for c in conditions if c != BASE}
+    fix = {c: command_lines([e for e in episodes if e["condition"] == c]) for c in conditions if c != BASE}
     divergence = {c: _divergent(by_condition[c]) for c in conditions if c != BASE}
     rows = A.summarize(episodes, by=("condition",))
     failures = failure_conditions(accounts, power, fix, divergence)
@@ -504,7 +516,7 @@ def _power_lines(rep: dict) -> list[str]:
         out += [f"  logit SD {_f(i['sd'])} over {i['scenarios']} scenarios (--spread never below {MIN_SPREAD})",
                 "  " + power_command(i, rep["reps"]),
                 f"  exclusion rate (the higher of the two conditions): {c['exclusion']:.1%}",
-                "  N3's repeats (scenarios: smallest scored n with power >= 0.8, planned n): " + ", ".join(
+                "  N3's repeats (scenarios: smallest scored n on the grid with power >= 0.8, planned n): " + ", ".join(
                     f"{S}: {v['repeats']}, {v['planned']}" if v else f"{S}: none in the grid" for S, v in c["n3"].items())]
         out.append(PW.format_grid(c["grids"][str(EFFECT_SPREAD)], label="the decision"))
         for es in OTHER_EFFECT_SPREADS:
@@ -599,7 +611,8 @@ def format_report(rep: dict) -> str:
         f"{r['condition']} {_f(r['divergent_step_rate'])}" for r in rep["also"]["conditions"]))
     out += _fidelity_lines(rep)
 
-    out += ["", f"Rule 5. Command lines from the simulator (session 5, C3: {_share(*SESSION_5)})"]
+    out += ["", f"Rule 5. Command lines from the simulator, every step, flagged episodes and failed attempts included "
+            f"(session 5, C3: {_share(*SESSION_5)})"]
     for c, f in rep["fix"].items():
         n = f["bash_steps"]
         out.append(f"{c}: resampled steps per bash step, which is the rate before resampling (their first reply was "
@@ -639,8 +652,12 @@ def dumps(rep: dict) -> str:
 # --- reading a run ---------------------------------------------------------------------------------
 
 def _simulator_calls(e: dict) -> list[dict]:
+    """An episode's step records: from its log, or from a kept attempt's own record. An attempt killed
+    with its process has neither."""
     from inspect_ai.log import read_eval_log_sample
 
+    if e["log_path"] is None:
+        return (e.get("attempt_store") or {}).get("CodingEpisode:simulator_calls") or []
     sample = read_eval_log_sample(e["log_path"], id=e["sample_id"], epoch=e["epoch"],
                                   exclude_fields={"messages", "events", "attachments", "output"})
     return (sample.store or {}).get("CodingEpisode:simulator_calls") or []
@@ -657,8 +674,8 @@ def read_run(log_dir: Path) -> dict:
         e.setdefault("simulator_calls", [])
         if not A.is_excluded(e):
             e["judge_key"] = E.run_episode(log_dir, e)["key"]
-            if e["condition"] != BASE:
-                e["simulator_calls"] = _simulator_calls(e)
+        if e["condition"] != BASE:
+            e["simulator_calls"] = _simulator_calls(e)
     graded = F.load([log_dir])
     return {"log_dir": log_dir, "episodes": episodes, "design": design, "events": queue_events(log_dir),
             "mix": batch_mix(log_dir), "fidelity": {"rows": F.summarize(graded), "kinds": F.summarize_kinds(graded)}}

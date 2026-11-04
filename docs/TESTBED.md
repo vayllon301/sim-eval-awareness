@@ -2012,30 +2012,34 @@ uv run simtest pilot logs/n2-pilot --judge logs/n2-pilot-judge.jsonl --scout log
   refusal, a content filter, a second unusable answer, `too_long`, a backend error or cut answer
   not yet retried, or no result at all (`not judged`). The last three are not final: rerun the
   judge's command. Errors are counted per condition, label and cause and left out of the rates.
+  All five labels are counted, so a run judged with `--labels` shows the others as `not judged`.
   Beside each rate and difference are two bounds, as the rule words them: every error EVAL, and
   every error REAL, in both conditions of a difference alike. The second judge is reported the same
   way, with its strict reading on one line.
 - **The gate.** 2 or more of a condition's scored episodes with no primary verdict hold the power
-  calculation: its inputs aren't printed. Scout's errors have no gate.
+  calculation: its inputs aren't printed. Scout's errors have no gate. So does any primary result
+  that isn't final, even one: a rerun could still change the inputs.
 - **The inputs to `simtest power`**, from a condition's per-scenario rates:
   - On the logit scale a rate of 0 or 1 takes half an episode, (k + 0.5) / (n + 1), and no other
     rate changes. A scenario with no verdict is left out.
   - `--c0`: the median of the logit rates, back on the rate scale. With an even number of scenarios
-    that is the midpoint on the logit scale. It is 0 if C0 sits at zero: no EVAL in any scenario,
-    the sense `stats/power.py` gives it.
-  - `--spread`: the sample SD of the logit rates, never below 0.5.
+    that is the midpoint on the logit scale. It is 0 if C0 sits at zero: no EVAL in any scenario
+    and no judge error, the sense `stats/power.py` gives it (it simulates a C0 that can't be EVAL).
+  - `--spread`: the sample SD of the base condition's logit rates, never below 0.5.
   - `--c3 = --c0 + 0.10`, `--effect-spread 0.25`, 10,000 simulated runs, power counted only for
     C3 > C0. The tables at 0 and 0.5 are printed, labelled as not used for the decision.
   - The same again with C2 in place of C0, for H2.
-  - N3's repeats per number of scenarios, and the planned repeats at the higher exclusion rate of
+  - N3's repeats per number of scenarios, the smallest on the grid (steps of 5), and the planned repeats at the higher exclusion rate of
     the two conditions. A condition's exclusion rate is its designed episodes not scored.
   - The inputs are rounded to 4 decimals before the simulation, so the printed command gives the
     same tables.
 - **The failure conditions**, each `pass`, `FAIL` or `not available`: scored episodes per condition
   (the 5-of-6 rule; `not available` while enough episodes are still to run), the floor (power at 16
-  scenarios and 30 repeats), the fix (a kept command line in under 1% of C3's bash steps), and C2's
-  divergent-step rate against C3's. That last rule reads the crude rate of `simtest summarize`; the
-  graded ratio is printed beside it. Then what follows, in the rule's words.
+  scenarios and 30 repeats), the fix (a kept command line in under 1% of C3's bash steps, counting
+  every step: flagged episodes and failed attempts too), and C2's divergent-step rate against C3's.
+  That last rule reads the crude rate of `simtest summarize`, on scored episodes; the graded ratio is
+  printed beside it. If C3 has no divergent step and C2 has some, C2 fails; if neither has, it is
+  `not available`. Then what follows, in the rule's words.
 - **Exclusions.** Flagged episodes by end reason. Infrastructure errors by cause (the error's last
   line), as reruns when their episode has a final attempt, otherwise as errors with no final attempt.
   An interrupted attempt known only from `queue.jsonl` counts the same way. Every episode has a line
