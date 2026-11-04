@@ -81,7 +81,7 @@ def pick(results: list[dict], episodes: list[dict], turn_texts: Callable[[str], 
             if r and r.get("positive") and not r.get("error"):
                 for q in r.get("quotes") or []:
                     if q.get("status") == "verified" and q.get("part") == "reasoning":
-                        _add(found[group], q.get("match") or q["text"], e["uuid"], e["scenario"], banned)
+                        _add(found[group], q["text"], e["uuid"], e["scenario"], banned)
         if all(r and r.get("positive") is False and not r.get("error") for r in results_.values()):
             for text in turn_texts(e["uuid"]):
                 _add(found["control"], text, e["uuid"], e["scenario"], banned)
@@ -98,7 +98,9 @@ def pick(results: list[dict], episodes: list[dict], turn_texts: Callable[[str], 
             if t not in groups[group]:
                 groups[group].append(t)
                 provenance[t] = {"group": group, "source": "draft", "episodes": 0, "pairs": []}
-    return {"status": "DRAFT rule: candidates from the pilot's verbalisations, not frozen",
+    counts = {g: [sum(provenance[t]["source"] == where for t in groups[g]) for where in ("pilot", "draft")] for g in MAX}
+    return {"status": "DRAFT rule, not frozen: " + "; ".join(f"{g} {p} from the pilot, {d} from the draft file"
+                                                             for g, (p, d) in counts.items()),
             "source": f"The frozen judge's verified quotes on {run or 'the pilot'} (simtest interp phrases, docs/INTERP.md), "
                       "filled from the draft file where a group is short.",
             "groups": groups, "provenance": provenance}
