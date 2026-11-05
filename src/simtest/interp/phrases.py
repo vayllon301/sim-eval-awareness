@@ -1,5 +1,5 @@
 """Picking the logit monitor's sentences from what the pilot agent actually wrote (PLAN.md,
-Interpretability). The rule is a DRAFT (docs/INTERP.md, "Draft rule: the monitor's sentences"): a
+Interpretability). The rule is frozen (docs/INTERP.md, "Rule: the monitor's sentences"): a
 mechanical pick from text alone, made before anyone sees a monitor's value on these sentences.
 
     simtest interp phrases logs/n2-pilot --judge judge.jsonl --kappa pass.json --episodes EPISODES --out FILE

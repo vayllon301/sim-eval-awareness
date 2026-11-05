@@ -65,7 +65,7 @@ with a reading is in exactly one of a score's counts: positive, negative, `error
 recorded kappa pass the numbers are printed as NOT VALID and the rule chooses nothing. Without
 verdicts the readings are still shown per condition and scenario.
 
-**The rule** (`apply_rule`) is the DRAFT in docs/INTERP.md, "Draft rule: the primary internal measure".
+**The rule** (`apply_rule`) is the frozen one in docs/INTERP.md, "Rule: the primary internal measure".
 It is not frozen. Disagreements between monitors, and with the judge, are listed and never resolved.
 """
 
