@@ -241,10 +241,12 @@ fixed numbers from earlier sessions. PASS needs all four:
 
 1. **Scheme.** The served line says `--quantization fp8_per_channel --moe-backend triton`, every
    quantized layer kind says `fp8_per_channel_static`, and the MoE kernel is `TRITON`.
-2. **Fidelity.** On the 81 deterministic forced steps, the mean similarity is at least 0.892. That is
-   0.912 (the G4's forced pass of 29-10-2026, on `fp8`, 8 at once) minus 0.02, about 2 standard errors
-   of the paired difference between two forced passes (0.0097). That pair also differed in backend,
-   so it is an upper bound on the run-to-run spread.
+2. **Fidelity.** On the 81 deterministic forced steps, the mean similarity is at least 0.847. That is
+   0.867 (the G4's pass of 04-11-2026, on this scheme at 12 at once, which Victor accepted) minus 0.02,
+   about 2 standard errors of the paired difference between two forced passes (0.0097, from a pair that
+   also differed in backend, so an upper bound on the run-to-run spread). This bar was set after seeing
+   that pass: it replaces 0.892 (0.912, the 29-10 pass on `fp8`, 8 at once, minus 0.02), which the pass
+   missed (LOG.md, 04-11-2026).
 3. **Truncation.** At most 3 of the 84 steps hit the 16K cap (the 29-10-2026 rule; that pass had 0).
 4. **Complete evidence.** The pass predicted the bake-off's recording (pinned by its hash) and scored
    exactly its 84 steps, none with an error. Both `equiv` files exist, come from the agent and
@@ -316,7 +318,7 @@ hardware.
 | What the check is | What it can claim | What it can't claim |
 | --- | --- | --- |
 | Hopper's setup check alone | This backend serves the final scheme on the kernels named, fidelity isn't below the floor, and these are its own noise floors | That it computes what the G4 computes |
-| Bar 2 against the G4's 0.912 | Hardware and scheme together didn't break the simulator by more than about 0.02, at one sample per step | Which of the two moved it, or that either moved it by nothing. A miss doesn't say which either |
+| Bar 2 against the G4's 0.867 | On this scheme, the hardware didn't move the simulator down by more than about 0.02, at one sample per step | Which of the two moved it, or that either moved it by nothing. A miss doesn't say which either |
 | Token IDs on the same contexts | The same rendering (tokenizer and chat template), since this doesn't depend on the scheme | Anything about the arithmetic |
 | `equiv compare`, simulator, Hopper `fp8_per_channel` against any G4 `fp8` file | Nothing as a backend check. The gap includes the scheme by construction, because the weights are rounded differently. A pass would be weak too: the bar would be `fp8`'s noise, which we expect to be the larger | That the hardware is equivalent |
 | `equiv compare`, agent, Hopper against the G4 | The agent's scheme doesn't change, so this is a clean hardware check, once G4 scores exist. The near-zero floor caveat above still holds | Anything about the simulator |

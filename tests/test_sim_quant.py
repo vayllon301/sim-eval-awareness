@@ -330,9 +330,9 @@ def _rule(fid=None, noise=None, missing=(), wrong=(), tok_s=500.0):
 
 
 def test_the_bars_are_fixed_numbers_from_the_earlier_passes():
-    """No fp8 pass runs in the session, so the bars come from the G4's 29-10 pass (fp8, 0.9124 on the 81
-    deterministic steps, 0 at the cap) and the rates the 02-11 estimate used."""
-    assert S.SIM_FLOOR == pytest.approx(0.912 - 0.02)
+    """The fidelity bar comes from the first pass on the final scheme, 12 at once (0.8667 on the 81
+    deterministic steps; Victor accepted it, LOG.md, 04-11-2026), the speed from the 02-11 estimate."""
+    assert S.SIM_FLOOR == pytest.approx(0.867 - 0.02)
     assert S.MAX_TRUNCATED == 3
     assert S.REFERENCE_TOK_S * S.SPEED_CONFIRM == pytest.approx(405)
 
@@ -343,7 +343,7 @@ def test_rule_passes_when_every_bar_holds():
     assert "12" in r["pin"]
 
 
-@pytest.mark.parametrize("sim,verdict", [(0.892, "PASS"), (0.8921, "PASS"), (0.8919, "FAIL"), (0.80, "FAIL"), (0.95, "PASS")])
+@pytest.mark.parametrize("sim,verdict", [(0.847, "PASS"), (0.8471, "PASS"), (0.8469, "FAIL"), (0.80, "FAIL"), (0.95, "PASS")])
 def test_rule_similarity_floor(sim, verdict):
     assert _rule(fid=_fid(sim))["verdict"] == verdict
 
