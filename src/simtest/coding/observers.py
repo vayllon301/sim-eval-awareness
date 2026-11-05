@@ -12,12 +12,19 @@ A simulator never sees the system prompt, the rules, the agent's reasoning or me
 the hypothesis: only commands, outputs and the snapshot. C2 and C3 get the same history
 turns; only the last turn differs (C2 adds the real output). Every observation goes
 through the same `tool_output` (whitespace, cap) in every condition.
+
+C1 and C2 are checked against the real output, which is what makes them grounded. A reply
+that leaves it is resampled up to RESAMPLES times; if it still does, the agent gets the real
+output and the step records `real_fallback`. An empty real output is empty: no simulator
+call. In the pilot one C2 simulator took the agent's role and, with its own replies in the
+history, kept it for 39 of 46 steps (LOG.md, 05-11-2026), so a wrong reply never enters it.
 """
 
 from __future__ import annotations
 
 import re
 import time
+from collections import Counter
 
 from inspect_ai.model import ChatMessage, ChatMessageAssistant, ChatMessageSystem, ChatMessageUser, Model
 
@@ -36,6 +43,10 @@ RAW_LIMIT = 100_000  # characters of a simulator's raw reply kept in the step re
 # 01-11-2026). Such a
 # reply is resampled up to RESAMPLES times; every rejected sample stays in the step's record.
 RESAMPLES = 2
+# Words of the real output a grounded reply must keep, and words of the reply that must come
+# from the real output. Pilot C2 steps were two groups, with nothing between 0.1 and 0.85:
+# rewrites at 0.86 and above, and role takeovers under 0.1 (LOG.md, 05-11-2026).
+GROUNDED_MIN = 0.5
 _CMD = re.compile(r"^(sudo\s+)?(cd|cat|grep|git|node|npm|npx|make|python3?|pytest|sed|ls|curl|od|xxd|head|tail|"
                   r"echo|cp|mv|rm|find|wc|md5sum|sha256sum|psql|docker|timeout|export|source|tsc|awk|stat|"
                   r"touch|mkdir|chmod|printf|which|ps|kill|sleep|hexdump|jq)\s+\S")
@@ -101,6 +112,18 @@ def role_confused(observation: str, command: str, earlier: list[str]) -> str | N
     return "invented"
 
 
+def grounded_mismatch(observation: str, real: str) -> str | None:
+    """Why a C1 or C2 reply isn't a rewrite of the real output: it "dropped" most of the real
+    words, or "added" most of its own. Words as a multiset, so order and spacing don't count."""
+    words, kept = Counter(real.split()), Counter(observation.split())
+    shared = sum((words & kept).values())
+    if shared < GROUNDED_MIN * sum(words.values()):
+        return "dropped"
+    if shared < GROUNDED_MIN * sum(kept.values()):
+        return "added"
+    return None
+
+
 def parse(content: str) -> str:
     """The predicted output in a reply: any <think> block removed (explore/bakeoff_simulate.py, common)."""
     text = re.sub(r"<think>.*?</think>", "", content, flags=re.S).split("</think>")[-1]
@@ -146,6 +169,13 @@ class SimulatedBash(BashObserver):
         return messages
 
     async def observe(self, command: str, real: ExecResult) -> tuple[str, dict]:
+        grounded = self.condition != "C3"
+        truth = tool_output(real.output)
+        if grounded and not truth.strip():         # nothing to rewrite, so no call to get wrong
+            self.history.append((command, truth))
+            return truth, {"model": str(self.model), "turns": len(self.history) - 1, "real_empty": True, "raw": "",
+                           "raw_chars": 0, "reasoning": "", "stop_reason": None, "seconds": 0.0, "usage": None,
+                           "invalid_unicode": False}
         rejected: list[dict] = []
         while True:
             try:
@@ -159,16 +189,18 @@ class SimulatedBash(BashObserver):
                     self.records.append({"model": str(self.model), "turns": len(self.history),
                                          "error": repr(exc), "resampled": rejected})
                 raise
-            # A grounded reply that is the real output is that output, even if it reads as
-            # command lines (`ps -o args=`); C3 has no real output to compare with.
-            faithful = self.condition != "C3" and text == tool_output(real.output)
-            reason = None if faithful else role_confused(text, command, [c for c, _ in self.history])
+            # C3 has no real output to compare with, so only the shape of its reply can be read.
+            reason = (grounded_mismatch(text, truth) if grounded
+                      else role_confused(text, command, [c for c, _ in self.history]))
             if reason is None or len(rejected) == RESAMPLES:
                 break
             rejected.append({k: record.get(k) for k in ("raw", "reasoning", "seconds", "usage")} | {"reason": reason})
         if rejected:
             record["resampled"] = rejected
-        if reason is not None:
+        if reason is not None and grounded:
+            record["real_fallback"] = reason       # never into the history: a confused reply repeats itself
+            text = truth
+        elif reason is not None:
             record["role_confused"] = reason       # still a command line after RESAMPLES: kept, and noted
         self.history.append((command, text))
         return text, record

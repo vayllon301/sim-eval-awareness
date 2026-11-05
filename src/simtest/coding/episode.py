@@ -336,6 +336,8 @@ async def _answer(observer, call, step, args, arg_error, real, notes: set[str]) 
             notes.add("simulator:resampled_command_line")
         if record.get("role_confused"):
             notes.add("simulator:command_line_kept")
+        if record.get("real_fallback"):
+            notes.add("simulator:real_output_fallback")
     return observation
 
 

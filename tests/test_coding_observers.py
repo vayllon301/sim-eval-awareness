@@ -9,7 +9,7 @@ from __future__ import annotations
 import anyio
 
 from simtest.coding.machine import ExecResult, tool_output
-from simtest.coding.observers import SimulatedBash, make_observer, parse
+from simtest.coding.observers import SimulatedBash, grounded_mismatch, make_observer, parse
 from coding_helpers import ScriptedSimulator, mock
 
 TOOL = "bash tool text"
@@ -47,14 +47,14 @@ def test_c1_sends_real_output_no_snapshot_no_history():
 
 def test_c2_has_snapshot_and_history_with_real_output():
     obs = _sim("C2")
-    text1, rec1 = anyio.run(obs.observe, "cmd1", result("REAL1"))
+    text1, rec1 = anyio.run(obs.observe, "cmd1", result("o1"))     # a reply that keeps the real output
     assert text1 == "o1" and rec1["raw"] == "o1"
     msgs = obs.messages("cmd2", result("REAL2"))
     assert SNAP in msgs[0].text
     assert len(msgs) == 4  # system, user(cmd1), assistant(o1), user(cmd2 + real output)
     assert "cmd1" in msgs[1].text and msgs[2].text == "o1"
     assert "<real_output>\nREAL2\n</real_output>" in msgs[-1].text
-    assert "REAL1" not in msgs[-1].text  # only the current command's real output is attached
+    assert sum("real_output>" in m.text for m in msgs) == 3  # the prompt, and the current command's output only
 
 
 def test_c3_invents_from_snapshot_history_and_command_only():
@@ -107,3 +107,66 @@ def test_scenario_snapshot_discloses_no_rule(sid):
     for condition in ("C2", "C3"):
         observer = make_observer(condition, mock(ScriptedSimulator(["x"]), "mockllm/sim"), sc, session_start=FAKE_DATE)
         assert session_snapshot(snap, FAKE_DATE).rstrip() in observer.system
+
+
+# C1 and C2 must stay on the real output. In the pilot (LOG.md, 05-11-2026) one C2 simulator took
+# the agent's role at step 7 and, with its own replies in the history, kept it for 39 of 46 steps.
+LEAK = "Let me check the current content of `src/services/git-sync.ts`:\n\n<real_output>\n</real_output>"
+REAL = "9183eb8 SEC-61: no customer content in git sync's logs\ne9f428f CONTRIBUTING: how we work on this repo\n"
+
+
+def _scripted(condition, replies):
+    script = ScriptedSimulator(replies)
+    return SimulatedBash(condition, mock(script, "mockllm/sim"), TOOL, SNAP), script
+
+
+def test_a_grounded_reply_is_compared_word_for_word_with_the_real_output():
+    assert grounded_mismatch(REAL, REAL) is None
+    assert grounded_mismatch(REAL.upper().lower(), REAL) is None
+    # a clock moved by a few seconds: the same message, as the pilot's C2 did (0.86 shared)
+    assert grounded_mismatch("hello\nThu Oct 29 10:25:06 CET 2026", "hello\nThu Oct 29 10:25:04 CET 2026\n") is None
+    assert grounded_mismatch(LEAK, REAL) == "dropped"
+    assert grounded_mismatch("make test 2>&1", "pytest -q tests\n.... 31 passed\n") == "dropped"
+    assert grounded_mismatch("", REAL) == "dropped"
+    # keeps the real output but adds a page of its own
+    assert grounded_mismatch(REAL + " extra" * 200, REAL) == "added"
+
+
+def test_a_grounded_reply_that_leaves_the_real_output_is_resampled():
+    obs, script = _scripted("C2", [LEAK, REAL])
+    text, record = anyio.run(obs.observe, "git log", result(REAL))
+    assert text == tool_output(REAL) and script.i == 2
+    assert [r["reason"] for r in record["resampled"]] == ["dropped"]
+    assert "real_fallback" not in record
+
+
+def test_a_grounded_reply_still_wrong_after_two_resamples_gives_the_real_output():
+    obs, script = _scripted("C2", [LEAK, LEAK, LEAK, "never read"])
+    text, record = anyio.run(obs.observe, "git log", result(REAL))
+    assert text == tool_output(REAL) and script.i == 3
+    assert record["real_fallback"] == "dropped" and "role_confused" not in record
+    assert len(record["resampled"]) == 2 and record["resampled"][0]["raw"] == LEAK
+
+
+def test_a_confused_reply_never_enters_the_grounded_history():
+    obs, _ = _scripted("C2", [LEAK, LEAK, LEAK, REAL])
+    anyio.run(obs.observe, "git log", result(REAL))
+    msgs = obs.messages("next", result("x"))
+    assert all("<real_output>" not in m.text for m in msgs[1:-1])
+    assert obs.history == [("git log", tool_output(REAL))]
+
+
+def test_an_empty_real_output_calls_no_simulator():
+    for condition in ("C1", "C2"):
+        obs, script = _scripted(condition, [LEAK])
+        text, record = anyio.run(obs.observe, "git status --short", result(""))
+        assert text == tool_output("") and script.i == 0
+        assert record["real_empty"] is True and record["usage"] is None and record["raw"] == ""
+
+
+def test_c3_has_no_real_output_to_be_compared_with():
+    obs, script = _scripted("C3", [REAL])
+    text, record = anyio.run(obs.observe, "git log", result("something else entirely"))
+    assert text == tool_output(REAL) and script.i == 1 and "resampled" not in record
+    text, record = anyio.run(obs.observe, "git status --short", result(""))
+    assert script.i == 2 and "real_empty" not in record

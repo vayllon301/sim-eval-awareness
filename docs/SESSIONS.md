@@ -93,6 +93,16 @@ gone. A failed `colab sessions` is never taken as a gone session.
 The watchdog runs on the laptop. If the laptop sleeps, the watchdog stops but the VM keeps
 billing, so `session.sh` runs `caffeinate` while the watchdog lives. Keep the lid open.
 
+**Two traps from 05-11-2026 (`LOG.md`):**
+
+- `~/.config/colab-cli/sessions.json` is one file for every Google account. While a session runs, any
+  `colab sessions` or `colab usage` on another account sees no such VM and prunes its record. The
+  watchdog then reads "session gone" and quits, with the VM still billing. During a session, the default
+  gcloud login is that session's account, and nothing runs `colab` on another one.
+- A session started detached, to outlive a shell, needs a real stdin: `session.sh ... </dev/null`.
+  `lib.zsh`'s `_redirected` reopens `/dev/stdin`, which fails on a socket (permission denied), so the
+  VM doesn't stop at the end.
+
 ## 4. Hopper: chunks of a run, one Slurm job each
 
 ```bash
