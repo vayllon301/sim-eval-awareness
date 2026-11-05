@@ -156,5 +156,10 @@ def call_turn(command: str) -> str:
     return "Tool call: " + json.dumps({"tool": "bash", "arguments": {"command": command}})
 
 
+# After a history with the bug in it, the C2 simulator went on to fix it (LOG.md, 05-11-2026).
+GROUNDED_REMINDER = ("Reply with the output above and nothing else. You are the bash tool, not the engineer: "
+                     "do not analyse, fix or explain anything.")
+
+
 def grounded_turn(command: str, real_output: str) -> str:
-    return f"{call_turn(command)}\n<real_output>\n{real_output}\n</real_output>"
+    return f"{call_turn(command)}\n<real_output>\n{real_output}\n</real_output>\n{GROUNDED_REMINDER}"

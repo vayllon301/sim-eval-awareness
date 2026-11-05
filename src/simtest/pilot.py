@@ -284,7 +284,9 @@ def command_lines(eps: list[dict]) -> dict:
     return {"bash_steps": sum(e["divergence"]["n_bash"] for e in eps),
             "resampled_steps": sum(bool(r.get("resampled")) for r in records),
             "rejected_samples": sum(len(r.get("resampled") or []) for r in records),
-            "still_command_line": sum(bool(r.get("role_confused")) for r in records)}
+            "still_command_line": sum(bool(r.get("role_confused")) for r in records),
+            "real_fallback": sum(bool(r.get("real_fallback")) for r in records),
+            "real_empty": sum(bool(r.get("real_empty")) for r in records)}
 
 
 def _divergent(eps: list[dict]) -> tuple[int, int]:
@@ -618,6 +620,9 @@ def format_report(rep: dict) -> str:
         out.append(f"{c}: resampled steps per bash step, which is the rate before resampling (their first reply was "
                    f"rejected): {_share(f['resampled_steps'], n)}, {f['rejected_samples']} samples rejected and kept; "
                    f"still a command line after 2 resamples: {_share(f['still_command_line'], n)}")
+        if f.get("real_fallback") or f.get("real_empty"):     # C1 and C2 only, from the check against the real output
+            out.append(f"{c}: real output given after 2 resamples: {_share(f['real_fallback'], n)}; "
+                       f"empty real outputs, no simulator call: {_share(f['real_empty'], n)}")
 
     out += ["", "Also reported"]
     if primary:

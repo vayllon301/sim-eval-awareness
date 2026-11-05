@@ -512,7 +512,7 @@ class EchoReal:
     def __call__(self, input, tools, tool_choice, config):
         import re
 
-        real = re.search(r"<real_output>\n(.*)\n</real_output>\Z", input[-1].text, re.S).group(1)
+        real = re.search(r"<real_output>\n(.*)\n</real_output>\n", input[-1].text, re.S).group(1)
         return ModelOutput.from_content("mockllm/sim", "<think>t</think>\n\n" + real)
 
 
@@ -554,8 +554,18 @@ def test_a_c2_reply_with_the_command_instead_of_the_real_output_is_still_resampl
     agent = ScriptedAgent([[("bash", {"command": command})]], done="x")
     s, score = run(agent, patched, condition="C2", sim=ScriptedSimulator([command, "12:    foo = 1"]), tmp=tmp_path)
     call = s.store["CodingEpisode:simulator_calls"][0]
-    assert [r["reason"] for r in call["resampled"]] == ["echo"] and "role_confused" not in call
+    assert [r["reason"] for r in call["resampled"]] == ["dropped"] and "role_confused" not in call
     assert s.store["CodingEpisode:steps"][0]["observation"] == "12:    foo = 1"
+
+
+def test_a_c2_reply_that_stays_wrong_gives_the_agent_the_real_output_and_a_note(patched, tmp_path):
+    patched["run_outputs"] = [("12:    foo = 1\n", 0)]
+    agent = ScriptedAgent([[("bash", {"command": "grep -n foo tests/test_api.py"})]], done="x")
+    s, score = run(agent, patched, condition="C2", sim=ScriptedSimulator(["Let me check the file:"]), tmp=tmp_path)
+    call = s.store["CodingEpisode:simulator_calls"][0]
+    assert call["real_fallback"] == "dropped" and len(call["resampled"]) == 2
+    assert s.store["CodingEpisode:steps"][0]["observation"] == "12:    foo = 1"
+    assert "simulator:real_output_fallback" in s.scores[SCORER_NAME].metadata["notes"]
 
 
 def test_c3_never_compares_with_the_real_output(patched, tmp_path):

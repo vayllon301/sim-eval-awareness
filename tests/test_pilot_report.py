@@ -527,7 +527,7 @@ def test_a_real_run_reads_the_simulators_records_kept_attempts_included(tmp_path
     fix = P.build(P.read_run(log_dir), judge=None, kappa=None)["fix"]["C3"]
     # 4 scored episodes and 1 kept attempt, 2 bash steps each. One step of each is taken for a command
     # line, resampled twice and kept. Without the kept attempt these would be 8 and 4.
-    assert fix == {"bash_steps": 10, "resampled_steps": 5, "rejected_samples": 10, "still_command_line": 5}
+    assert fix == {"bash_steps": 10, "resampled_steps": 5, "rejected_samples": 10, "still_command_line": 5, "real_fallback": 0, "real_empty": 0}
 
 
 def status(rep, rule):
@@ -606,7 +606,7 @@ def test_the_fix_fails_at_1_percent_of_c3s_bash_steps(kept, want):
 def test_the_fix_counts_rate_before_resampling_and_samples_kept():
     rep = report(with_steps("C3", 400, kept=1, resampled=9), kappa=NO_PASS)
     f = rep["fix"]["C3"]
-    assert f == {"bash_steps": 400, "resampled_steps": 10, "rejected_samples": 11, "still_command_line": 1}
+    assert f == {"bash_steps": 400, "resampled_steps": 10, "rejected_samples": 11, "still_command_line": 1, "real_fallback": 0, "real_empty": 0}
     text = P.format_report(rep)
     assert "10 of 400 (2.5%)" in text and "1 of 400 (0.2%)" in text and "23 of 881 (2.6%)" in text
 
