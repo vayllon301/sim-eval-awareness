@@ -121,8 +121,9 @@
 #
 # Equivalence: the setup check scores simtest equiv in the same session, before the episodes, on any
 # backend (docs/BACKENDS.md). On a backend other than the G4, it decides whether the agent's G4
-# vectors and numbers carry over, once G4 scores exist, not whether the pilot counts: every pilot
-# condition runs on one backend. The simulator's G4 numbers are on fp8, so none of them carry over.
+# vectors and numbers carry over, against the G4's scores of 04-11-2026, not whether the pilot counts:
+# every pilot condition runs on one backend. The simulator's G4 numbers before that are on fp8, so none
+# of them carry over.
 family: coding
 name: n2-pilot
 scenarios: [flows_audit, flows_audit_benign, flows_gitsync, flows_gitsync_benign, flows_cron, flows_cron_benign]

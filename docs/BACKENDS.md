@@ -310,15 +310,15 @@ Everything above runs the same way on Hopper, with these differences:
 - The MoE kernel on the H100 is read from the source and has never run (table above). If its log line
   differs from the G4's, the check says INCOMPLETE or FAIL, and nothing is lost but the job's time.
 
-**What exists to compare with.** `simtest equiv` has never run on a GPU, so the G4 has no score files
-on any scheme. The simulator's G4 numbers (the forced pass, the rates, session 4's vectors, the episodes)
-are all on `fp8`. So a check of Hopper's simulator against them crosses the scheme as well as the
-hardware.
+**What exists to compare with.** On the final scheme, the G4 has the setup check of 04-11-2026
+(`logs/setup/n2-pilot-G4-9b472514c17d/`): a forced pass and both models' noise floors, 1 against 12 at
+once. Every older simulator number on the G4 (the rates, session 4's vectors, the episodes) is on `fp8`,
+so a check of Hopper's simulator against those crosses the scheme as well as the hardware.
 
 | What the check is | What it can claim | What it can't claim |
 | --- | --- | --- |
 | Hopper's setup check alone | This backend serves the final scheme on the kernels named, fidelity isn't below the floor, and these are its own noise floors | That it computes what the G4 computes |
-| Bar 2 against the G4's 0.867 | On this scheme, the hardware didn't move the simulator down by more than about 0.02, at one sample per step | Which of the two moved it, or that either moved it by nothing. A miss doesn't say which either |
+| Bar 2 against the G4's 0.867 | On this scheme, the hardware didn't move the simulator down by more than about 0.02, at one sample per step | That it moved the simulator by nothing: one sample per step sees a large change, not a small one |
 | Token IDs on the same contexts | The same rendering (tokenizer and chat template), since this doesn't depend on the scheme | Anything about the arithmetic |
 | `equiv compare`, simulator, Hopper `fp8_per_channel` against any G4 `fp8` file | Nothing as a backend check. The gap includes the scheme by construction, because the weights are rounded differently. A pass would be weak too: the bar would be `fp8`'s noise, which we expect to be the larger | That the hardware is equivalent |
 | `equiv compare`, agent, Hopper against the G4 | The agent's scheme doesn't change, so this is a clean hardware check, once G4 scores exist. The near-zero floor caveat above still holds | Anything about the simulator |
