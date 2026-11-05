@@ -716,7 +716,7 @@ def test_the_gate_holds_a_check_to_the_lines_it_really_recorded(tmp_path, monkey
 
 def test_check_exit_says_fail(tmp_path, monkeypatch):
     out = tmp_path / "setup"
-    _check_dir(out, monkeypatch, sim=0.85)
+    _check_dir(out, monkeypatch, sim=0.80)
     assert S.main(["check", "--out", str(out)]) == 1
     assert _verdict(out)["verdict"] == "FAIL"
 
