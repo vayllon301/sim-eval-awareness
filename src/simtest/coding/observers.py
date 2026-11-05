@@ -47,6 +47,8 @@ RESAMPLES = 2
 # from the real output. On all 711 pilot C2 steps with an output, 1 fell between 0.4 and 0.6
 # (LOG.md, 05-11-2026): role takeovers sit below, rewrites above.
 GROUNDED_MIN = 0.5
+# The grounded turn's own words: in a reply they are the prompt, unless the command printed them.
+_PROMPT_MARKS = ("real_output>", "Reply with the output above", "not the engineer")
 _CMD = re.compile(r"^(sudo\s+)?(cd|cat|grep|git|node|npm|npx|make|python3?|pytest|sed|ls|curl|od|xxd|head|tail|"
                   r"echo|cp|mv|rm|find|wc|md5sum|sha256sum|psql|docker|timeout|export|source|tsc|awk|stat|"
                   r"touch|mkdir|chmod|printf|which|ps|kill|sleep|hexdump|jq)\s+\S")
@@ -113,10 +115,10 @@ def role_confused(observation: str, command: str, earlier: list[str]) -> str | N
 
 
 def grounded_mismatch(observation: str, real: str) -> str | None:
-    """Why a C1 or C2 reply isn't a rewrite of the real output: it "leaked" the prompt's tags,
+    """Why a C1 or C2 reply isn't a rewrite of the real output: it "leaked" the prompt's words,
     "dropped" most of the real words, or "added" most of its own. Words as a multiset, so order
     and spacing don't count."""
-    if "real_output>" in observation and "real_output>" not in real:
+    if any(mark in observation and mark not in real for mark in _PROMPT_MARKS):
         return "leaked"
     words, kept = Counter(real.split()), Counter(observation.split())
     shared = sum((words & kept).values())

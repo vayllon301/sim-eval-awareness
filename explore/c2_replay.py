@@ -7,8 +7,9 @@ only, on MLX, so never evidence (AGENTS.md, Rules).
 
     uv run python explore/c2_replay.py ../TFM/experiment/logs/n2-pilot --out logs/c2-replay.jsonl
 
-Re-running with the same --out skips the episodes already there. --suffix adds a line after the real
-output, to test a change to the grounded turn on the same steps.
+Re-running with the same --out skips the episodes already there. The turn is sent as the observer sends
+it; --no-reminder takes GROUNDED_REMINDER off, to compare. As the observer, an empty real output calls no
+simulator and a cut reply never passes.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from simtest.coding import prompts
 from simtest.coding.machine import ExecResult, tool_output
 from simtest.coding.observers import RESAMPLES, grounded_mismatch, make_observer, parse
 from simtest.coding.scenario import load_scenario
@@ -48,16 +50,18 @@ def ask(model: str, messages: list[dict]) -> tuple[str, dict]:
         "seconds": round(time.monotonic() - t0, 1), "stop": choice.get("finish_reason"), "usage": reply.get("usage")}
 
 
-def step(obs, model: str, command: str, real: str, suffix: str = "") -> dict:
+def step(obs, model: str, command: str, real: str, reminder: bool = True) -> dict:
     """Up to 1 + RESAMPLES samples, stopping at the first that passes, as SimulatedBash.observe."""
     messages = [{"role": m.role, "content": m.text} for m in obs.messages(command, ExecResult(real, 0, False, 0.0))]
-    if suffix:
-        messages[-1]["content"] += f"\n{suffix}"
+    if not reminder:
+        messages[-1]["content"] = messages[-1]["content"].removesuffix("\n" + prompts.GROUNDED_REMINDER)
     truth = tool_output(real)
+    if not truth.strip():
+        return {"command": command[:200], "real_chars": 0, "samples": [], "passed_on": None, "real_empty": True}
     samples = []
     for _ in range(1 + RESAMPLES):
         text, info = ask(model, messages)
-        reason = grounded_mismatch(text, truth)
+        reason = "incomplete" if info["stop"] != "stop" else grounded_mismatch(text, truth)
         samples.append({"reason": reason, "head": text[:300], **info})
         if reason is None:
             break
@@ -70,7 +74,7 @@ def main() -> None:
     parser.add_argument("log_dir")
     parser.add_argument("--out", required=True)
     parser.add_argument("--model", default="qwen-agentworld-35b-a3b-mlx")
-    parser.add_argument("--suffix", default="")
+    parser.add_argument("--no-reminder", action="store_true")
     args = parser.parse_args()
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     done = set()
@@ -89,11 +93,11 @@ def main() -> None:
             obs = make_observer("C2", "laptop", load_scenario(s["id"]), s["store"]["CodingEpisode:session_start"])
             obs.history = [(x["command"], x.get("observation") or "") for x in bash[:first]]
             row = {"id": s["id"], "epoch": s["epoch"], "first_bad_step": first, "n_steps": len(bash)}
-            row["bad_step"] = step(obs, args.model, bash[first]["command"], bash[first]["result"].get("output") or "", args.suffix)
+            row["bad_step"] = step(obs, args.model, bash[first]["command"], bash[first]["result"].get("output") or "", not args.no_reminder)
             if first + 1 < len(bash):                  # the fix leaves the real output in the history
                 obs.history.append((bash[first]["command"], tool_output(bash[first]["result"].get("output") or "")))
                 nxt = bash[first + 1]
-                row["next_step"] = step(obs, args.model, nxt["command"], nxt["result"].get("output") or "", args.suffix)
+                row["next_step"] = step(obs, args.model, nxt["command"], nxt["result"].get("output") or "", not args.no_reminder)
             out.write(json.dumps(row) + "\n")
             out.flush()
             print(s["id"], s["epoch"], "first bad", first, "passed on", row["bad_step"]["passed_on"],

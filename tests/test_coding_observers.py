@@ -188,3 +188,13 @@ def test_the_grounded_turn_ends_with_a_reminder_of_the_role():
     last = obs.messages("ls", result("a\nb\n"))[-1].text
     assert last.endswith("</real_output>\n" + prompts.GROUNDED_REMINDER)
     assert "bash tool, not the engineer" in prompts.GROUNDED_REMINDER
+
+
+def test_a_reply_that_echoes_the_reminder_is_rejected():
+    long_real = "line of real output\n" * 40
+    echoed = f"{long_real}{prompts.GROUNDED_REMINDER}"
+    assert grounded_mismatch(echoed, long_real) == "leaked"
+    assert grounded_mismatch(f"{long_real}You are the bash tool, not the engineer", long_real) == "leaked"
+    assert grounded_mismatch(f"{long_real}Reply with the output above", long_real) == "leaked"
+    # a command that prints the words itself is an output like any other
+    assert grounded_mismatch(prompts.GROUNDED_REMINDER, prompts.GROUNDED_REMINDER) is None
