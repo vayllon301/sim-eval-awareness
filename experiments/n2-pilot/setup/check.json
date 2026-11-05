@@ -1,0 +1,83 @@
+{
+ "verdict": "PASS",
+ "commit": "8355f1c730968b6f55aea9842f52d54455bf7537",
+ "scheme": "fp8_per_channel",
+ "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+ "rule": {
+  "checks": {
+   "scheme": true,
+   "fidelity": true,
+   "truncations": true
+  },
+  "confirm_budget": false,
+  "pin": "max_connections stays 12 in the pilot and N3, on every backend: batch dependence remains (Triton MoE tiles chosen by the batch's size, attention splits, prefill chunk boundaries), and vLLM's batch-invariant mode refuses the GDN layers.",
+  "verdict": "PASS",
+  "problems": [],
+  "action": "the episodes may start on fp8_per_channel"
+ },
+ "fidelity": {
+  "steps": 84,
+  "real_steps": 84,
+  "deterministic": 81,
+  "errors": 0,
+  "truncated": 0,
+  "complete": true,
+  "mean_sim": 0.8891936522732079,
+  "exact": 0.5432098765432098,
+  "pytest_right": "9/10",
+  "steps_with_tells": 0
+ },
+ "graded": {
+  "available": true,
+  "n": 81,
+  "counts": {
+   "format_only": 40,
+   "needs_judgement": 23,
+   "semantic_match": 5,
+   "known_mismatch": 5,
+   "semantic_mismatch": 1,
+   "exact": 7
+  },
+  "faithful": 0.6419753086419753
+ },
+ "speed": {
+  "at": 12,
+  "windows": 59,
+  "median_tok_s": 913.8597725273642,
+  "mean_tok_s": 916.3478146628759,
+  "overall_tok_s": 857.4506950796463
+ },
+ "noise": {
+  "problems": [],
+  "agent": {
+   "contexts": 12,
+   "positions": 510296,
+   "mean_abs_dlogprob": 0.38226696474706595,
+   "median_abs_dlogprob": 0.0021082013845443726,
+   "p99_abs_dlogprob": 6.377443313598633,
+   "max_abs_dlogprob": 31.229879796504974,
+   "top1_agreement": 0.909270305861696,
+   "reply_mean_abs_dlogprob": 0.0235302941371953
+  },
+  "simulator": {
+   "contexts": 18,
+   "positions": 686611,
+   "mean_abs_dlogprob": 0.028748731613223125,
+   "median_abs_dlogprob": 8.702202649146784e-06,
+   "p99_abs_dlogprob": 0.5321648269891739,
+   "max_abs_dlogprob": 7.942636251449585,
+   "top1_agreement": 0.9850555846032178,
+   "reply_mean_abs_dlogprob": 0.01681786502113097
+  }
+ },
+ "layers": 340,
+ "served": "vllm serve /content/models/simulator --served-model-name simulator --host 127.0.0.1 --port 8001 --gpu-memory-utilization 0.52 --max-model-len 131072 --max-num-seqs 64 --language-model-only --reasoning-parser qwen3 --quantization fp8_per_channel --moe-backend triton --trust-remote-code",
+ "agent_served": "vllm serve /content/models/agent --served-model-name agent --host 127.0.0.1 --port 8000 --gpu-memory-utilization 0.42 --max-model-len 131072 --max-num-seqs 64 --language-model-only --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder",
+ "constants": {
+  "sim_floor": 0.847,
+  "max_truncated": 3,
+  "reference_tok_s": 450.0,
+  "speed_confirm": 0.9,
+  "at_once": 12
+ }
+}
