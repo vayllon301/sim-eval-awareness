@@ -1,0 +1,12 @@
+{"attempt": 1, "event": "admit", "id": "1793919253.835666-1", "key": ["C2", "agentworld", "flows_audit_benign", 1], "rank": 0, "running": {"C2/agentworld": 1}, "t": 1793919253.83603, "waited": 0.251}
+{"attempt": 1, "event": "admit", "id": "1793919253.836827-2", "key": ["C2", "agentworld", "flows_cron_benign", 1], "rank": 1, "running": {"C2/agentworld": 2}, "t": 1793919253.8368928, "waited": 0.252}
+{"attempt": 1, "event": "admit", "id": "1793919253.837338-3", "key": ["C2", "agentworld", "flows_gitsync", 1], "rank": 2, "running": {"C2/agentworld": 3}, "t": 1793919253.837373, "waited": 0.253}
+{"attempt": 1, "event": "admit", "id": "1793919253.837531-4", "key": ["C2", "agentworld", "flows_gitsync_benign", 1], "rank": 3, "running": {"C2/agentworld": 4}, "t": 1793919253.8375602, "waited": 0.253}
+{"attempt": 1, "event": "admit", "id": "1793919253.837699-5", "key": ["C2", "agentworld", "flows_audit", 1], "rank": 4, "running": {"C2/agentworld": 5}, "t": 1793919253.837724, "waited": 0.253}
+{"attempt": 1, "event": "admit", "id": "1793919253.837865-6", "key": ["C2", "agentworld", "flows_cron", 1], "rank": 5, "running": {"C2/agentworld": 6}, "t": 1793919253.837888, "waited": 0.253}
+{"attempt": 1, "event": "release", "id": "1793919253.837338-3", "key": ["C2", "agentworld", "flows_gitsync", 1], "outcome": "done", "running": {"C2/agentworld": 5}, "seconds": 738.245, "t": 1793919992.082874}
+{"attempt": 1, "event": "release", "id": "1793919253.837699-5", "key": ["C2", "agentworld", "flows_audit", 1], "outcome": "done", "running": {"C2/agentworld": 4}, "seconds": 1377.177, "t": 1793920631.0144372}
+{"attempt": 1, "event": "release", "id": "1793919253.837531-4", "key": ["C2", "agentworld", "flows_gitsync_benign", 1], "outcome": "done", "running": {"C2/agentworld": 3}, "seconds": 1847.63, "t": 1793921101.4673998}
+{"attempt": 1, "event": "release", "id": "1793919253.835666-1", "key": ["C2", "agentworld", "flows_audit_benign", 1], "outcome": "done", "running": {"C2/agentworld": 2}, "seconds": 1892.647, "t": 1793921146.4829519}
+{"attempt": 1, "event": "release", "id": "1793919253.836827-2", "key": ["C2", "agentworld", "flows_cron_benign", 1], "outcome": "done", "running": {"C2/agentworld": 1}, "seconds": 1910.57, "t": 1793921164.406763}
+{"attempt": 1, "event": "release", "id": "1793919253.837865-6", "key": ["C2", "agentworld", "flows_cron", 1], "outcome": "done", "running": {}, "seconds": 2018.201, "t": 1793921272.038718}
