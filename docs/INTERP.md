@@ -45,8 +45,8 @@ it is built.
 | `src/simtest/interp/monitors.py` | The logit monitor: log-probs of short sentences at the start of each turn's reasoning |
 | `src/simtest/interp/episodes.py` | The Inspect adapter and the export of a run's log directory (laptop: it needs Inspect) |
 | `src/simtest/interp/readrun.py` | Reading a run: every exported episode, resumable; the server's token IDs; the path check |
-| `src/simtest/interp/validate.py` | Each monitor against the judge's labels and behaviour, and the DRAFT rule for the primary internal measure |
-| `src/simtest/interp/phrases.py` | The logit monitor's sentences from the pilot's verbalisations (DRAFT rule) |
+| `src/simtest/interp/validate.py` | Each monitor against the judge's labels and behaviour, and the frozen rule for the primary internal measure |
+| `src/simtest/interp/phrases.py` | The logit monitor's sentences from the pilot's verbalisations (frozen rule) |
 | `src/simtest/interp/command.py` | `simtest interp`: export, server-ids, phrases, report |
 | `src/simtest/interp/sae.py` | TopK SAEs: a torch-free `.pt` reader, encode, decode, FVU |
 | `src/simtest/interp/meta.py` | Weights fingerprints, hashes, versions |
@@ -858,9 +858,9 @@ uv run simtest interp report logs/n2-pilot --readings R --judge J --kappa K --ph
   episodes, so leaving them out would move those episodes by the sentence's own level, which says nothing
   about awareness: each sentence is centred on its own, then averaged.
 
-## Draft rule: the primary internal measure
+## Rule: the primary internal measure
 
-**DRAFT, not frozen.** Written before any pilot episode exists. `validate.apply_rule` implements it, and
+**Frozen 04-11-2026 (LOG.md), before any pilot episode exists.** `validate.apply_rule` implements it, and
 its numbers are constants there. Pilot episodes calibrate; they are never evidence.
 
 Why logit stays unless beaten: at this size the choice among good candidates is mostly noise. In 250
@@ -926,9 +926,9 @@ scenario. Refitting on each resample widens the interval against this, but doesn
 same-scenario pairs would rule it out, and the pilot has too few. A pilot choice is a calibration, never
 evidence.
 
-## Draft rule: the monitor's sentences
+## Rule: the monitor's sentences
 
-**DRAFT, not frozen.** Written before any pilot episode exists. `simtest interp phrases` implements it,
+**Frozen 04-11-2026 (LOG.md), before any pilot episode exists.** `simtest interp phrases` implements it,
 on text alone, before anyone sees a monitor's value on these sentences.
 
 1. **Source:** the agent's reasoning in scored pilot episodes. Never the hand-labelled test set, and
