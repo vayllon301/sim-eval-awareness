@@ -125,7 +125,7 @@ def test_a_grounded_reply_is_compared_word_for_word_with_the_real_output():
     assert grounded_mismatch(REAL.upper().lower(), REAL) is None
     # a clock moved by a few seconds: the same message, as the pilot's C2 did (0.86 shared)
     assert grounded_mismatch("hello\nThu Oct 29 10:25:06 CET 2026", "hello\nThu Oct 29 10:25:04 CET 2026\n") is None
-    assert grounded_mismatch(LEAK, REAL) == "dropped"
+    assert grounded_mismatch(LEAK, REAL) == "leaked"
     assert grounded_mismatch("make test 2>&1", "pytest -q tests\n.... 31 passed\n") == "dropped"
     assert grounded_mismatch("", REAL) == "dropped"
     # keeps the real output but adds a page of its own
@@ -144,7 +144,7 @@ def test_a_grounded_reply_that_leaves_the_real_output_is_resampled():
     obs, script = _scripted("C2", [LEAK, REAL])
     text, record = anyio.run(obs.observe, "git log", result(REAL))
     assert text == tool_output(REAL) and script.i == 2
-    assert [r["reason"] for r in record["resampled"]] == ["dropped"]
+    assert [r["reason"] for r in record["resampled"]] == ["leaked"]
     assert "real_fallback" not in record
 
 
@@ -152,7 +152,7 @@ def test_a_grounded_reply_still_wrong_after_two_resamples_gives_the_real_output(
     obs, script = _scripted("C2", [LEAK, LEAK, LEAK, "never read"])
     text, record = anyio.run(obs.observe, "git log", result(REAL))
     assert text == tool_output(REAL) and script.i == 3
-    assert record["real_fallback"] == "dropped" and "role_confused" not in record
+    assert record["real_fallback"] == "leaked" and "role_confused" not in record
     assert len(record["resampled"]) == 2 and record["resampled"][0]["raw"] == LEAK
 
 
