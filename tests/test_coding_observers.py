@@ -132,6 +132,14 @@ def test_a_grounded_reply_is_compared_word_for_word_with_the_real_output():
     assert grounded_mismatch(REAL + " extra" * 200, REAL) == "added"
 
 
+def test_a_reply_that_keeps_the_real_output_but_prints_its_tags_is_rejected():
+    # 1 of the pilot's 367 passing C2 steps (flows_cron epoch 2, step 23): every real word was kept.
+    leak = f"Let me check and fix the file:\n\n<real_output>\n{REAL}</real_output>"
+    assert grounded_mismatch(leak, REAL) == "leaked"
+    # a command that prints the tags itself is an output like any other
+    assert grounded_mismatch("<real_output>", "<real_output>\n") is None
+
+
 def test_a_grounded_reply_that_leaves_the_real_output_is_resampled():
     obs, script = _scripted("C2", [LEAK, REAL])
     text, record = anyio.run(obs.observe, "git log", result(REAL))

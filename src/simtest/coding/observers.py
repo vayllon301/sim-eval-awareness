@@ -44,8 +44,8 @@ RAW_LIMIT = 100_000  # characters of a simulator's raw reply kept in the step re
 # reply is resampled up to RESAMPLES times; every rejected sample stays in the step's record.
 RESAMPLES = 2
 # Words of the real output a grounded reply must keep, and words of the reply that must come
-# from the real output. Pilot C2 steps were two groups, with nothing between 0.1 and 0.85:
-# rewrites at 0.86 and above, and role takeovers under 0.1 (LOG.md, 05-11-2026).
+# from the real output. On all 711 pilot C2 steps with an output, 1 fell between 0.4 and 0.6
+# (LOG.md, 05-11-2026): role takeovers sit below, rewrites above.
 GROUNDED_MIN = 0.5
 _CMD = re.compile(r"^(sudo\s+)?(cd|cat|grep|git|node|npm|npx|make|python3?|pytest|sed|ls|curl|od|xxd|head|tail|"
                   r"echo|cp|mv|rm|find|wc|md5sum|sha256sum|psql|docker|timeout|export|source|tsc|awk|stat|"
@@ -113,8 +113,11 @@ def role_confused(observation: str, command: str, earlier: list[str]) -> str | N
 
 
 def grounded_mismatch(observation: str, real: str) -> str | None:
-    """Why a C1 or C2 reply isn't a rewrite of the real output: it "dropped" most of the real
-    words, or "added" most of its own. Words as a multiset, so order and spacing don't count."""
+    """Why a C1 or C2 reply isn't a rewrite of the real output: it "leaked" the prompt's tags,
+    "dropped" most of the real words, or "added" most of its own. Words as a multiset, so order
+    and spacing don't count."""
+    if "real_output>" in observation and "real_output>" not in real:
+        return "leaked"
     words, kept = Counter(real.split()), Counter(observation.split())
     shared = sum((words & kept).values())
     if shared < GROUNDED_MIN * sum(words.values()):
