@@ -1,0 +1,39 @@
+start 0s
+profile: one-gpu-96g (1 GPU of 97887 MiB)
+name, memory.total [MiB], driver_version
+NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 580.82.07
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         236G   83M  236G   1% /
+vllm 0.32.0 torch 2.13.0+cu130 transformers 5.19.0
+vllm-installed 25s
+Qwen/Qwen3.8-27B-FP8 017b9c7af6b5689d5dd426a76e0bc077eb5ca20a
+Qwen/Qwen-AgentWorld-35B-A3B 60d2b0434a53d2e62a7c00a489586815d94ebffb
+downloaded 311s
+engine: compiled (vLLM default)
+agent: memory 0.42, context 131072
+vllm serve /content/models/agent --served-model-name agent --host 127.0.0.1 --port 8000 --gpu-memory-utilization 0.42 --max-model-len 131072 --max-num-seqs 64 --language-model-only --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder
+agent-ready 586s
+simulator: memory 0.52, context 131072
+vllm serve /content/models/simulator --served-model-name simulator --host 127.0.0.1 --port 8001 --gpu-memory-utilization 0.52 --max-model-len 131072 --max-num-seqs 64 --language-model-only --reasoning-parser qwen3 --quantization fp8_per_channel --moe-backend triton --trust-remote-code
+simulator-ready 742s
+memory.used [MiB], memory.total [MiB]
+89218 MiB, 97887 MiB
+(APIServer pid=3745) INFO 11-05 03:10:43 [config.py:688] Mamba cache mode is set to 'align' for Qwen3_5ForConditionalGeneration by default when prefix caching is enabled
+(EngineCore pid=4614) INFO 11-05 03:11:37 [utils.py:347] Using LBNHC KV cache layout.
+(EngineCore pid=4614) INFO 11-05 03:13:42 [gpu_worker.py:759] Available KV cache memory: 9.14 GiB
+(EngineCore pid=4614) INFO 11-05 03:13:42 [gpu_worker.py:774] CUDA graph memory profiling is enabled (default since v0.21.0). The current --gpu-memory-utilization=0.4200 is equivalent to --gpu-memory-utilization=0.4169 without CUDA graph memory profiling. To maintain the same effective KV cache size as before, increase --gpu-memory-utilization to 0.4231. To disable, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
+(EngineCore pid=4614) INFO 11-05 03:13:42 [kv_cache_utils.py:2327] GPU KV cache size: 143,124 tokens, Maximum concurrency for 131,072 tokens per request: 1.09x
+(EngineCore pid=4614) INFO 11-05 03:13:42 [kv_cache_utils.py:853] kv cache group sizes (784, 784, 784, 784)
+(EngineCore pid=4614) INFO 11-05 03:14:35 [gpu_worker.py:1034] Free memory on device (94.43/94.97 GiB) on startup. Desired GPU memory utilization is (0.42, 39.89 GiB). Actual usage is 27.85 GiB for consumed memory (weights + non-torch), 2.9 GiB for peak activation, and 0.13 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=9510984070` (8.86 GiB) to fit into requested memory, or `--kv-cache-memory=68070649344` (63.4 GiB) to fully utilize gpu memory. Current kv cache memory in use is 9.14 GiB.
+(EngineCore pid=4614) INFO 11-05 03:14:37 [core.py:395] init engine (profile, create kv cache, warmup model) took 179.48 s (compilation: 43.89 s)
+(APIServer pid=3745) WARNING 11-05 03:14:38 [serving.py:262] The chat template requires system-first ordering, so inline system messages in /v1/messages requests (e.g. Claude Code's per-turn reminders) are merged into the leading system prompt. Each new one changes the prompt prefix, so the rest of the conversation misses the prefix cache. Pass a --chat-template that accepts non-leading system messages to avoid this.
+(APIServer pid=6099) INFO 11-05 03:14:57 [config.py:688] Mamba cache mode is set to 'align' for Qwen3_5MoeForConditionalGeneration by default when prefix caching is enabled
+(EngineCore pid=6861) INFO 11-05 03:16:17 [utils.py:347] Using LBNHC KV cache layout.
+(EngineCore pid=6861) INFO 11-05 03:17:06 [gpu_worker.py:759] Available KV cache memory: 13.86 GiB
+(EngineCore pid=6861) INFO 11-05 03:17:06 [gpu_worker.py:774] CUDA graph memory profiling is enabled (default since v0.21.0). The current --gpu-memory-utilization=0.5200 is equivalent to --gpu-memory-utilization=0.5155 without CUDA graph memory profiling. To maintain the same effective KV cache size as before, increase --gpu-memory-utilization to 0.5245. To disable, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
+(EngineCore pid=6861) INFO 11-05 03:17:06 [kv_cache_utils.py:2327] GPU KV cache size: 687,377 tokens, Maximum concurrency for 131,072 tokens per request: 5.24x
+(EngineCore pid=6861) INFO 11-05 03:17:06 [kv_cache_utils.py:853] kv cache group sizes (1056, 1056, 1056, 1056)
+(EngineCore pid=6861) INFO 11-05 03:17:13 [gpu_worker.py:1034] Free memory on device (56.62/94.97 GiB) on startup. Desired GPU memory utilization is (0.52, 49.38 GiB). Actual usage is 34.45 GiB for consumed memory (weights + non-torch), 1.08 GiB for peak activation, and 0.22 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=14482963743` (13.49 GiB) to fit into requested memory, or `--kv-cache-memory=22253402112` (20.73 GiB) to fully utilize gpu memory. Current kv cache memory in use is 13.86 GiB.
+(EngineCore pid=6861) INFO 11-05 03:17:14 [core.py:395] init engine (profile, create kv cache, warmup model) took 57.05 s (compilation: 25.51 s)
+(APIServer pid=6099) WARNING 11-05 03:17:16 [serving.py:262] The chat template requires system-first ordering, so inline system messages in /v1/messages requests (e.g. Claude Code's per-turn reminders) are merged into the leading system prompt. Each new one changes the prompt prefix, so the rest of the conversation misses the prefix cache. Pass a --chat-template that accepts non-leading system messages to avoid this.
+done 742s

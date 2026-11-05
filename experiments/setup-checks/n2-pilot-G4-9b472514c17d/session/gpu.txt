@@ -1,0 +1,6 @@
+name, memory.total [MiB], driver_version
+NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 580.82.07
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         236G   83M  236G   1% /
+memory.used [MiB], memory.total [MiB]
+89218 MiB, 97887 MiB

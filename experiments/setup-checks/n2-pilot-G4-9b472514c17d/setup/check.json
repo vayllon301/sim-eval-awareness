@@ -1,0 +1,83 @@
+{
+ "verdict": "FAIL",
+ "commit": "9b472514c17d964834044ad2acf46f5c0a777d99",
+ "scheme": "fp8_per_channel",
+ "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+ "rule": {
+  "checks": {
+   "scheme": true,
+   "fidelity": false,
+   "truncations": true
+  },
+  "confirm_budget": false,
+  "pin": "max_connections stays 12 in the pilot and N3, on every backend: batch dependence remains (Triton MoE tiles chosen by the batch's size, attention splits, prefill chunk boundaries), and vLLM's batch-invariant mode refuses the GDN layers.",
+  "verdict": "FAIL",
+  "problems": [],
+  "action": "no episode runs and the session stops. It never falls back to fp8: that would be a new decision, in LOG.md. Victor decides what comes next; a new check, after a fix, runs in a new directory and both are reported."
+ },
+ "fidelity": {
+  "steps": 84,
+  "real_steps": 84,
+  "deterministic": 81,
+  "errors": 0,
+  "truncated": 1,
+  "complete": true,
+  "mean_sim": 0.8667393348022503,
+  "exact": 0.5308641975308642,
+  "pytest_right": "9/10",
+  "steps_with_tells": 0
+ },
+ "graded": {
+  "available": true,
+  "n": 81,
+  "counts": {
+   "format_only": 38,
+   "known_mismatch": 8,
+   "semantic_mismatch": 2,
+   "needs_judgement": 21,
+   "semantic_match": 4,
+   "exact": 8
+  },
+  "faithful": 0.6172839506172839
+ },
+ "speed": {
+  "at": 12,
+  "windows": 55,
+  "median_tok_s": 916.598138786796,
+  "mean_tok_s": 915.5806256199115,
+  "overall_tok_s": 866.6218681296779
+ },
+ "noise": {
+  "problems": [],
+  "agent": {
+   "contexts": 12,
+   "positions": 510296,
+   "mean_abs_dlogprob": 0.38277232919588094,
+   "median_abs_dlogprob": 0.002109939232468605,
+   "p99_abs_dlogprob": 6.391629219055176,
+   "max_abs_dlogprob": 31.229879796504974,
+   "top1_agreement": 0.9095485757285967,
+   "reply_mean_abs_dlogprob": 0.02302684429622836
+  },
+  "simulator": {
+   "contexts": 18,
+   "positions": 686611,
+   "mean_abs_dlogprob": 0.028721944160803578,
+   "median_abs_dlogprob": 8.702214472577907e-06,
+   "p99_abs_dlogprob": 0.5311359167098999,
+   "max_abs_dlogprob": 6.996535623446107,
+   "top1_agreement": 0.9849026595845392,
+   "reply_mean_abs_dlogprob": 0.01679925461053371
+  }
+ },
+ "layers": 340,
+ "served": "vllm serve /content/models/simulator --served-model-name simulator --host 127.0.0.1 --port 8001 --gpu-memory-utilization 0.52 --max-model-len 131072 --max-num-seqs 64 --language-model-only --reasoning-parser qwen3 --quantization fp8_per_channel --moe-backend triton --trust-remote-code",
+ "agent_served": "vllm serve /content/models/agent --served-model-name agent --host 127.0.0.1 --port 8000 --gpu-memory-utilization 0.42 --max-model-len 131072 --max-num-seqs 64 --language-model-only --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder",
+ "constants": {
+  "sim_floor": 0.892,
+  "max_truncated": 3,
+  "reference_tok_s": 450.0,
+  "speed_confirm": 0.9,
+  "at_once": 12
+ }
+}
