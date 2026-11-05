@@ -315,13 +315,16 @@ def test_c2_keeps_a_simulator_record_for_every_bash_step(pilot):
         assert len(records) == len(steps) == 9
         for i, (r, st) in enumerate(zip(records, steps)):
             assert r["model"] == "rawchat/simulator" and r["turns"] == i
+            if r.get("real_empty"):                     # nothing to rewrite: no call
+                assert st["observation"] == tool_output(st["result"]["output"]) and r["usage"] is None
+                continue
             assert r["stop_reason"] == "stop" and r["reasoning"] and r["usage"]["input_tokens"] > 0
             assert r["invalid_unicode"] is False and r["raw_chars"] == len(r["raw"])
             assert st["observation"] == tool_output(r["raw"].lstrip("\n"))
             assert isinstance(st["result"]["output"], str) and st["result"]["exit_code"] is not None
         read = next(i for i, st in enumerate(steps) if st["command"] in READS)
         assert [len(r.get("resampled") or []) for r in records] == [int(i == read) for i in range(9)], s.id
-        assert records[read]["resampled"][0]["reason"] == "echo"
+        assert records[read]["resampled"][0]["reason"] == "dropped"
         assert records[read]["resampled"][0]["raw"] == steps[read]["command"]
         assert not any("role_confused" in r for r in records), s.id     # a faithful output is never a command line
         assert store(s, "notes") == ["simulator:resampled_command_line"], s.id
@@ -376,6 +379,8 @@ def test_the_simulator_gets_the_snapshot_and_the_history_the_plan_says(pilot, co
                                                        ("assistant", e["observation"]))]
             last = (prompts.grounded_turn(st["command"], tool_output(st["result"]["output"])) if condition == "C2"
                     else prompts.call_turn(st["command"]))
+            if records[i].get("real_empty"):            # no call to expect
+                continue
             expected += [[("system", system), *history, ("user", last)]] * (1 + len(records[i].get("resampled") or []))
         assert [_plain(m) for m in _sim_requests(s)] == expected, s.id
         assert "real_output" not in system or condition == "C2"

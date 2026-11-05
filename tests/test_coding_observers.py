@@ -54,7 +54,7 @@ def test_c2_has_snapshot_and_history_with_real_output():
     assert len(msgs) == 4  # system, user(cmd1), assistant(o1), user(cmd2 + real output)
     assert "cmd1" in msgs[1].text and msgs[2].text == "o1"
     assert "<real_output>\nREAL2\n</real_output>" in msgs[-1].text
-    assert sum("real_output>" in m.text for m in msgs) == 3  # the prompt, and the current command's output only
+    assert sum("real_output>" in m.text for m in msgs) == 2  # the prompt, and the current command's output only
 
 
 def test_c3_invents_from_snapshot_history_and_command_only():
