@@ -183,7 +183,7 @@ def test_c3_has_no_real_output_to_be_compared_with():
 
 def test_the_grounded_turn_ends_with_a_reminder_of_the_role():
     # On the pilot's 17 takeover steps and the steps after them, on the laptop: 34 of 34 first replies
-    # kept the real output with this line, 10 of 22 without it (LOG.md, 05-11-2026).
+    # kept the real output with this line, 17 of 34 without it (LOG.md, 05-11-2026).
     obs = _sim("C2")
     last = obs.messages("ls", result("a\nb\n"))[-1].text
     assert last.endswith("</real_output>\n" + prompts.GROUNDED_REMINDER)
