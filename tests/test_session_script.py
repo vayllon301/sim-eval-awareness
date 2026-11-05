@@ -57,10 +57,13 @@ case $cmd in
   *"cat > /content/read/phrases.json"*) cat > "$STATE/read-phrases" ;;
   *"tar czf - -C /content/read readings"*) tar czf - -C "$STATE/vm/read" readings ;;
   *"cat > /content/sim.bundle"*) cat > "$STATE/sim.bundle" ;;
-  *"sim-session-step lines"*) cat "$STATE/vm/probe/server.txt" ;;
+  *"sim-session-step lines"*)
+    # Colab allows one SSH session per VM (LOG.md, 04-11-2026): with the tunnel up, this is a 429.
+    if [ -e "$STATE/tunnel-up" ]; then echo "[colab] Already-active SSH session (HTTP 429)" >&2; exit 255; fi
+    cat "$STATE/vm/probe/server.txt" ;;
   *"tar czf - -C /content probe"*) tar czf - -C "$STATE/vm" probe ;;
   *"tar czf - -C /content interp-smoke"*) tar czf - -C "$STATE/vm" interp-smoke ;;
-  *) sleep 0.2; exit 255 ;;                      # the tunnel (-N): drops, and tunnel.sh reconnects
+  *) touch "$STATE/tunnel-up"; sleep 0.2; exit 255 ;;   # the tunnel (-N): drops, and tunnel.sh reconnects
 esac
 """
 UV = REC + """case "$*" in
@@ -166,7 +169,7 @@ def test_dry_run_prints_every_step_and_touches_nothing(tmp_path):
     cmds = [x for x in proc.stdout.splitlines() if x.startswith("+ ")]
     text = "\n".join(cmds)
     order = ["colab --auth adc usage", "colab --auth adc new -s probe --gpu G4", "watchdog.sh probe 40",
-             "sim-session-step serve", "tunnel.sh probe", "localhost:18000/v1/models", "sim-session-step lines",
+             "sim-session-step serve", "sim-session-step lines", "tunnel.sh probe", "localhost:18000/v1/models",
              "sim_quant.py lines", "simtest equiv score", "sim_quant.py fidelity", "sim_quant.py check",
              "sim_quant.py gate", "simtest run", "sim-session-step free-gpu", "git bundle create",
              "sim-session-step readings", "tar czf - -C /content interp-smoke", "tar czf - -C /content probe",
@@ -240,7 +243,7 @@ def test_a_full_session_runs_every_step_and_stops_the_vm(tmp_path):
     proc, calls, out, state = run(tmp_path, {"EPOCHS": "1-2", "ADMIT_FOR": "13.5", "STEPS": "setup run readings"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
     order = ["colab --auth adc usage", "colab --auth adc new -s probe --gpu G4", "sim-session-step serve",
-             "localhost:18000/v1/models", "sim-session-step lines", "sim_quant.py lines", "simtest equiv score",
+             "sim-session-step lines", "localhost:18000/v1/models", "sim_quant.py lines", "simtest equiv score",
              "sim_quant.py fidelity", "sim_quant.py check", "sim_quant.py gate", "simtest run",
              "sim-session-step free-gpu", "sim-session-step readings", "tar czf - -C /content interp-smoke",
              "tar czf - -C /content probe", "colab --auth adc stop -s probe"]

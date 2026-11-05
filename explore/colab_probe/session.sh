@@ -289,14 +289,15 @@ if (( need_servers )); then
   served=1
   vm -i explore/colab_probe/serve.sh -o $OUTDIR/serve.log -t $(( ${SERVE_MIN:-45} * 60 )) \
     ": sim-session-step serve; ${serve_env}bash -s" || fail "serve.sh failed (see $OUTDIR/serve.log)"
-  x -b -o $OUTDIR/tunnel.log explore/colab_probe/tunnel.sh $SESSION
-  tunnel_pid=$BG
-  wait_models $(( ${READY_MIN:-5} * 60 )) || fail "the servers didn't answer through the tunnel (see $OUTDIR/tunnel.log)"
-  note "servers ready"
+  # Before the tunnel: Colab allows one SSH session per VM, so with it up this would be a 429.
   if want setup || want run; then
     vm -O $OUTDIR/server.txt -t 60 ": sim-session-step lines; cat $VM_WORK/probe/server.txt" \
       || fail "could not read the server's lines"
   fi
+  x -b -o $OUTDIR/tunnel.log explore/colab_probe/tunnel.sh $SESSION
+  tunnel_pid=$BG
+  wait_models $(( ${READY_MIN:-5} * 60 )) || fail "the servers didn't answer through the tunnel (see $OUTDIR/tunnel.log)"
+  note "servers ready"
 fi
 
 # 4. The steps.

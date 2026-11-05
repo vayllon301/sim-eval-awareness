@@ -146,6 +146,12 @@ PT = _server("fp8_per_tensor_static", "--quantization fp8")
 PC = _server("fp8_per_channel_static", "--quantization fp8_per_channel --moe-backend triton")
 
 
+def test_a_real_per_channel_server_passes_the_line_check():
+    """Verbatim from the first real session on the final scheme (LOG.md, 04-11-2026)."""
+    real = (Path(__file__).parent / "sim_quant_fixtures" / "g4-server-per-channel.txt").read_text()
+    assert S.server_check(real) == ([], [])
+
+
 def test_the_fixture_is_the_real_format():
     kinds = REAL.split("layers of types: ")[1].strip().split("; ")
     assert len(kinds) == 14 and "mlp.experts: 40 (from moe: fp8_per_tensor_static)" in kinds
