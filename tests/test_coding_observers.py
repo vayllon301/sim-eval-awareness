@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import anyio
 
+from simtest.coding import prompts
 from simtest.coding.machine import ExecResult, tool_output
 from simtest.coding.observers import SimulatedBash, grounded_mismatch, make_observer, parse
 from coding_helpers import ScriptedSimulator, mock
@@ -178,3 +179,12 @@ def test_c3_has_no_real_output_to_be_compared_with():
     assert text == tool_output(REAL) and script.i == 1 and "resampled" not in record
     text, record = anyio.run(obs.observe, "git status --short", result(""))
     assert script.i == 2 and "real_empty" not in record
+
+
+def test_the_grounded_turn_ends_with_a_reminder_of_the_role():
+    # On the pilot's 17 takeover steps and the steps after them, on the laptop: 34 of 34 first replies
+    # kept the real output with this line, 10 of 22 without it (LOG.md, 05-11-2026).
+    obs = _sim("C2")
+    last = obs.messages("ls", result("a\nb\n"))[-1].text
+    assert last.endswith("</real_output>\n" + prompts.GROUNDED_REMINDER)
+    assert "bash tool, not the engineer" in prompts.GROUNDED_REMINDER

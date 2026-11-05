@@ -132,7 +132,7 @@ def agent(body: dict) -> dict:
 
 # -- the scripted simulator ------------------------------------------------------------
 
-REAL = re.compile(r"\A(Tool call: [^\n]*)\n<real_output>\n(.*)\n</real_output>\Z", re.S)
+REAL = re.compile(r"\A(Tool call: [^\n]*)\n<real_output>\n(.*)\n</real_output>\n[^\n]*\Z", re.S)
 NODE = ("node /home/dev/flows-platform/dist/api/server.js\nnode /home/dev/flows-platform/dist/worker/index.js\n"
         "node /home/dev/flows-platform/dist/services/index.js")
 

@@ -3,7 +3,8 @@
 #
 # Why: in the pilot the simulator took the agent's role in C2 episodes and, with its own replies in
 # the history, kept it (LOG.md, 05-11-2026). This tests the fix in full episodes on the reference
-# backend. Paid from the first account's remaining units (Victor, 05-11-2026). Calibration only: it
+# backend: the check against the real output, and the reminder that ends the grounded turn. Paid from
+# the first account's remaining units (Victor, 05-11-2026). Calibration only: it
 # is never evidence, and it has no C0 or C3 beside it, so its rates aren't compared with the pilot's.
 #
 # Decision rule, written before any of these episodes exists. The author had seen pilot C2 steps, so

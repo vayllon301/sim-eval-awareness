@@ -512,7 +512,7 @@ class EchoReal:
     def __call__(self, input, tools, tool_choice, config):
         import re
 
-        real = re.search(r"<real_output>\n(.*)\n</real_output>\Z", input[-1].text, re.S).group(1)
+        real = re.search(r"<real_output>\n(.*)\n</real_output>\n", input[-1].text, re.S).group(1)
         return ModelOutput.from_content("mockllm/sim", "<think>t</think>\n\n" + real)
 
 
