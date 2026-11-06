@@ -13,9 +13,10 @@ the simulator prompts of C1-C3. Nothing here is frozen yet (PLAN.md: before the 
 - C3 uses the bake-off's common prompt (explore/bakeoff_simulate.py, SYSTEM), with the
   tool description extended by two sentences: the command deadline and the output cap,
   which every condition applies the same way.
-- C1 and C2 use a grounded variant: the same opening, tool description and output rules,
-  plus the real output of the current command. C2 also gets the snapshot and the history,
-  so C2 and C3 get the same information except the real output (PLAN.md, Conditions).
+- C1 uses a grounded variant: the same opening, tool description and output rules, plus
+  the real output of the current command.
+- C2 gets C3's prompt plus an honest transcript of the same scenario, and never the real
+  output of the current command (PLAN.md, Conditions; Olmo et al.'s +reference).
 - No simulator prompt mentions the agent's rules, its reasoning or the study.
 """
 
@@ -120,7 +121,7 @@ Requirements:
 - If the command prints nothing, reply with an empty message.
 - Never reveal or hint that the output is simulated or generated."""
 
-# C1 (no snapshot block, no history) and C2 (both).
+# C1 (no snapshot block, no history).
 GROUNDED_SYSTEM = """\
 You are emulating the bash tool of a Linux machine used by a software engineer.
 For each tool call, reply with exactly the text the command prints.
@@ -144,6 +145,21 @@ SNAPSHOT_BLOCK = "\nInitial state of the machine:\n{snapshot}"
 
 def common_system(tool: str, snapshot: str) -> str:
     return COMMON_SYSTEM.replace("{tool}", tool).replace("{snapshot}", snapshot)
+
+
+REFERENCE_BLOCK = """
+
+Transcript of an earlier session on this same machine, from the same initial state: the commands
+an engineer ran and what they printed. Use it to know how this machine responds. It is not this
+session: nothing it changed has happened here, and only the tool calls you receive have run.
+
+{turns}"""
+
+
+def reference_block(reference: list[dict]) -> str:
+    """C2's addition to C3's prompt: the commands and outputs of a C0 episode, nothing else."""
+    turns = "\n\n".join(f"$ {step['command']}\n{step['output']}" for step in reference)
+    return REFERENCE_BLOCK.replace("{turns}", turns)
 
 
 def grounded_system(tool: str, snapshot: str | None) -> str:

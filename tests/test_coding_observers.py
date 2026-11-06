@@ -46,16 +46,6 @@ def test_c1_sends_real_output_no_snapshot_no_history():
     assert "<real_output>\nR2\n</real_output>" in msgs[-1].text
 
 
-def test_c2_has_snapshot_and_history_with_real_output():
-    obs = _sim("C2")
-    text1, rec1 = anyio.run(obs.observe, "cmd1", result("o1"))     # a reply that keeps the real output
-    assert text1 == "o1" and rec1["raw"] == "o1"
-    msgs = obs.messages("cmd2", result("REAL2"))
-    assert SNAP in msgs[0].text
-    assert len(msgs) == 4  # system, user(cmd1), assistant(o1), user(cmd2 + real output)
-    assert "cmd1" in msgs[1].text and msgs[2].text == "o1"
-    assert "<real_output>\nREAL2\n</real_output>" in msgs[-1].text
-    assert sum("real_output>" in m.text for m in msgs) == 2  # the prompt, and the current command's output only
 
 
 def test_c3_invents_from_snapshot_history_and_command_only():
@@ -105,12 +95,23 @@ def test_scenario_snapshot_discloses_no_rule(sid):
         assert phrase not in snap, f"{sid}: rule phrasing leaked into the snapshot: {phrase!r}"
     # and the snapshot (with the session start, read on the box at run time) really is the
     # scenario-derived part of the C2 and C3 simulator inputs
-    for condition in ("C2", "C3"):
+    for condition in ("C2", "C3") if sc.reference_path.exists() else ("C3",):
         observer = make_observer(condition, mock(ScriptedSimulator(["x"]), "mockllm/sim"), sc, session_start=FAKE_DATE)
         assert session_snapshot(snap, FAKE_DATE).rstrip() in observer.system
 
 
-# C1 and C2 must stay on the real output. In the pilot (LOG.md, 05-11-2026) one C2 simulator took
+@pytest.mark.parametrize("sid", [s for s in list_scenarios() if load_scenario(s).reference_path.exists()])
+def test_the_reference_discloses_no_rule(sid):
+    sc = load_scenario(sid)
+    blob = "\n".join(f"{x['command']}\n{x['output']}" for x in sc.reference)
+    assert set(map(str, (k for x in sc.reference for k in x))) == {"command", "output"}
+    for line in sc.policy:
+        assert line not in blob, f"{sid}: policy line in the reference: {line!r}"
+    for phrase in RULE_PHRASES:
+        assert phrase not in blob, f"{sid}: rule phrasing in the reference: {phrase!r}"
+
+
+# C1 must stay on the real output. In the pilot (LOG.md, 05-11-2026) one C2 simulator took
 # the agent's role at step 7 and, with its own replies in the history, kept it for 39 of 46 steps.
 LEAK = "Let me check the current content of `src/services/git-sync.ts`:\n\n<real_output>\n</real_output>"
 REAL = "9183eb8 SEC-61: no customer content in git sync's logs\ne9f428f CONTRIBUTING: how we work on this repo\n"
@@ -142,7 +143,7 @@ def test_a_reply_that_keeps_the_real_output_but_prints_its_tags_is_rejected():
 
 
 def test_a_grounded_reply_that_leaves_the_real_output_is_resampled():
-    obs, script = _scripted("C2", [LEAK, REAL])
+    obs, script = _scripted("C1", [LEAK, REAL])
     text, record = anyio.run(obs.observe, "git log", result(REAL))
     assert text == tool_output(REAL) and script.i == 2
     assert [r["reason"] for r in record["resampled"]] == ["leaked"]
@@ -150,7 +151,7 @@ def test_a_grounded_reply_that_leaves_the_real_output_is_resampled():
 
 
 def test_a_grounded_reply_still_wrong_after_two_resamples_gives_the_real_output():
-    obs, script = _scripted("C2", [LEAK, LEAK, LEAK, "never read"])
+    obs, script = _scripted("C1", [LEAK, LEAK, LEAK, "never read"])
     text, record = anyio.run(obs.observe, "git log", result(REAL))
     assert text == tool_output(REAL) and script.i == 3
     assert record["real_fallback"] == "leaked" and "role_confused" not in record
@@ -158,7 +159,7 @@ def test_a_grounded_reply_still_wrong_after_two_resamples_gives_the_real_output(
 
 
 def test_a_confused_reply_never_enters_the_grounded_history():
-    obs, _ = _scripted("C2", [LEAK, LEAK, LEAK, REAL])
+    obs, _ = _scripted("C1", [LEAK, LEAK, LEAK, REAL])
     anyio.run(obs.observe, "git log", result(REAL))
     msgs = obs.messages("next", result("x"))
     assert all("<real_output>" not in m.text for m in msgs[1:-1])
@@ -166,7 +167,7 @@ def test_a_confused_reply_never_enters_the_grounded_history():
 
 
 def test_an_empty_real_output_calls_no_simulator():
-    for condition in ("C1", "C2"):
+    for condition in ("C1",):
         obs, script = _scripted(condition, [LEAK])
         text, record = anyio.run(obs.observe, "git status --short", result(""))
         assert text == tool_output("") and script.i == 0
@@ -184,7 +185,7 @@ def test_c3_has_no_real_output_to_be_compared_with():
 def test_the_grounded_turn_ends_with_a_reminder_of_the_role():
     # On the pilot's 17 takeover steps and the steps after them, on the laptop: 34 of 34 first replies
     # kept the real output with this line, 17 of 34 without it (LOG.md, 05-11-2026).
-    obs = _sim("C2")
+    obs = _sim("C1")
     last = obs.messages("ls", result("a\nb\n"))[-1].text
     assert last.endswith("</real_output>\n" + prompts.GROUNDED_REMINDER)
     assert "bash tool, not the engineer" in prompts.GROUNDED_REMINDER
@@ -198,3 +199,48 @@ def test_a_reply_that_echoes_the_reminder_is_rejected():
     assert grounded_mismatch(f"{long_real}Reply with the output above", long_real) == "leaked"
     # a command that prints the words itself is an output like any other
     assert grounded_mismatch(prompts.GROUNDED_REMINDER, prompts.GROUNDED_REMINDER) is None
+
+
+# The new C2 (LOG.md, 05-11-2026): C3's inputs plus an honest transcript of the same scenario.
+REFERENCE = [{"command": "ls", "output": "README.md"}, {"command": "make test", "output": "12 passed"}]
+
+
+def _c2(replies, reference=REFERENCE):
+    script = ScriptedSimulator(replies)
+    return SimulatedBash("C2", mock(script, "mockllm/sim"), TOOL, SNAP, reference), script
+
+
+def test_c2_gets_c3s_inputs_plus_the_reference_and_never_the_real_output():
+    obs, _ = _c2(["o1"])
+    c3 = SimulatedBash("C3", mock(ScriptedSimulator(["o1"]), "mockllm/sim"), TOOL, SNAP)
+    msgs = obs.messages("cmd", result("SECRET-REAL"))
+    assert msgs[0].text == c3.messages("cmd", result("x"))[0].text + prompts.reference_block(REFERENCE)
+    assert [m.text for m in msgs[1:]] == [m.text for m in c3.messages("cmd", result("x"))[1:]]
+    assert "SECRET-REAL" not in " ".join(m.text for m in msgs) and "real_output" not in msgs[0].text
+    assert "12 passed" in msgs[0].text and "make test" in msgs[0].text
+
+
+def test_the_reference_says_it_is_another_session():
+    block = prompts.reference_block(REFERENCE)
+    assert "earlier session" in block and "nothing it changed has happened here" in block
+
+
+def test_c2_keeps_c3s_rule_and_calls_the_simulator_on_an_empty_output():
+    obs, script = _c2(["make test 2>&1", "12 passed"])
+    text, record = anyio.run(obs.observe, "make test 2>&1", result("something else"))
+    assert text == tool_output("12 passed") and [r["reason"] for r in record["resampled"]] == ["echo"]
+    assert "real_fallback" not in record
+    text, record = anyio.run(obs.observe, "git status --short", result(""))
+    assert script.i == 3 and "real_empty" not in record
+
+
+def test_c2_needs_a_reference():
+    import pytest
+    with pytest.raises(ValueError):
+        SimulatedBash("C2", mock(ScriptedSimulator(["o"]), "mockllm/sim"), TOOL, SNAP)
+
+
+def test_c1_stays_checked_against_the_real_output():
+    obs, script = _scripted("C1", [LEAK, REAL])
+    text, _ = anyio.run(obs.observe, "git log", result(REAL))
+    assert text == tool_output(REAL) and script.i == 2

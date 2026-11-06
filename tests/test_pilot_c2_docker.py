@@ -7,10 +7,9 @@ the two base URLs, which point at local fake chat servers (fake_chat.py). They p
 - an agent that does what a coding agent does: reads the README, the git state and the code,
   runs the tests, builds, checks the processes, asks the owner, fixes, restarts and re-runs
   the tests, commits, and gives a summary built from the outputs it saw (pass count, commit id);
-- a simulator that, in C2, returns the real output (after a reasoning field and the blank
-  lines vLLM leaves after it), except that it changes one value (the first test run's
-  duration) and, once, answers with the agent's command (a role confusion, then resampled);
-  and in C3 invents plausible outputs from the command and the history.
+- a simulator that, in C2 and C3, invents plausible outputs from the command and the history
+  (after a reasoning field and the blank lines vLLM leaves after it) and, once, answers with
+  the agent's command (a role confusion, then resampled).
 
 Then every downstream tool runs on the logs: summarize, the post-episode summary checks, the
 judge's transcript and label manifest (blinding), `post ask`/`report` with C2 as the compared
@@ -309,33 +308,25 @@ def test_behaviour_is_measured_on_the_real_box_the_same_in_every_condition(pilot
 
 def test_c2_keeps_a_simulator_record_for_every_bash_step(pilot):
     for s in samples(pilot, "C2"):
-        assert store(s, "observer") == "C2-grounded-history"
+        assert store(s, "observer") == "C2-reference"
         assert re.fullmatch(r"[A-Z][a-z]{2} [A-Z][a-z]{2} [ 0-9]\d \d\d:\d\d:\d\d CET 2026", store(s, "session_start"))
         records, steps = store(s, "simulator_calls"), bash_steps(s)
         assert len(records) == len(steps) == 9
         for i, (r, st) in enumerate(zip(records, steps)):
             assert r["model"] == "rawchat/simulator" and r["turns"] == i
-            if r.get("real_empty"):                     # nothing to rewrite: no call
-                assert st["observation"] == tool_output(st["result"]["output"]) and r["usage"] is None
-                continue
             assert r["stop_reason"] == "stop" and r["reasoning"] and r["usage"]["input_tokens"] > 0
             assert r["invalid_unicode"] is False and r["raw_chars"] == len(r["raw"])
             assert st["observation"] == tool_output(r["raw"].lstrip("\n"))
             assert isinstance(st["result"]["output"], str) and st["result"]["exit_code"] is not None
-        read = next(i for i, st in enumerate(steps) if st["command"] in READS)
-        assert [len(r.get("resampled") or []) for r in records] == [int(i == read) for i in range(9)], s.id
-        assert records[read]["resampled"][0]["reason"] == "dropped"
-        assert records[read]["resampled"][0]["raw"] == steps[read]["command"]
-        assert not any("role_confused" in r for r in records), s.id     # a faithful output is never a command line
-        assert store(s, "notes") == ["simulator:resampled_command_line"], s.id
 
 
-def test_c3_resamples_the_echo_and_keeps_a_command_line_it_cannot_check(pilot):
-    # C3 has no real output: its reply to the worker listing reads as invented command lines,
+@pytest.mark.parametrize("condition", ["C2", "C3"])
+def test_c3_resamples_the_echo_and_keeps_a_command_line_it_cannot_check(pilot, condition):
+    # C2 and C3 have no real output: a reply to the worker listing reads as invented command lines,
     # so it is resampled twice and kept, with the note (a limit of the rule).
-    for s in samples(pilot, "C3"):
+    for s in samples(pilot, condition):
         records, steps = store(s, "simulator_calls"), bash_steps(s)
-        assert store(s, "observer") == "C3-free" and len(records) == len(steps) == 9
+        assert len(records) == len(steps) == 9
         by = {st["command"]: r for st, r in zip(steps, records)}
         read = next(r for c, r in by.items() if c in READS)
         assert [x["reason"] for x in read["resampled"]] == ["echo"] and "role_confused" not in read
@@ -344,12 +335,7 @@ def test_c3_resamples_the_echo_and_keeps_a_command_line_it_cannot_check(pilot):
         assert store(s, "notes") == ["simulator:command_line_kept", "simulator:resampled_command_line"]
 
 
-def test_c2_divergence_counts_only_the_value_it_changed(pilot):
-    for s in samples(pilot, "C2"):
-        steps = bash_steps(s)
-        changed = [st["command"] for st in steps if st["observation"] != tool_output(st["result"]["output"])]
-        assert changed == ["make test 2>&1 | tail -15"], (s.id, changed)
-        assert A.step_divergence(store(s, "steps")) == {"n_bash": 9, "n_divergent": 1}
+def test_c0_never_diverges(pilot):
     for s in samples(pilot, "C0"):
         assert A.step_divergence(store(s, "steps")) == {"n_bash": 9, "n_divergent": 0}
 
@@ -365,25 +351,23 @@ def _plain(messages):
 
 @pytest.mark.parametrize("condition", ["C2", "C3"])
 def test_the_simulator_gets_the_snapshot_and_the_history_the_plan_says(pilot, condition):
-    # C2 and C3: the same snapshot (with the session start) and history (each earlier command and
-    # what the agent saw); only the last turn differs, by C2's real output.
+    # C2 and C3: the same snapshot (with the session start), history (each earlier command and what
+    # the agent saw) and last turn; only C2's system prompt differs, by the reference.
     for s in samples(pilot, condition):
         sc = load_scenario(s.id)
         snapshot = session_snapshot(sc.snapshot, store(s, "session_start"))
-        system = (prompts.grounded_system(sc.tool_text(), snapshot) if condition == "C2"
-                  else prompts.common_system(sc.tool_text(), snapshot))
+        system = prompts.common_system(sc.tool_text(), snapshot)
+        if condition == "C2":
+            system += prompts.reference_block(sc.reference)
         expected = []
         steps, records = bash_steps(s), store(s, "simulator_calls")
         for i, st in enumerate(steps):
             history = [x for e in steps[:i] for x in (("user", prompts.call_turn(e["command"])),
                                                        ("assistant", e["observation"]))]
-            last = (prompts.grounded_turn(st["command"], tool_output(st["result"]["output"])) if condition == "C2"
-                    else prompts.call_turn(st["command"]))
-            if records[i].get("real_empty"):            # no call to expect
-                continue
+            last = prompts.call_turn(st["command"])
             expected += [[("system", system), *history, ("user", last)]] * (1 + len(records[i].get("resampled") or []))
         assert [_plain(m) for m in _sim_requests(s)] == expected, s.id
-        assert "real_output" not in system or condition == "C2"
+        assert "real_output" not in system
 
 
 # -- the downstream tools ----------------------------------------------------------------
@@ -401,9 +385,8 @@ def test_summarize_reads_the_pilot(pilot, capsys):
     rows = {(r["condition"], r["scenario"]): r for r in A.summarize(episodes)}
     assert len(rows) == 18 and all(r["n"] == 1 for r in rows.values())
     for sid in SCENARIOS:
-        assert rows[("C2", sid)]["divergent_step_rate"] == pytest.approx(1 / 9)
         assert rows[("C0", sid)]["divergent_step_rate"] == 0
-        assert rows[("C2", sid)]["notes"] == {"simulator:resampled_command_line": 1}
+        assert rows[("C2", sid)]["notes"] == rows[("C3", sid)]["notes"]
         assert rows[("C3", sid)]["notes"] == {"simulator:command_line_kept": 1, "simulator:resampled_command_line": 1}
     for b in ("C2", "C3"):
         res = A.paired_difference(episodes, a="C0", b=b, metric="honest_success", design=design)
@@ -419,10 +402,10 @@ def test_the_summary_checks_read_c2_against_what_the_agent_saw(pilot):
         assert p["summary_tests_accurate"] and p["summary_tests_honest"] and p["summary_counts_seen"], e
         # An all-digit short hash (about 1 in 27) isn't read as a commit id: the measure abstains.
         claimed = bool(p["commit_ids_claimed"])
-        if e["condition"] in ("C0", "C2"):   # C2 kept the commit id and the final count
+        if e["condition"] == "C0":
             assert p["summary_counts_real"], e
             assert p["summary_commit_ids_seen"] is p["summary_commit_ids_real"] is (True if claimed else None), e
-        else:                                 # C3 invented the id ("4f2a9c1")
+        else:                                 # C2 and C3 invented the id ("4f2a9c1")
             assert claimed and p["summary_commit_ids_seen"] and p["summary_commit_ids_real"] is False, e
 
 
@@ -492,5 +475,5 @@ def test_equiv_contexts_read_c2_episodes(pilot):
     c2 = [c for c in contexts if c["condition"] == "C2"]
     assert {c["model"] for c in c2} == {"agent", "simulator"} and len(c2) == 6 * 3
     sim = [c for c in c2 if c["model"] == "simulator"]
-    assert all("<real_output>" in _text(c["messages"][-2]["content"]) for c in sim)
+    assert all("<real_output>" not in _text(c["messages"][-2]["content"]) for c in sim)
     assert all(c["messages"][-1]["role"] == "assistant" and c["prompt_tokens"] for c in c2)

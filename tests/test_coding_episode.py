@@ -44,6 +44,13 @@ def patched(monkeypatch):
     return state
 
 
+@pytest.fixture(autouse=True)
+def reference(monkeypatch):
+    """C2 needs a reference; these scenarios have none, and no test here reads it."""
+    from simtest.coding.scenario import CodingScenario
+    monkeypatch.setattr(CodingScenario, "reference", property(lambda self: [{"command": "ls", "output": "a"}]))
+
+
 def run(agent, patched, condition="C0", scenario="pricing_cap", sim=None, tmp=None):
     roles = {"simulator": mock(sim, "mockllm/sim")} if sim is not None else None
     logs = eval(coding(condition=condition, scenarios=[scenario], max_turns=8, deadline=60, machine="fake",
@@ -528,7 +535,7 @@ def test_a_faithful_c2_rewrite_of_an_output_that_starts_with_a_blank_line_is_not
 
     patched["run_outputs"] = [(NPM, 0)]
     agent = ScriptedAgent([[("bash", {"command": "npm run build"})]], done="x")
-    c2, _ = run(agent, patched, condition="C2", sim=EchoReal(), tmp=tmp_path / "c2")
+    c2, _ = run(agent, patched, condition="C1", sim=EchoReal(), tmp=tmp_path / "c2")
     c0, _ = run(agent, patched, condition="C0", tmp=tmp_path / "c0")
     steps = c2.store["CodingEpisode:steps"]
     assert step_divergence(steps) == {"n_bash": 1, "n_divergent": 0}
@@ -541,7 +548,7 @@ def test_a_c2_reply_that_is_the_real_output_is_never_a_command_line(patched, tmp
     # printed was taken for role confusion: resampled twice, then kept and noted.
     patched["run_outputs"] = [(NODE, 0)]
     agent = ScriptedAgent([[("bash", {"command": "ps -C node -o args="})]], done="x")
-    s, score = run(agent, patched, condition="C2", sim=EchoReal(), tmp=tmp_path)
+    s, score = run(agent, patched, condition="C1", sim=EchoReal(), tmp=tmp_path)
     call = s.store["CodingEpisode:simulator_calls"][0]
     assert "resampled" not in call and "role_confused" not in call
     assert s.store["CodingEpisode:steps"][0]["observation"] == NODE.rstrip()
@@ -552,7 +559,7 @@ def test_a_c2_reply_with_the_command_instead_of_the_real_output_is_still_resampl
     patched["run_outputs"] = [("12:    foo = 1\n", 0)]
     command = "grep -n foo tests/test_api.py"
     agent = ScriptedAgent([[("bash", {"command": command})]], done="x")
-    s, score = run(agent, patched, condition="C2", sim=ScriptedSimulator([command, "12:    foo = 1"]), tmp=tmp_path)
+    s, score = run(agent, patched, condition="C1", sim=ScriptedSimulator([command, "12:    foo = 1"]), tmp=tmp_path)
     call = s.store["CodingEpisode:simulator_calls"][0]
     assert [r["reason"] for r in call["resampled"]] == ["dropped"] and "role_confused" not in call
     assert s.store["CodingEpisode:steps"][0]["observation"] == "12:    foo = 1"
@@ -561,7 +568,7 @@ def test_a_c2_reply_with_the_command_instead_of_the_real_output_is_still_resampl
 def test_a_c2_reply_that_stays_wrong_gives_the_agent_the_real_output_and_a_note(patched, tmp_path):
     patched["run_outputs"] = [("12:    foo = 1\n", 0)]
     agent = ScriptedAgent([[("bash", {"command": "grep -n foo tests/test_api.py"})]], done="x")
-    s, score = run(agent, patched, condition="C2", sim=ScriptedSimulator(["Let me check the file:"]), tmp=tmp_path)
+    s, score = run(agent, patched, condition="C1", sim=ScriptedSimulator(["Let me check the file:"]), tmp=tmp_path)
     call = s.store["CodingEpisode:simulator_calls"][0]
     assert call["real_fallback"] == "dropped" and len(call["resampled"]) == 2
     assert s.store["CodingEpisode:steps"][0]["observation"] == "12:    foo = 1"

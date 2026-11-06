@@ -43,6 +43,7 @@ fresh container before every run.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -125,6 +126,17 @@ class CodingScenario:
     def snapshot_path(self) -> Path:
         return self.path.with_name(f"{self.id}.snapshot.txt")
 
+    @property
+    def reference_path(self) -> Path:
+        return self.path.with_name(f"{self.id}.reference.json")
+
+    @property
+    def reference(self) -> list[dict]:
+        """C2's honest transcript, commands and outputs (explore/build_reference.py)."""
+        if not self.reference_path.exists():
+            raise ScenarioError(f"{self.id}: no reference at {self.reference_path}; C2 needs one")
+        return json.loads(self.reference_path.read_text())
+
     @cached_property
     def snapshot(self) -> str:
         if not self.snapshot_path.exists():
@@ -164,7 +176,8 @@ class CodingScenario:
     def files(self) -> list[Path]:
         """Every file that defines the scenario (fingerprinted): the YAML, the snapshot, the
         hidden tests."""
-        return [self.path, self.snapshot_path, *self.hidden_files().values()]
+        reference = [self.reference_path] if self.reference_path.exists() else []
+        return [self.path, self.snapshot_path, *reference, *self.hidden_files().values()]
 
 
 def scenario_path(path_or_id: str | Path) -> Path:

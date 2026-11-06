@@ -4,20 +4,21 @@ same in every condition.
 
     C0  the real output
     C1  a simulator rewrites the real output, given only the current command and that output
-    C2  as C1, plus the initial snapshot (with the date and time the session started) and
-        the history (earlier commands and the outputs the agent saw)
-    C3  a simulator invents the output from the snapshot, the history and the command
+    C2  as C3, plus an honest C0 transcript of the same scenario: grounded on state, and
+        never given the output of the current command (LOG.md, 05-11-2026)
+    C3  a simulator invents the output from the snapshot (with the date and time the session
+        started), the history (earlier commands and the outputs the agent saw) and the command
 
 A simulator never sees the system prompt, the rules, the agent's reasoning or messages, or
-the hypothesis: only commands, outputs and the snapshot. C2 and C3 get the same history
-turns; only the last turn differs (C2 adds the real output). Every observation goes
-through the same `tool_output` (whitespace, cap) in every condition.
+the hypothesis: only commands, outputs and the snapshot. C2 and C3 get the same turns; only
+C2's system prompt differs, by the reference. Every observation goes through the same
+`tool_output` (whitespace, cap) in every condition.
 
-C1 and C2 are checked against the real output, which is what makes them grounded. A reply
-that leaves it is resampled up to RESAMPLES times; if it still does, the agent gets the real
-output and the step records `real_fallback`. An empty real output is empty: no simulator
-call. In the pilot one C2 simulator took the agent's role and, with its own replies in the
-history, kept it for 39 of 46 steps (LOG.md, 05-11-2026), so a wrong reply never enters it.
+C1 is checked against the real output. A reply that leaves it is resampled up to RESAMPLES
+times; if it still does, the agent gets the real output and the step records `real_fallback`.
+An empty real output is empty: no simulator call. In the pilot, when C2 still rewrote the
+real output, a simulator took the agent's role and, with its own replies in the history, kept
+it for 39 of 46 steps (LOG.md, 05-11-2026), so a wrong reply never enters the history.
 """
 
 from __future__ import annotations
@@ -151,14 +152,17 @@ class BashObserver:
 
 
 class SimulatedBash(BashObserver):
-    def __init__(self, condition: str, model: Model, tool: str, snapshot: str | None):
+    def __init__(self, condition: str, model: Model, tool: str, snapshot: str | None,
+                 reference: list[dict] | None = None):
         super().__init__(condition)
         self.model = model
-        self.name = {"C1": "C1-grounded", "C2": "C2-grounded-history", "C3": "C3-free"}[condition]
+        self.name = {"C1": "C1-grounded", "C2": "C2-reference", "C3": "C3-free"}[condition]
+        if condition == "C2" and not reference:
+            raise ValueError("C2 needs a reference transcript")
         if condition == "C1":
             self.system = prompts.grounded_system(tool, None)
         elif condition == "C2":
-            self.system = prompts.grounded_system(tool, snapshot)
+            self.system = prompts.common_system(tool, snapshot) + prompts.reference_block(reference)
         else:
             self.system = prompts.common_system(tool, snapshot)
 
@@ -167,14 +171,14 @@ class SimulatedBash(BashObserver):
         if self.condition != "C1":
             for c, seen in self.history:
                 messages += [ChatMessageUser(content=prompts.call_turn(c)), ChatMessageAssistant(content=seen)]
-        if self.condition == "C3":
-            messages.append(ChatMessageUser(content=prompts.call_turn(command)))
-        else:
+        if self.condition == "C1":
             messages.append(ChatMessageUser(content=prompts.grounded_turn(command, tool_output(real.output))))
+        else:
+            messages.append(ChatMessageUser(content=prompts.call_turn(command)))
         return messages
 
     async def observe(self, command: str, real: ExecResult) -> tuple[str, dict]:
-        grounded = self.condition != "C3"
+        grounded = self.condition == "C1"
         truth = tool_output(real.output)
         if grounded and not truth.strip():         # nothing to rewrite, so no call to get wrong
             self.history.append((command, truth))
@@ -194,7 +198,7 @@ class SimulatedBash(BashObserver):
                     self.records.append({"model": str(self.model), "turns": len(self.history),
                                          "error": repr(exc), "resampled": rejected})
                 raise
-            # C3 has no real output to compare with, so only the shape of its reply can be read.
+            # C2 and C3 have no real output to compare with, so only the shape of a reply can be read.
             reason = (grounded_mismatch(text, truth) if grounded
                       else role_confused(text, command, [c for c, _ in self.history]))
             if reason is None or len(rejected) == RESAMPLES:
@@ -253,4 +257,5 @@ def make_observer(condition: str, simulator: Model | None, scenario, session_sta
         return SimulatedBash(condition, simulator, scenario.tool_text(), None)
     if session_start is None:
         raise ValueError(f"{condition} needs the session start time (the snapshot's date line)")
-    return SimulatedBash(condition, simulator, scenario.tool_text(), session_snapshot(scenario.snapshot, session_start))
+    return SimulatedBash(condition, simulator, scenario.tool_text(), session_snapshot(scenario.snapshot, session_start),
+                         scenario.reference if condition == "C2" else None)
