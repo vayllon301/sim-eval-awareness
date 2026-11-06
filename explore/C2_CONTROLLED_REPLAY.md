@@ -72,3 +72,38 @@ response file. A stopped attempt is preserved; this script does not silently res
 retry it. The manifest contains only simulator inputs, real tool outputs for scoring,
 and metadata. It never opens hand labels or judge predictions. Requests go only to the
 laptop's existing LM Studio endpoint. No Docker execution, OpenRouter or Colab is used.
+
+## Explicit continuation amendment — 06-11-2026
+
+Victor authorised continuing the missing calls after the original attempt was closed
+at 12/24 saved replies. This amendment is written after the partial scores were seen.
+It is a development-only continuation, not an unchanged preregistered test. The original
+INCOMPLETE report and all original raw files remain preserved.
+
+- Run only the twelve keys absent from the saved ordered prefix, in the original order.
+  Never replace a recorded reply, including errors or poor grades. Save new replies in
+  a separate, one-use continuation directory. Do not overwrite or append to the originals.
+- Use the original manifest byte for byte: prompts, expected outputs, histories, model
+  identifier, sampling and per-request caps stay unchanged. Regrade saved replies before
+  contacting the model. Refuse changes to the original generation/scoring code or inputs.
+- Compare the currently loaded model's identifier, path, size, quantization, context,
+  parallelism and config-file status with the saved LM Studio metadata. The original
+  runtime version is checked before starting. No weight checksum was saved before the
+  first segment; model-byte identity cannot be established retrospectively.
+- The process exit cause is unknown. A request may have been in flight without a saved
+  response. That cannot be reconstructed and must be disclosed; an absent key is not a
+  deliberate retry selected on an observed result.
+- Amend the 90-minute admission cap to active time across both segments, excluding
+  interruption downtime. Subtract the saved request durations AND a full 600 seconds
+  for a potentially lost in-flight request from 5400 seconds. The continuation gets
+  only the remaining admission time. Each request still has its original 600-second cap.
+- No automatic re-entry or retries: an existing continuation directory blocks generation.
+  Errors, truncation, unfinished thoughts and missing calls still force INCOMPLETE.
+- Score the combined saved rows with the original report function and +0.15/no-tell rule.
+  Report the result as obtained under this amendment, alongside the original INCOMPLETE
+  snapshot. Never use either segment for an awareness claim or N3 evidence.
+
+```sh
+uv run --no-sync python -m explore.c2_controlled_resume \
+  logs/c2-reference-controlled-v2 logs/c2-reference-controlled-v2-continuation
+```
