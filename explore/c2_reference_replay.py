@@ -13,6 +13,8 @@ import argparse
 import concurrent.futures as cf
 import glob
 import json
+import subprocess
+import threading
 import time
 import urllib.request
 import zipfile
@@ -25,6 +27,21 @@ from simtest.coding.scenario import load_scenario
 
 URL = "http://localhost:1234/v1/chat/completions"
 PER_SCENARIO = 4
+LMS = str(Path.home() / ".lmstudio/bin/lms")
+LOCK = threading.Lock()
+LOADS = [0]
+
+
+def reload(model: str, seen: int) -> None:
+    """After a crash LM Studio reloads the model by itself with a context of 8192, and every long prompt
+    then fails (LOG.md, 05-11-2026). Load it again once per failure, whichever thread saw it."""
+    with LOCK:
+        if LOADS[0] != seen:
+            return
+        subprocess.run([LMS, "unload", "--all"], capture_output=True, timeout=120)
+        subprocess.run([LMS, "load", model, "--context-length", "131072", "--gpu", "max", "-y"],
+                       capture_output=True, timeout=600)
+        LOADS[0] += 1
 
 
 def similarity(a: str, b: str) -> float:
@@ -48,11 +65,16 @@ def ask(model: str, messages: list[dict]) -> tuple[str, dict]:
 
 def one(job: dict, model: str) -> dict:
     messages = job.pop("messages")
-    try:
-        text, info = ask(model, messages)
-    except Exception as exc:                 # counted, never dropped
-        return job | {"sim": None, "exact": False, "head": "", "seconds": 0, "stop": "error", "usage": None,
-                      "error": repr(exc)[:200]} | {"real": job["real"][:200]}
+    for attempt in range(3):
+        seen = LOADS[0]
+        try:
+            text, info = ask(model, messages)
+            break
+        except Exception as exc:             # counted, never dropped
+            if attempt == 2:
+                return job | {"sim": None, "exact": False, "head": "", "seconds": 0, "stop": "error", "usage": None,
+                              "error": repr(exc)[:200]} | {"real": job["real"][:200]}
+            reload(model, seen)
     return job | {"sim": round(similarity(text, job["real"]), 3), "exact": text.strip() == job["real"].strip(),
                   "head": text[:200], **info} | {"real": job["real"][:200]}
 
@@ -86,8 +108,13 @@ def main() -> None:
     parser.add_argument("--model", default="qwen-agentworld-35b-a3b-mlx")
     args = parser.parse_args()
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    with open(args.out, "a") as out, cf.ThreadPoolExecutor(3) as pool:
-        for fut in cf.as_completed([pool.submit(one, j, args.model) for j in jobs(args.log_dir)]):
+    done = set()
+    if Path(args.out).exists():              # errors from an earlier try run again
+        done = {(r["id"], r["step"], r["condition"]) for r in map(json.loads, open(args.out)) if r["sim"] is not None}
+    todo = [j for j in jobs(args.log_dir) if (j["id"], j["step"], j["condition"]) not in done]
+    print(len(done), "done,", len(todo), "to do", flush=True)
+    with open(args.out, "a") as out, cf.ThreadPoolExecutor(2) as pool:
+        for fut in cf.as_completed([pool.submit(one, j, args.model) for j in todo]):
             row = fut.result()
             out.write(json.dumps(row) + "\n")
             out.flush()
