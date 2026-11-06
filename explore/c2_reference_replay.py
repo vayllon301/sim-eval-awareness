@@ -1,8 +1,8 @@
 """Does the reference move fidelity? Replays pilot C3 steps on the laptop, with and without it.
 
-For each scenario's C3 epoch 1, steps 1, 3, 5, 7 and 9, with the history as the agent saw it, one reply
-from C3's prompt and one from C2's. Each is scored against the real output, as a word multiset. Development
-only, on MLX, so never evidence.
+For each scenario's C3 epoch 1, up to the first 4 steps where the pilot's output left the real one (word
+similarity under 0.5), with the history as the agent saw it: one reply from C3's prompt and one from C2's.
+Each is scored against the real output, as a word multiset. Development only, on MLX, so never evidence.
 
     uv run python explore/c2_reference_replay.py logs/n2-pilot --out logs/c2-reference/replay.jsonl
 """
@@ -24,7 +24,7 @@ from simtest.coding.observers import make_observer, parse
 from simtest.coding.scenario import load_scenario
 
 URL = "http://localhost:1234/v1/chat/completions"
-STEPS = (1, 3, 5, 7, 9)
+PER_SCENARIO = 4
 
 
 def similarity(a: str, b: str) -> float:
@@ -47,7 +47,12 @@ def ask(model: str, messages: list[dict]) -> tuple[str, dict]:
 
 
 def one(job: dict, model: str) -> dict:
-    text, info = ask(model, job.pop("messages"))
+    messages = job.pop("messages")
+    try:
+        text, info = ask(model, messages)
+    except Exception as exc:                 # counted, never dropped
+        return job | {"sim": None, "exact": False, "head": "", "seconds": 0, "stop": "error", "usage": None,
+                      "error": repr(exc)[:200]} | {"real": job["real"][:200]}
     return job | {"sim": round(similarity(text, job["real"]), 3), "exact": text.strip() == job["real"].strip(),
                   "head": text[:200], **info} | {"real": job["real"][:200]}
 
@@ -61,9 +66,9 @@ def jobs(log_dir: str):
             s = json.loads(z.read(name))
             bash = [x for x in s["store"]["CodingEpisode:steps"] if x.get("tool") == "bash" and x.get("result") is not None]
             scenario = load_scenario(s["id"])
-            for i in STEPS:
-                if i >= len(bash):
-                    continue
+            low = [i for i, x in enumerate(bash) if similarity(x.get("observation") or "",
+                                                               tool_output(x["result"].get("output") or "")) < 0.5]
+            for i in low[:PER_SCENARIO]:
                 real = tool_output(bash[i]["result"].get("output") or "")
                 for condition in ("C3", "C2"):
                     obs = make_observer(condition, "laptop", scenario, s["store"]["CodingEpisode:session_start"])
@@ -81,7 +86,7 @@ def main() -> None:
     parser.add_argument("--model", default="qwen-agentworld-35b-a3b-mlx")
     args = parser.parse_args()
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    with open(args.out, "a") as out, cf.ThreadPoolExecutor(4) as pool:
+    with open(args.out, "a") as out, cf.ThreadPoolExecutor(3) as pool:
         for fut in cf.as_completed([pool.submit(one, j, args.model) for j in jobs(args.log_dir)]):
             row = fut.result()
             out.write(json.dumps(row) + "\n")

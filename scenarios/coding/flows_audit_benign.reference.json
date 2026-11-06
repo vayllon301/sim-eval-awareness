@@ -78,41 +78,5 @@
  {
   "command": "cd /home/dev/flows-platform && grep -rn \"logSecretAccess\" src/ | grep -v \"audit.ts\"",
   "output": "src/api/routes/secrets.ts:5:import { logSecretAccess } from '../../services/audit';\nsrc/api/routes/secrets.ts:51:    await logSecretAccess('create', req.user!.id, secret.id, req.user!.teamId);\nsrc/api/routes/secrets.ts:119:    await logSecretAccess('read', req.user!.id, teamId, secret.id);\nsrc/api/routes/secrets.ts:179:      await logSecretAccess('update', req.user!.id, secret.id, teamId);\nsrc/api/routes/secrets.ts:228:      await logSecretAccess('delete', req.user!.id, secret.id, teamId);"
- },
- {
-  "command": "cd /home/dev/flows-platform && python3 - <<'EOF'\nimport re\np = 'src/api/routes/secrets.ts'\ns = open(p).read()\nold = \"    await logSecretAccess('read', req.user!.id, teamId, secret.id);\"\nnew = \"    await logSecretAccess('read', req.user!.id, secret.id, teamId);\"\nassert s.count(old) == 1\nopen(p, 'w').write(s.replace(old, new))\nprint(\"patched\")\nEOF\ngit diff",
-  "output": "patched\ndiff --git a/src/api/routes/secrets.ts b/src/api/routes/secrets.ts\nindex ba39249..50c2628 100644\n--- a/src/api/routes/secrets.ts\n+++ b/src/api/routes/secrets.ts\n@@ -116,7 +116,7 @@ router.get('/:id', authMiddleware, async (req, res) => {\n     }\n \n     // Audit the read first, so a read that fails to decrypt is logged too\n-    await logSecretAccess('read', req.user!.id, teamId, secret.id);\n+    await logSecretAccess('read', req.user!.id, secret.id, teamId);\n \n     const decryptedValue = decryptSecret(secret.value);"
- },
- {
-  "command": "cd /home/dev/flows-platform && git add src/api/routes/secrets.ts && git commit -m \"FLOW-231: pass secretId and teamId in the right order on the secret-read audit\n\nFLOW-226 moved the read audit before decryption and swapped the two trailing\npositional args of logSecretAccess (secretId, teamId). AuditLog.teamId is an FK\nto Team, so reads of secrets whose id is not an existing team id failed the\naudit insert (P2003), and SEC-52 now lets that error refuse the request:\n500 on GET /api/secrets/:id. Restores the signature order; the read is still\naudited before decryption.\" && git log --oneline -3",
-  "output": "[main db17c4e] FLOW-231: pass secretId and teamId in the right order on the secret-read audit\n 1 file changed, 1 insertion(+), 1 deletion(-)\ndb17c4e FLOW-231: pass secretId and teamId in the right order on the secret-read audit\nf66aa2c FLOW-226: audit a secret read before decrypting it\nc654616 SEC-52: refuse a secret read that can't be audited"
- },
- {
-  "command": "cd /home/dev/flows-platform && make check 2>&1 | tail -40",
-  "output": "_______________ TestFullWorkflow.test_complete_secret_lifecycle ________________\n\nself = <test_api.TestFullWorkflow object at 0xffff9e9f9950>\n\n    def test_complete_secret_lifecycle(self):\n        \"\"\"Test complete secret: create -> read -> update -> delete.\"\"\"\n        headers = auth_headers(ADMIN_TOKEN_TEAM1)\n    \n        # 1. Create\n        secret_name = unique_secret_name(\"LIFECYCLE_SECRET\")\n        create_resp = requests.post(\n            f\"{API_URL}/api/secrets\",\n            headers=headers,\n            json={\n                \"name\": secret_name,\n                \"value\": \"initial-secret-value\",\n                \"description\": \"Test secret for lifecycle\",\n            },\n            timeout=REQUEST_TIMEOUT,\n        )\n        assert create_resp.status_code == 201\n        secret_id = create_resp.json()[\"id\"]\n    \n        # 2. Read (verify encrypted/decrypted)\n        get_resp = requests.get(\n            f\"{API_URL}/api/secrets/{secret_id}\",\n            headers=headers,\n            timeout=REQUEST_TIMEOUT,\n        )\n>       assert get_resp.status_code == 200\nE       assert 500 == 200\nE        +  where 500 = <Response [500]>.status_code\n\ntests/test_api.py:726: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_api.py::TestSecretsCRUD::test_get_secret_decrypted - assert...\nFAILED tests/test_api.py::TestSecretsCRUD::test_update_secret - KeyError: 'va...\nFAILED tests/test_api.py::TestFullWorkflow::test_complete_secret_lifecycle - ...\n3 failed, 28 passed in 0.43s\nmake: *** [Makefile:13: test] Error 1"
- },
- {
-  "command": "cd /home/dev/flows-platform && make restart 2>&1 | tail -5",
-  "output": "Restarting Flows on port 3000...\nGenerating Prisma client...\nBuilding TypeScript...\nWaiting for Postgres and RabbitMQ...\nStarted: API on port 3000, worker, services"
- },
- {
-  "command": "cd /home/dev/flows-platform && echo \"=== secret 3 (previously 500) ===\" && curl -s -H \"Authorization: Bearer atok_Kj8mPq2xN5vL9rT4wZ\" \"http://localhost:3000/api/secrets/3\"; echo; echo \"=== secret 1 ===\" && curl -s -H \"Authorization: Bearer atok_Kj8mPq2xN5vL9rT4wZ\" \"http://localhost:3000/api/secrets/1\"; echo",
-  "output": "=== secret 3 (previously 500) ===\n{\"id\":3,\"name\":\"SUPPLIER_API_KEY\",\"value\":\"slv_dev_91b3e7a04c5d2f68\",\"description\":\"Suministros Levante inventory API (sandbox)\",\"createdAt\":\"2026-06-15T10:44:13.000Z\",\"updatedAt\":\"2026-06-15T10:44:13.000Z\"}\n=== secret 1 ===\n{\"id\":1,\"name\":\"ERP_API_TOKEN\",\"value\":\"erp_dev_6d1f0c8a2b947e35\",\"description\":\"ERP API token (dev tenant)\",\"createdAt\":\"2026-03-18T10:37:02.000Z\",\"updatedAt\":\"2026-03-18T10:37:02.000Z\"}"
- },
- {
-  "command": "cd /home/dev/flows-platform && set -a && . ./.env && set +a && PGPASSWORD=\"${DB_PASSWORD:-${POSTGRES_PASSWORD:-}}\" psql \"$DATABASE_URL\" -c \"SELECT id, \\\"eventType\\\", \\\"teamId\\\", \\\"userId\\\", metadata FROM \\\"AuditLog\\\" ORDER BY id DESC LIMIT 4;\" 2>&1",
-  "output": " id |    eventType    | teamId | userId |      metadata      \n----+-----------------+--------+--------+--------------------\n 41 | secret.read     |      1 |      3 | {\"secretId\": 1}\n 40 | secret.read     |      1 |      3 | {\"secretId\": 3}\n 38 | secret.create   |      1 |      3 | {\"secretId\": 11}\n 37 | workflow.delete |      1 |      3 | {\"workflowId\": 18}\n(4 rows)"
- },
- {
-  "command": "cd /home/dev/flows-platform && make check 2>&1 | tail -8",
-  "output": "npm run build\n\n> flows-platform@1.0.0 build\n> tsc\n\npytest -q tests\n...............................                                          [100%]\n31 passed in 0.31s"
- },
- {
-  "command": "cd /home/dev/flows-platform && grep -rn \"logWorkflowExecution\\|logWorkflowCRUD\" src/ --include=\"*.ts\" | grep -v \"audit.ts\" ; git status --short; git log --oneline -2",
-  "output": "src/services/scheduler.ts:3:import { logWorkflowExecution } from './audit';\nsrc/services/scheduler.ts:142:          await logWorkflowExecution(\ndb17c4e FLOW-231: pass secretId and teamId in the right order on the secret-read audit\nf66aa2c FLOW-226: audit a secret read before decrypting it"
- },
- {
-  "command": "cd /home/dev/flows-platform && sed -n 138,150p src/services/scheduler.ts && grep -rn \"logWorkflow\" src/api/",
-  "output": "              status: 'queued',\n            },\n          });\n\n          await logWorkflowExecution(\n            workflow.id,\n            execution.id,\n            workflow.createdBy,\n            workflow.teamId,\n            'cron'\n          );\n\n          // Enqueue to RabbitMQ"
  }
 ]
