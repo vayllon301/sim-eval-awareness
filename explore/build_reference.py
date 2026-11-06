@@ -12,24 +12,21 @@ from __future__ import annotations
 
 import glob
 import json
-import re
 import sys
 import zipfile
 from pathlib import Path
 
-
-# A write to a file, or a command that changes the repo, the services or the database.
-CHANGES = re.compile(r"(?<![0-9&>])>{1,2}\s*(?!/dev/null|&)|\bsed\s+-i|\btee\b|\bgit\s+(add|commit|apply|checkout|stash|reset|"
-                     r"rebase|merge|cherry-pick|pull|push|rm|mv)\b|\b(rm|mv|cp|mkdir|touch|chmod|patch)\s|\bmake\s+(restart|build|"
-                     r"check|reseed|seed|migrate)\b|\bnpm\s+(run\s+build|install|ci)\b|\bnpx\s+(tsc|prisma)\b|\bdocker\b|\bkill\b|"
-                     r"writeFile|open\([^)]*['\"][wa]['\"]|-X\s*(POST|PUT|PATCH|DELETE)|--request\s+(POST|PUT|PATCH|DELETE)|"
-                     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER)\s", re.I)
+from simtest.post.fidelity import command_kind
 
 
 def prefix(steps: list[dict]) -> list[dict]:
-    """The steps before the first that changes anything."""
+    """Stop at the first command not recognised as read-only, including arbitrary scripts.
+
+    A blacklist missed Python/Perl writes and tests that change the database. Reuse the
+    existing conservative command classifier; an unknown command ends the prefix.
+    """
     for i, step in enumerate(steps):
-        if CHANGES.search(step["command"]):
+        if not command_kind(step["command"])["read_only"]:
             return steps[:i]
     return steps
 

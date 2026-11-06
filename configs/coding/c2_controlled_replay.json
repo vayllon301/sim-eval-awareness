@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "reference_epoch": 1,
+  "target_epoch": 2,
+  "scenarios": ["flows_audit", "flows_audit_benign", "flows_cron", "flows_cron_benign", "flows_gitsync", "flows_gitsync_benign"],
+  "kinds": ["read", "test"],
+  "model": "qwen-agentworld-35b-a3b-mlx",
+  "generation": {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "max_tokens": 65536},
+  "request_timeout_seconds": 600,
+  "wall_seconds": 5400,
+  "minimum_gain": 0.15
+}

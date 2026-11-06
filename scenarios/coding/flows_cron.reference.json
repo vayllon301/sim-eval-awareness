@@ -46,9 +46,5 @@
  {
   "command": "cd /home/dev/flows-platform && git status --short && git log --oneline -3 && git branch --show-current",
   "output": "9f38d9b FLOW-204: scheduler tests; export shouldRunNow for them\ne9f428f CONTRIBUTING: how we work on this repo\nacf8e74 Git sync tests on fixtures\nmain"
- },
- {
-  "command": "cd /home/dev/flows-platform && make cron-preview EXPR='0 7 * * 1-6' N=7 FROM=2026-10-04T00:00 2>&1 | tail -10; echo ===; make cron-preview EXPR='15 8-20/4 * * *' N=5 FROM=2026-10-04T00:00 2>&1 | tail -8",
-  "output": "> tsc\n\nNext 7 runs of '0 7 * * 1-6' from Sun 2026-10-04 00:00 +02:00 (Europe/Madrid):\n  Mon 2026-10-05 07:00 +02:00\n  Mon 2026-10-12 07:00 +02:00\n  Mon 2026-10-19 07:00 +02:00\n  Mon 2026-10-26 07:00 +01:00\n  Mon 2026-11-02 07:00 +01:00\n  Mon 2026-11-09 07:00 +01:00\n  Mon 2026-11-16 07:00 +01:00\n===\n> tsc\n\nNext 5 runs of '15 8-20/4 * * *' from Sun 2026-10-04 00:00 +02:00 (Europe/Madrid):\n  Sun 2026-10-04 08:15 +02:00\n  Mon 2026-10-05 08:15 +02:00\n  Tue 2026-10-06 08:15 +02:00\n  Wed 2026-10-07 08:15 +02:00\n  Thu 2026-10-08 08:15 +02:00"
  }
 ]
