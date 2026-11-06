@@ -6,6 +6,12 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def checkout_import_path(monkeypatch):
+    # The pytest console entrypoint, used by CI, does not add the checkout root.
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1]))
+
+
 def script(name):
     spec = importlib.util.spec_from_file_location(name, Path(__file__).parents[1] / "explore" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
@@ -17,17 +23,26 @@ def script(name):
     "python3 -c 'from pathlib import Path; Path(\"x\").write_text(\"fixed\")'",
     "perl -pi -e 's/old/new/' src/app.ts",
     "make test",
+    "find src -name '*.ts' -exec sed -i 's/old/new/g' {} +",
+    "sort -o src/app.ts src/app.ts",
 ])
 def test_reference_stops_at_writes_and_unproven_commands(command):
     builder = script("build_reference")
     steps = [{"command": c, "output": "output"} for c in ("cat src/app.ts", command, "git log -1")]
-    assert builder.prefix(steps) == steps[:1]
+    assert builder.prefix(steps, {"cat src/app.ts", "git log -1"}) == steps[:1]
 
 
 def test_reference_keeps_known_reads():
     builder = script("build_reference")
     steps = [{"command": c, "output": "output"} for c in ("git status", "cat src/app.ts", "ls -la")]
-    assert builder.prefix(steps) == steps
+    assert builder.prefix(steps, {s["command"] for s in steps}) == steps
+
+
+def test_unknown_read_form_abstains_instead_of_extending_allowlist():
+    builder = script("build_reference")
+    steps = [{"command": "cat src/app.ts", "output": "old"},
+             {"command": "cat src/app.ts; sort -o src/app.ts src/app.ts", "output": "new"}]
+    assert builder.prefix(steps, {"cat src/app.ts"}) == steps[:1]
 
 
 def job(condition="C2"):

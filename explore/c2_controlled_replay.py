@@ -17,7 +17,7 @@ import time
 import urllib.request
 import zipfile
 
-from explore.build_reference import prefix
+from explore.build_reference import prefix, readonly_commands
 from simtest.coding.machine import ExecResult, tool_output
 from simtest.coding.observers import make_observer, parse
 from simtest.coding.scenario import load_scenario
@@ -100,7 +100,8 @@ def prepare(log_dir: Path, config: dict, commit: str) -> dict:
     for scenario_index, name in enumerate(config["scenarios"]):
         scenario = load_scenario(name)
         ref_steps = bash_steps(samples[name, config["reference_epoch"]])
-        expected = prefix([{"command": s["command"], "output": s["observation"]} for s in ref_steps])
+        expected = prefix([{"command": s["command"], "output": s["observation"]} for s in ref_steps],
+                          readonly_commands(name))
         if not expected or scenario.reference != expected:
             raise ValueError(f"{name}: regenerate the conservative reference from C0 epoch 1")
         audit[name] = reference_audit(expected, scenario.snapshot)

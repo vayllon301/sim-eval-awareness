@@ -9,9 +9,12 @@ preregistration, an awareness comparison or evidence about the FP8 reference bac
 - The simulator gets the **real C0 history** in both arms. The old replay used C3's
   already-divergent history. Each query is independent; a generated answer is never
   fed to the next query.
-- C2 alone gets the reference: C0 epoch 1, stopped at the first command not recognised
-  as read-only by the existing fidelity classifier. Unknown commands stop the prefix.
-  The old mutation blacklist missed arbitrary Python/Perl scripts and `make test`.
+- C2 alone gets the reference: C0 epoch 1, stopped at the first command outside
+  `configs/coding/c2_reference_readonly.json`. This allowlist contains only the exact
+  commands audited as read-only in the six current references. Unknown commands and
+  new forms stop the prefix; no parser guesses whether shell code mutates state.
+  The old blacklist missed arbitrary scripts; the shared fidelity classifier also
+  accepts some mutating forms, so it is no longer used to authorise reference commands.
 - References stay verbatim, without a solution or a later state. No compacting based
   on a simulator's results. The audit records overlap with the snapshot; line overlap
   is a redundancy diagnostic, not a measure of information or usefulness.
