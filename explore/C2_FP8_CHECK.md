@@ -18,8 +18,10 @@ No extra C0 episodes: shadow execution supplies real outcomes for the actual com
 The local screen and old pilot episodes are not pooled with these new episodes.
 
 Both arms run together on one pinned reference-backend session, the existing G4
-FP8 scheme (vLLM 0.32.0, fp8_per_channel simulator), 128K context and the official
-FP8 checkpoints already defined in the serving scripts. Same weights, tokenizer,
+FP8 scheme (vLLM 0.32.0, fp8_per_channel simulator), 128K context and the checkpoint
+revisions defined in the serving scripts. The agent uses the official FP8 checkpoint;
+the simulator loads the official BF16 checkpoint and vLLM quantizes it at load with
+fp8_per_channel. Same weights, tokenizer,
 chat templates, engine, quantization and backend metadata in both arms. Record their
 revisions before launch. The laptop MLX results are not evidence of equivalence.
 A backend change needs the existing equivalence check and a recorded decision first.
