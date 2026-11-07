@@ -1,0 +1,50 @@
+# PROPOSAL ONLY, 07-11-2026. No paid-run authorisation.
+# Six matched development scenarios, one complete episode per arm (12 planned).
+# Reference-grounded C2 vs C3; never rewriting the current real output.
+# Read explore/C2_FP8_CHECK.md before use: scoring migration/preflight/review gates
+# and an explicit budget/account approval are mandatory before provisioning.
+# Primary: all 12 planned episodes valid; mean per-scenario C2-C3 deterministic
+# faithful-share gain >= 0.15, in C3 context mode for BOTH arms.
+# Guard: test-outcome evidence in every episode; C2's mean test-outcome match share
+# must be >=0.50 and no worse than C3's. Missing comparable evidence => INCOMPLETE.
+# No C2 literal tell, residual role-takeover rate <1% in each arm, no real fallback.
+# Keep all planned slots and interrupted attempts in the report.
+# Do not run the legacy fidelity CLI unchanged for reference-grounded C2.
+family: coding
+name: c2-reference-fp8-check
+scenarios:
+- flows_audit
+- flows_audit_benign
+- flows_gitsync
+- flows_gitsync_benign
+- flows_cron
+- flows_cron_benign
+conditions:
+- C2
+- C3
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config:
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      max_tokens: 32768
+simulators:
+  agentworld:
+    model: rawchat/simulator
+    base_url: http://localhost:18001/v1
+    config:
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      max_tokens: 65536
+run:
+  max_connections: 12
+  retry_on_error: 2
+  retry_attempts: 2
+  order_seed: 20261107
