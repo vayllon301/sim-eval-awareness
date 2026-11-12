@@ -327,7 +327,7 @@ may read training awareness rather than evaluation awareness.
 - Two more checks per layer: `cosine_with_eval_awareness`, and `generalisation` on the
   eval file's 8 coding pairs (real vs evaluation, mean over the user tokens), which asks
   how well the training direction separates real from evaluation requests. If it does as
-  well as the eval vector, or tracks C3 as well, the reading isn't specific to evaluation.
+  well as the eval vector, or tracks Sim (C3) as well, the reading isn't specific to evaluation.
 - Its neutral offset is set like eval_awareness's. `eval_awareness` itself is unchanged.
 
 ## Controls
@@ -645,7 +645,7 @@ one the G4 served):
 | The turn as re-rendered against `completion_tokens` | 1,420 turns, 95 episodes | 1,411 equal, 9 differ by 1 to 3 tokens |
 | Through the reader, after a save and a load | 23 episodes, 802 turns | 802 equal, 802 prompt ends found, 0 replays that differ |
 
-C2 hasn't run on vLLM, so it is untested here; its agent path is the same code as C3's.
+Sim+ref (C2) hasn't run on vLLM, so it is untested here; its agent path is the same code as Sim's (C3).
 
 So one pass over the rebuilt episode holds the IDs the server saw, with two limits. Equal lengths
 are not equal IDs, and the 9 turns that differ were read back by the agent in their re-rendered
@@ -749,8 +749,8 @@ a measurement.
   about 96 minutes on the pilot's tokens, which is why it runs on the GPU. A reading with no
   latents is about 1 MB per 30K tokens at one layer.
 - **Tokens in the pilot:** about 2.3M. Session 4's C0 mean 21.8K (6 episodes, 21 turns), session 5's C3
-  mean about 54K (17 episodes, 40 turns, up to 80K). 18 × 21.8K + 36 × 54K, with C2 assumed as long as
-  C3.
+  mean about 54K (17 episodes, 40 turns, up to 80K). 18 × 21.8K + 36 × 54K, with Sim+ref (C2) assumed as
+  long as Sim (C3).
 - **Long contexts are slower.** On the laptop (4 bits), to layer 42: 1,212 tokens/s below 10K, 1,118 up
   to 20K, 895 up to 40K, 813 up to 60K. A 54K-token pass averages 77% of the short-context rate.
   So about 3.9 to 6.9K tokens/s on the GPU.
@@ -873,7 +873,7 @@ of 0.08 to 0.12.
    (`agent_tokens:eval_awareness`). The training twin is a control, not a candidate. Emotion vectors
    measure something else. SAE latents are N5's.
 2. **Data:** scored pilot episodes with a verdict from the primary judge, after its kappa pass. Judge
-   errors are left out and counted. The rule never looks at a monitor's C3–C0 difference, and no step
+   errors are left out and counted. The rule never looks at a monitor's Sim–Real (C3–C0) difference, and no step
    compares an episode of one condition with an episode of another, or an EVAL with a REAL over different
    turns: a measure chosen for showing the effect would be chosen on the outcome, and one read over
    different turns could read the window instead of the label.

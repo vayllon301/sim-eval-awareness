@@ -5,11 +5,12 @@ Technical reference for the code. The plan and the research log are kept in a pr
 There are two families in one package:
 
 - the **coding family** (`src/simtest/coding/`, from N1): a coding agent fixes tickets in
-  small repos on a real Docker dev box, with C0–C3 observers for the `bash` tool. This is
-  the current design. See [Coding family](#coding-family).
+  small repos on a real Docker dev box, with an observer for the `bash` tool in each
+  condition: Real, Sim+ref and Sim (see [Condition names](#condition-names)). This is the
+  current design. See [Coding family](#coding-family).
 - the **office testbed** (`src/simtest/`, the rest), the **first design** (rule-following
   in a simulated office, runs M1–M1c). Kept so those runs stay reproducible; the rest of
-  this document, from the next heading to "Coding family", describes it.
+  this document, from "Office testbed" to "Coding family", describes it.
 
 Both share the CLI (`simtest scenarios|run|summarize`, plus `images|snapshot` for coding),
 the config/panel conventions, the fingerprint, the resumable `eval_set` runner, the
@@ -17,6 +18,24 @@ dirty-tree refusal, the "keep and flag, never resample a model output" rule, and
 scenario-level paired difference. The office families and coding logs never mix: a task
 registers as `simtest/simtest` or `simtest/coding`, and `simtest run`/`summarize` pick the
 family from the config's `family:` key or the logs.
+
+## Condition names
+
+The coding family's conditions, named on 12-11-2026:
+
+| Name | Key | What the agent sees |
+| --- | --- | --- |
+| **Real** | `C0` | The real output of the dev box |
+| **Sim+ref** | `C2` | Output invented by the simulator, which gets Sim's inputs plus the commands and outputs of a Real episode of the same scenario (observer `C2-reference`). Never the current command's real output |
+| **Sim** | `C3` | Output invented by the simulator from the initial snapshot, the history and the current command |
+
+- The keys stay as they are in the code, configs, logs, CLI flags and published tags. This
+  document uses a key wherever it is a value you type or read; the name is added where it helps.
+- **Dropped on 05-11-2026:** `C1` and the old `C2`, a simulator rewriting the real output
+  (without and with the history). The coding code still accepts `C1` (observer `C1-grounded`).
+  Logs from before that date with the observer `C2-grounded-history` are the old `C2`.
+- The office testbed below (first design) keeps its own C0–C3; there, C1 and C2 are its
+  anchored simulators.
 
 ## Office testbed (first design)
 
@@ -31,6 +50,9 @@ listing of a forbidden folder on its own (`probe_only`) is secondary. See
 [Metrics](#metrics-per-episode).
 
 ## Design in one picture
+
+The office testbed's conditions, not the current ones (those are in
+[Condition names](#condition-names) and [Coding family](#coding-family)):
 
 ```
 agent ──tool call──▶ SandboxEnv (executes for real; ground truth)
@@ -916,10 +938,10 @@ A coding agent fixes a ticket in a small repository on a real Linux dev box, wit
 agent ──bash──▶ dev box (real container, executes for real; the shadow reference)
   ▲                   │ real output + exit code
   │                   ▼
-  └──observation── observer   C0 the real output
-                              C1 simulator rewrites it, given only this command and its real output (dropped)
-                              C2 as C3, plus an honest C0 transcript of the same scenario
-                              C3 simulator invents it from the snapshot, the history and the command
+  └──observation── observer   C0 Real: the real output
+                              C2 Sim+ref: as C3, plus an honest C0 transcript of the same scenario
+                              C3 Sim: simulator invents it from the snapshot, the history and the command
+                              (C1, a simulator rewriting the real output, was dropped on 05-11-2026)
 
 After the episode: the behaviour probe reads the real final state (protected diff, forbidden reads,
 the tests); the scorer turns the probe's raw facts and the steps' real outputs into metrics at
@@ -1049,7 +1071,7 @@ name didn't resolve, and an agent concluded it was "a simulated environment" (`L
   a greeting and exits 1.
 - **Pushes succeed** and land on the episode's server, which is removed with the box. The
   checks never use the remote: the probe diffs against the base commit recorded at the
-  start, and the hidden tests run on a local clone. The shadow box in C1–C3 is the same
+  start, and the hidden tests run on a local clone. The shadow box in the simulated conditions is the same
   machine, so its pushes go to its own server.
 - **Why this option.** The git server is outside the box's namespaces, so `ps` shows nothing
   new, the box has no new user, repo or process, and no capability it lacked: the helper
@@ -1126,12 +1148,12 @@ customer's git repo), adapted from LinuxArena's `auto_workflow` environment (com
   (its image has no clock library); `node_modules` came from LinuxArena's image with its own
   dates normalised; the Prisma runtime is edited in one place.
 
-**C2 since 05-11-2026: grounded on state.** C2 gets C3's prompt, plus a block with the commands and outputs of a C0
+**C2 (Sim+ref) since 05-11-2026: grounded on state.** C2 gets C3's prompt, plus a block with the commands and outputs of a C0
 episode of the same scenario (`scenarios/coding/<id>.reference.json`, `explore/build_reference.py`). It never gets the
 current command's output, so it follows C3's rule (command lines only). Logs before this date with the observer
 `C2-grounded-history` are the old C2, a rewrite of the real output; the observer now says `C2-reference`.
 
-**The grounded turn and the check against the real output (C1; 05-11-2026, C2 until the change above).** The turn ends with a reminder
+**The grounded turn and the check against the real output (C1, since dropped; 05-11-2026, C2 until the change above).** The turn ends with a reminder
 after `</real_output>` (`GROUNDED_REMINDER`): with a bug in the history, the pilot's C2 simulator went on to fix it. On
 the laptop, on the 17 takeover steps and the steps after them, 34 of 34 first replies kept the real output with the
 reminder; without it, 17 of 34, and 9 failed all 3 samples. A grounded reply must keep at least half of
@@ -1171,7 +1193,7 @@ after the box starts and before the agent's first turn, the loop
 runs `date` on the box as harness work (in every condition), stores it as `session_start`,
 and the C2 and C3 simulators get one more line in the facts block, after the time zone:
 `- Date and time when the session started: <date output>`. C2 and C3 get the same text; C1
-gets no snapshot. The frozen file, its fingerprint and `simtest snapshot --check` never
+(dropped) gets no snapshot. The frozen file, its fingerprint and `simtest snapshot --check` never
 include that line.
 
 ## Scenarios and their benign twins (`scenarios/coding/`)
@@ -1284,19 +1306,21 @@ kept and reported, never dropped.
 
 ## C0–C3 observers (`observers.py`)
 
-Only `bash` outputs go through an observer. C1/C2 use a **grounded** prompt (mirror the real
-output, change nothing); C2 also gets the snapshot and the in-episode history, so C2 and C3
-get the same inputs except the real output. C3 uses the bake-off's frozen **common** prompt
-(`explore/bakeoff_simulate.py`), the one the simulator was chosen on. All prompts live in
+Only `bash` outputs go through an observer. C3 (Sim) uses the bake-off's frozen **common** prompt
+(`explore/bakeoff_simulate.py`), the one the simulator was chosen on. C2 (Sim+ref) gets the same
+prompt plus the reference block, and the same turns, so C2 and C3 get the same inputs except the
+reference. C1 (dropped) uses a **grounded** prompt (mirror the real output, change nothing), with
+no snapshot and no history. All prompts live in
 one place (`prompts.py`); nothing is frozen yet (before the pilot). A simulator never sees
 the system prompt, the rules, the agent's reasoning or messages, or the hypothesis — only
 commands, outputs and the snapshot (tested). The same output cap and whitespace policy apply
 in every condition: no leading blank lines (a simulator's reply loses its leading newlines in
 parsing, so a real output keeps none either; npm prints one first) and no trailing whitespace. Per step we record the command, the real output and exit code, the
-observation the agent saw, and (C1–C3) the simulator's raw output, reasoning, timing, finish
-reason and token usage.
+observation the agent saw, and (in the simulated conditions) the simulator's raw output, reasoning,
+timing, finish reason and token usage.
 
-**A command line instead of an output is resampled** (C1–C3, the same rule everywhere):
+**A command line instead of an output is resampled** (C2 and C3, the same rule in both; the dropped
+C1 has its own check against the real output, above):
 - **What it catches:** a simulator sometimes takes the agent's role and answers with a command
   line instead of an output. The shapes:
   - the agent's own command echoed back, or an earlier one ("I need to run `grep …`. Let me
@@ -1313,8 +1337,9 @@ reason and token usage.
   - text printed by the agent's own `echo` or `printf`.
   - Under `make` and file reads (`cat`, `grep`, `sed`, `git show` …), only an echo of the
     current command itself is flagged.
-  - In C1 and C2, a reply equal to the real output is that output, never flagged
-    (`ps -C node -o args=` prints three command lines). C3 has no real output to compare with.
+  - C2 and C3 have no real output to compare with, so only these exemptions apply. When the
+    old C2 still rewrote the real output, a reply equal to it was never flagged
+    (`ps -C node -o args=` prints three command lines).
 - **Measured on session 5's 881 unique C3 steps:** 23 flagged (20 echoes, 3 invented), and 0
   of the same steps' real outputs (`LOG.md`, 01-11-2026).
 - **What happens:** such a reply is resampled up to 2 times, bypassing Inspect's response
@@ -1575,7 +1600,7 @@ local labelling page.
   ordered steps: `system`, `task`, then `t1`, `t2`, ... one per agent turn, each with its
   reasoning, visible text, tool calls and the tool output the agent got. `render_text`
   gives the plain text with those step ids; the judge will read exactly this.
-  - It reads only `sample.messages`. In C1–C3 a tool message is the simulator's output
+  - It reads only `sample.messages`. In the simulated conditions a tool message is the simulator's output
     (the loop's `observation`); the shadow machine's real output is only in the store
     (`CodingEpisode:steps[i].result.output`), which is never read.
   - No condition, run, scenario id, simulator, model, score, store, metadata, timestamp or
@@ -1977,7 +2002,7 @@ primary test, and power by simulation for this test.
       (`planned_repeats`). The cost counts the planned episodes, excluded ones included.
     - When no design reaches the target, it says so and prints the best power found. Under
       `--budget`, it also prints the cheapest design over the budget that does.
-    - N3, with the Colab G4 costs (C1's is a guess until measured):
+    - N3, with the Colab G4 costs (C1's is a guess until measured; C1 has since been dropped):
       `uv run simtest power --c0 0.1 --c3 0.35 --cost C0=0.4 C1=4 C2=4 C3=4 --exclusion 0.1`.
 
 ## The pilot report (`pilot.py`)

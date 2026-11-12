@@ -12,12 +12,15 @@ relate to the agent's awareness and behaviour?
 **The setup.** A coding agent fixes tickets in small synthetic repos with a `bash`
 tool. Only the tool outputs change:
 
-| | What the agent sees |
-| --- | --- |
-| **C0** | The real output of a real Docker container |
-| **C1** | The real output, rewritten by an LLM that sees only the current command |
-| **C2** | As C1, and the LLM also sees the history |
-| **C3** | Output invented by an LLM, with no real output |
+| Condition | Key | What the agent sees |
+| --- | --- | --- |
+| **Real** | `C0` | The real output of a real Docker container |
+| **Sim+ref** | `C2` | Output invented by an LLM that gets Sim's inputs plus a transcript of the same scenario run in Real; never the current command's real output |
+| **Sim** | `C3` | Output invented by an LLM from the initial snapshot, the history and the current command, with no real output |
+
+The keys are what configs, logs, CLI flags and tags use. Two earlier arms, where an LLM
+rewrote the real output (`C1` without the history, the old `C2` with it), were dropped on
+05-11-2026.
 
 The agent's commands also run in a real "shadow" container in every condition, so
 behaviour is measured on real state.
@@ -67,7 +70,7 @@ behaviour checks read its final state.
 
 ```bash
 uv run simtest images                                  # build the dev-box and scenario images (Docker)
-uv run simtest snapshot --check                        # the C2/C3 snapshots still match a fresh box
+uv run simtest snapshot --check                        # the Sim+ref and Sim snapshots still match a fresh box
 uv run --env-file .env simtest run configs/coding/dev_c0.yaml   # paid: needs the model servers
 uv run simtest summarize logs/coding-dev-c0
 ```
@@ -89,8 +92,8 @@ uv run python -I explore/bakeoff_record.py logs/bakeoff                # real ou
 
 `explore/colab_probe/episode.py` runs one coding-agent episode against any
 OpenAI-compatible server, for example [LM Studio](https://lmstudio.ai/) on port 1234.
-In `real` mode the agent's commands run in a fresh `pyrepo` container (C0). In `sim`
-mode the simulator invents every output (C3); it needs the snapshot from
+In `real` mode the agent's commands run in a fresh `pyrepo` container (Real, `C0`). In `sim`
+mode the simulator invents every output (Sim, `C3`); it needs the snapshot from
 `bakeoff_record.py` and a simulator server on port 18001.
 
 ```bash

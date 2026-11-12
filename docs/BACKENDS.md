@@ -17,7 +17,7 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
 
 | Profile | GPUs | Agent | Simulator | Notes |
 | --- | --- | --- | --- | --- |
-| `one-gpu-96g` | one 90–135 GB card (Colab G4) | 0.47 of the card, 128K | 0.47, 128K | `MIX=c3`: 0.42 / 0.52, for runs that are mostly C1–C3 |
+| `one-gpu-96g` | one 90–135 GB card (Colab G4) | 0.47 of the card, 128K | 0.47, 128K | `MIX=c3`: 0.42 / 0.52, for runs that are mostly the simulated conditions (Sim+ref, Sim) |
 | `one-gpu-141g` | one card of 135 GB or more (H200) | as the G4 | as the G4 | the same fractions leave each model more KV cache |
 | `one-gpu-80g` | one 80 GB card (H100, A100) | 0.44, **64K** | 0.50, **64K** | a loud warning: not equivalent to the G4 (below) |
 | `two-gpu` | two cards of 80 GB or more | its own card, 0.90, 128K | its own card, 0.90, 128K | `MIX` has no effect |
@@ -49,7 +49,7 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
 - `SIM_ONLY=1` restarts the simulator alone next to a running agent (it stops only the simulator of
   the same `WORK`).
 - **80 GB, one card.** The agent's weights and its KV cache at 128K don't fit next to the
-  simulator, so both models get 64K. Long C3 episodes can pass 64K: session 5's largest simulator
+  simulator, so both models get 64K. Long Sim (C3) episodes can pass 64K: session 5's largest simulator
   call was 69K tokens. Those calls then fail with a context-length error. An experiment on this
   profile runs every condition on it, and its episodes never mix with the G4's.
 - `DRY_RUN=1` prints the profile and both `vllm serve` lines, and does nothing else. `GPU_MIB`
