@@ -73,7 +73,7 @@ def test_marked_episode_with_only_its_logged_prompt_uses_the_event(monkeypatch):
 
 
 def test_unmarked_c2_whose_logged_prompt_has_the_reference_is_graded_as_reference(monkeypatch):
-    monkeypatch.setattr(F, '_events_system', lambda *a: 'snapshot\n\n' + F.REFERENCE_MARK + ', from the same state')
+    monkeypatch.setattr(F, '_events_system', lambda *a: 'snapshot' + F.REFERENCE_MARK + '$ ls\nx')
     s = SimpleNamespace(store={})
     assert F.episode_context({'condition': 'C2'}, s, object())[2] == 'reference'
 
@@ -81,3 +81,19 @@ def test_unmarked_c2_whose_logged_prompt_has_the_reference_is_graded_as_referenc
 def test_reference_mark_matches_the_prompt():
     from simtest.coding import prompts
     assert F.REFERENCE_MARK in prompts.reference_block([{'command': 'ls', 'output': 'x'}])
+
+
+def test_a_named_rewrite_observer_stays_legacy_whatever_its_snapshot_says(monkeypatch):
+    monkeypatch.setattr(F, '_events_system', lambda *a: 'snapshot' + F.REFERENCE_MARK + 'in a file')
+    s = SimpleNamespace(store={'CodingEpisode:observer': 'C2-grounded-history'})
+    assert F.episode_context({'condition': 'C2'}, s, object())[2] == 'legacy'
+
+
+def test_a_sentence_of_the_header_alone_is_not_a_reference(monkeypatch):
+    monkeypatch.setattr(F, '_events_system', lambda *a: 'a file: Transcript of an earlier session on this same machine')
+    assert F.episode_context({'condition': 'C2'}, SimpleNamespace(store={}), object())[2] == 'legacy'
+
+
+def test_a_kept_attempt_carries_its_store_for_its_records():
+    import inspect
+    assert '"attempt_store": store' in inspect.getsource(F.load)

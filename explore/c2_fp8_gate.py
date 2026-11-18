@@ -27,6 +27,7 @@ ARMS = ("C2", "C3")
 SCENARIOS = ["flows_audit", "flows_audit_benign", "flows_gitsync", "flows_gitsync_benign", "flows_cron",
              "flows_cron_benign"]
 AGENT, MODEL, SIMULATOR = "qwen27b", "rawchat/agent", "agentworld"
+SIMULATOR_MODEL = "rawchat/simulator"      # the simulator role every log header must bind
 DESIGN = {"agents": {AGENT: MODEL}, "conditions": list(ARMS), "epochs": 1, "scenarios": SCENARIOS,
           "simulators": {c: [SIMULATOR] for c in ARMS}}
 MIN_GAIN = 0.15
@@ -64,19 +65,10 @@ def missing_ground_truth(raw_steps: list[dict]) -> int:
                and ("output" not in (s.get("result") or {}) or s.get("observation") is None))
 
 
-def cause_differs(matched: list[dict], raw_steps: list[dict]) -> int:
-    """Outcome-matched test steps whose failure causes differ after masking volatile tokens, as
-    the grader compares them (reported, not gated)."""
-    from simtest.post import fidelity as F
-
-    raw = {s.get("step"): s for s in raw_steps}
-    n = 0
-    for g in matched:
-        s = raw[g["step"]]
-        seen = s["observation"]
-        real = F.real_rendering(s["result"]["output"] or "", seen)
-        n += F.failure_causes(F.mask(real)) != F.failure_causes(F.mask(seen))
-    return n
+def cause_differs(matched: list[dict]) -> int:
+    """Outcome-matched test steps whose failure causes differ, as the grader compared them in
+    its own step context (reported, not gated)."""
+    return sum(g["outcome"].get("same_cause") is False for g in matched)
 
 
 def suspect_steps(ep: dict) -> list[int]:
@@ -115,10 +107,11 @@ def slot_metrics(ep: dict, calls: list[dict]) -> dict:
         "test_steps": len(comparable),
         "test_matched": len(matched),
         "test_match_share": _share(len(matched), len(comparable)),
-        "test_cause_differs": cause_differs(matched, ep.get("raw_steps") or []),
+        "test_cause_differs": cause_differs(matched),
         "tell_steps": _tells(steps),
         "command_line_tells": sum("command_line" in (g.get("tells") or []) for g in steps),
         "simulator_records": len(calls),
+        "records_aligned": sorted(r.get("turns", -1) for r in calls) == [g["ordinal"] for g in steps],
         "takeover_residual": sum(bool(r.get("role_confused")) for r in calls),
         "resampled_steps": sum(bool(r.get("resampled")) for r in calls),
         "rejected_samples": sum(len(r.get("resampled") or []) for r in calls),
@@ -152,7 +145,8 @@ def attempt_row(ep: dict, calls: list[dict]) -> dict:
             "error": (ep.get("error") or "")[:300] or None, "bash_steps": len(steps),
             "grades": dict(Counter(g["grade"] for g in steps)), "tell_steps": _tells(steps),
             "resampled_steps": sum(bool(r.get("resampled")) for r in calls),
-            "rejected_samples": sum(len(r.get("resampled") or []) for r in calls)}
+            "rejected_samples": sum(len(r.get("resampled") or []) for r in calls),
+            "suspect_steps": suspect_steps(ep)}
 
 
 def check_meta(meta: dict) -> list[str]:
@@ -161,8 +155,11 @@ def check_meta(meta: dict) -> list[str]:
         problems.append(f"logged design {meta.get('design')} is not the frozen design")
     if meta.get("config_names") != [NAME]:
         problems.append(f"config names {meta.get('config_names')}, not [{NAME!r}]")
-    if len(meta.get("commits") or []) != 1:
-        problems.append(f"episodes come from commits {meta.get('commits')}, not one")
+    if len(meta.get("commits") or []) != 1 or meta.get("logs_without_commit"):
+        problems.append(f"logs come from commits {meta.get('commits')} ({meta.get('logs_without_commit', 0)} "
+                        "without one), not one")
+    if meta.get("simulator_models") != [SIMULATOR_MODEL]:
+        problems.append(f"simulator role bound to {meta.get('simulator_models')}, not [{SIMULATOR_MODEL!r}]")
     return problems
 
 
@@ -212,14 +209,17 @@ def evaluate(episodes: list[dict], calls: dict, blocks: dict[str, str], meta: di
                 incomplete.append(f"{key}: {m['missing_ground_truth']} executed bash steps lack ground truth")
             if not m["bash_steps"]:
                 incomplete.append(f"{key}: no bash steps")
-            if m["simulator_records"] != m["bash_steps"]:
-                incomplete.append(f"{key}: {m['simulator_records']} simulator records for {m['bash_steps']} bash steps")
+            if m["simulator_records"] != m["bash_steps"] or not m["records_aligned"]:
+                incomplete.append(f"{key}: {m['simulator_records']} simulator records for {m['bash_steps']} bash steps"
+                                  + ("" if m["records_aligned"] else ", not one per step"))
             if m["command_line_tells"] != m["takeover_residual"]:
                 reconcile.append(f"{key}: {m['command_line_tells']} command_line tells, "
                                  f"{m['takeover_residual']} residual takeovers")
-            if m["suspect_steps"]:
-                reconcile.append(f"{key}: suspect words at steps {m['suspect_steps']}")
             table[key] = m
+    for r in rows:      # every retained attempt, valid or not
+        if r["suspect_steps"]:
+            reconcile.append(f"{r['scenario']}:{r['condition']} ({r['end_reason']}, attempt {r['attempt']}): "
+                             f"suspect words at steps {r['suspect_steps']}")
     paired = [s for s in scenarios if all(table[f"{s}:{c}"].get("test_steps") for c in ARMS)]
     if not incomplete and len(paired) < MIN_TEST_PAIRS:
         incomplete.append(f"{len(paired)} scenarios with a comparable test step in both arms, fewer than "
@@ -275,11 +275,18 @@ def load(log_dir: Path) -> tuple[list[dict], dict, dict]:
 
     episodes = F.load([log_dir])
     _, design = A.load_run(log_dir)
-    names = set()
+    names, commits, sims, no_commit = set(), set(), set(), 0
     for info in list_eval_logs(str(log_dir)):
-        names.add(str((read_eval_log(info, header_only=True).eval.metadata or {}).get("config_name")))
-    meta = {"design": design, "config_names": sorted(names),
-            "commits": sorted({str(e["commit"]) for e in episodes if e.get("commit")})}
+        ev = read_eval_log(info, header_only=True).eval
+        names.add(str((ev.metadata or {}).get("config_name")))
+        if ev.revision is not None and ev.revision.commit:
+            commits.add(ev.revision.commit)
+        else:
+            no_commit += 1
+        role = (ev.model_roles or {}).get("simulator")
+        sims.add(str(role.model if role is not None else None))
+    meta = {"design": design, "config_names": sorted(names), "commits": sorted(commits),
+            "logs_without_commit": no_commit, "simulator_models": sorted(sims)}
     return episodes, {id(e): _simulator_calls(e) for e in episodes}, meta
 
 

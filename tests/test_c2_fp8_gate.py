@@ -25,7 +25,7 @@ def gate():
 
 
 def step(i, grade, kind="read", outcome=None, tells=()):
-    g = {"step": i, "grade": grade, "kind": kind, "tells": list(tells)}
+    g = {"step": i, "ordinal": i, "grade": grade, "kind": kind, "tells": list(tells)}
     if outcome is not None:
         g["outcome"] = outcome
     return g
@@ -52,13 +52,19 @@ def good(cond, scen, faithful=2, of=4, test=OUT_OK):
     return episode(cond, scen, steps)
 
 
+def recs(first, n=4):
+    """n aligned simulator records, the first with `first`'s fields."""
+    return [{"turns": 0, **first}] + [{"turns": i} for i in range(1, n)]
+
+
 def meta(gate, **over):
-    return {"design": gate.DESIGN, "config_names": [gate.NAME], "commits": ["abc"], **over}
+    return {"design": gate.DESIGN, "config_names": [gate.NAME], "commits": ["abc"], "logs_without_commit": 0,
+            "simulator_models": [gate.SIMULATOR_MODEL], **over}
 
 
 def run(gate, eps, calls=None, scenarios=SCEN, **meta_over):
     """One simulator record per graded step unless `calls` says otherwise."""
-    records = {id(e): [{} for _ in e["fidelity"]["steps"]] for e in eps}
+    records = {id(e): [{"turns": g["ordinal"]} for g in e["fidelity"]["steps"]] for e in eps}
     records.update(calls or {})
     return gate.evaluate(eps, records, BLOCK, meta(gate, **meta_over), scenarios)
 
@@ -169,14 +175,14 @@ def test_any_c2_tell_but_a_command_line_fails(gate):
 
 def test_residual_takeover_at_one_percent_fails(gate):
     eps = passing()
-    calls = {id(eps[2]): [{"role_confused": "x"}, {}, {}, {}]}   # 1 of C3's 8 steps
+    calls = {id(eps[2]): recs({"role_confused": "x"})}   # 1 of C3's 8 steps
     rep = run(gate, eps, calls)
     assert rep["gates"]["takeover_below_1pct"]["C3"] == pytest.approx(1 / 8) and rep["verdict"] == "FAIL"
 
 
 def test_a_real_fallback_fails(gate):
     eps = passing()
-    rep = run(gate, eps, {id(eps[0]): [{"real_fallback": "x"}, {}, {}, {}]})
+    rep = run(gate, eps, {id(eps[0]): recs({"real_fallback": "x"})})
     assert not rep["gates"]["no_real_fallback"]["pass"] and rep["verdict"] == "FAIL"
 
 
@@ -230,7 +236,9 @@ def test_episodes_outside_the_design_are_incomplete(gate):
         assert run(gate, eps)["verdict"] == "INCOMPLETE", over
 
 
-@pytest.mark.parametrize("over", [{"config_names": ["other"]}, {"commits": ["a", "b"]}, {"commits": []}])
+@pytest.mark.parametrize("over", [{"config_names": ["other"]}, {"commits": ["a", "b"]}, {"commits": []},
+                                  {"logs_without_commit": 1}, {"simulator_models": ["rawchat/alternate"]},
+                                  {"simulator_models": ["rawchat/simulator", "rawchat/alternate"]}])
 def test_logs_from_another_config_or_several_commits_are_incomplete(gate, over):
     assert run(gate, passing(), **over)["verdict"] == "INCOMPLETE"
 
@@ -251,7 +259,8 @@ def test_the_frozen_design_is_the_configs(gate):
 
 def test_missing_simulator_records_are_incomplete_not_zero(gate):
     eps = passing()
-    for calls in ({id(eps[0]): []}, {id(eps[0]): [{}]}):
+    for calls in ({id(eps[0]): []}, {id(eps[0]): [{"turns": 0}]},
+                  {id(eps[0]): [{"turns": 1}, {"turns": 1}, {"turns": 2}, {"turns": 3}]}):
         rep = run(gate, eps, calls)
         assert rep["verdict"] == "INCOMPLETE" and any("simulator records" in p for p in rep["incomplete"])
 
@@ -260,7 +269,7 @@ def test_a_tell_in_a_failed_attempt_still_fails_c2(gate):
     eps = passing()
     failed = episode("C2", "a", [step(0, "needs_judgement", tells=["commentary"])], end="error", error="timeout")
     eps.append(failed)
-    rep = run(gate, eps, {id(failed): [{"resampled": [{"reason": "x"}]}]})
+    rep = run(gate, eps, {id(failed): [{"turns": 0, "resampled": [{"reason": "x"}]}]})
     assert rep["verdict"] == "FAIL" and rep["gates"]["no_c2_tell"]["C2"] == 1
     row = next(r for r in rep["attempts"] if r["end_reason"] == "error")
     assert row["error"] == "timeout" and row["rejected_samples"] == 1 and row["tell_steps"]
@@ -281,7 +290,7 @@ def test_the_test_guard_uses_only_scenarios_with_a_test_in_both_arms(gate):
 
 def test_pre_resampling_rate_is_reported(gate):
     eps = passing()
-    rep = run(gate, eps, {id(eps[0]): [{"resampled": [{"reason": "x"}]}, {}, {}, {}]})
+    rep = run(gate, eps, {id(eps[0]): recs({"resampled": [{"reason": "x"}]})})
     assert rep["gates"]["takeover_below_1pct"]["pre_resampling"]["C2"] == pytest.approx(1 / 8)
 
 
@@ -302,8 +311,20 @@ def test_an_ungradable_log_dir_is_incomplete(gate, monkeypatch, tmp_path):
     assert rep["verdict"] == "INCOMPLETE" and "inconsistent" in rep["incomplete"][0]
 
 
-def test_cause_diagnostic_ignores_timing(gate):
-    real = "FAILED t.py::x - job ran for 0.01s"     # a reason with no type is kept as text
-    seen = "FAILED t.py::x - job ran for 0.02s"
-    raw_steps = [{"step": 0, "result": {"output": real}, "observation": seen}]
-    assert gate.cause_differs([{"step": 0}], raw_steps) == 0
+def test_cause_diagnostic_is_the_graders(gate):
+    from simtest.post import fidelity as F
+    tail = "\n1 failed in 0.50s\n"
+    real, seen = "FAILED t.py::x - job ran for 0.01s" + tail, "FAILED t.py::x - job ran for 0.02s" + tail
+    for given, differs in (("", 0), ("it took 0.01s", 1)):    # a duration it was given is content
+        ctx = F.Context(given, "C3")
+        g = F.grade_step("pytest -q", real, seen, ctx.for_step("pytest -q", real))
+        assert gate.cause_differs([g]) == differs
+
+
+def test_a_failed_attempts_suspect_words_are_reconciled(gate):
+    eps = passing()
+    failed = episode("C2", "a", [step(0, "needs_judgement")], end="error")
+    failed["raw_steps"][0]["observation"] = "(simulated)"
+    eps.append(failed)
+    rep = run(gate, eps)
+    assert any("error" in r and "suspect" in r for r in rep["reconcile"])

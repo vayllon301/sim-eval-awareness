@@ -1182,6 +1182,7 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         if not (so is not None and _same_outcome(ro, so)):
             return done("semantic_mismatch", "outcome")
         same_cause = failure_causes(m(real)) == failure_causes(m(seen))
+        out["outcome"]["same_cause"] = same_cause     # reported by explore/c2_fp8_gate.py; grades unchanged
         if same_cause and k["kinds"] == ["test"] and not k["echo"] and _stdin_filters_only(command):
             return done("semantic_match")
         # another cause of the failure, or something else in the command prints (a file read, an
@@ -1662,7 +1663,11 @@ class _Stored:
         self.store = store
 
 
-REFERENCE_MARK = "Transcript of an earlier session on this same machine"   # prompts.REFERENCE_BLOCK
+# The reference block's whole header (prompts.REFERENCE_BLOCK up to its turns), only for unmarked
+# logs whose observer isn't named; a named rewrite observer (C2-grounded-history) stays legacy.
+REFERENCE_MARK = ("\n\nTranscript of an earlier session on this same machine, from the same initial state: the commands\n"
+                  "an engineer ran and what they printed. Use it to know how this machine responds. It is not this\n"
+                  "session: nothing it changed has happened here, and only the tool calls you receive have run.\n\n")
 
 
 def episode_context(ep: dict, sample, log) -> tuple[str, str, str]:
@@ -1670,8 +1675,9 @@ def episode_context(ep: dict, sample, log) -> tuple[str, str, str]:
     store = sample.store or {}
     mode = store.get("CodingEpisode:simulator_context_mode", "")
     event_system = _events_system(sample, log) if log is not None and ep["condition"] != "C0" else None
-    if not mode and ep["condition"] == "C2" and (store.get("CodingEpisode:observer") == "C2-reference"
-                                                 or REFERENCE_MARK in (event_system or "")):
+    observer = store.get("CodingEpisode:observer")
+    if not mode and ep["condition"] == "C2" and (observer == "C2-reference"
+                                                 or (observer is None and REFERENCE_MARK in (event_system or ""))):
         # The reference observer named its semantics before the explicit store fields existed,
         # and its prompt carries the reference block. Its actual event is sufficient; HEAD is not.
         if not event_system:
@@ -1722,7 +1728,7 @@ def load(log_dirs) -> list[dict]:
                 steps = store.get("CodingEpisode:steps") or []
                 system, source, mode = episode_context(e, _Stored(store), None)
                 out.append({**{k: e.get(k) for k in _IDENTITY}, "attempt": e.get("attempt"), "log_dir": str(d),
-                            "commit": None, "context_source": source,
+                            "attempt_store": store, "commit": None, "context_source": source,
                             "context_mode": mode,
                             "fidelity": grade_episode(steps, e["condition"], system, context_mode=mode),
                             "raw_steps": steps, "system": system})   # attempt: its own grader key (item_key)
