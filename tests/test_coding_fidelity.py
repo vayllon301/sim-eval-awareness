@@ -713,6 +713,18 @@ def test_load_grades_logged_episodes_with_the_simulators_own_prompt(tmp_path, mo
 
 
 def test_load_rebuilds_the_prompt_from_the_scenario_without_events(tmp_path, monkeypatch):
+    import inspect_ai.log
+
+    original_read = inspect_ai.log.read_eval_log
+
+    def legacy_log(path):
+        log = original_read(path)
+        for sample in log.samples or []:
+            sample.store.pop("CodingEpisode:simulator_context_mode", None)
+            sample.store.pop("CodingEpisode:simulator_system", None)
+        return log
+
+    monkeypatch.setattr(inspect_ai.log, "read_eval_log", legacy_log)
     real = _currency_lines()
     patch_machine(monkeypatch, [(real + "\n", 0)])
     agent = lambda: ScriptedAgent([[("bash", {"command": f"cat {CURRENCY}"})]], done="Done.")  # noqa: E731

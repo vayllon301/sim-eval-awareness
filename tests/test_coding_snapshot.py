@@ -63,8 +63,10 @@ def sim():
 def test_c2_and_c3_get_the_same_snapshot_and_c1_none(sid):
     sc = load_scenario(sid)
     text = session_snapshot(sc.snapshot, FAKE_DATE)
-    c1, c2, c3 = (make_observer(c, sim(), sc, session_start=FAKE_DATE).system for c in ("C1", "C2", "C3"))
-    assert text.rstrip() in c2 and text.rstrip() in c3
+    c1, c3 = (make_observer(c, sim(), sc, session_start=FAKE_DATE).system for c in ("C1", "C3"))
+    assert text.rstrip() in c3
+    if sc.reference_path.exists():   # C2 needs a reference: only the flows scenarios have one
+        assert text.rstrip() in make_observer("C2", sim(), sc, session_start=FAKE_DATE).system
     assert LINE not in c1 and "Machine:" not in c1
 
 

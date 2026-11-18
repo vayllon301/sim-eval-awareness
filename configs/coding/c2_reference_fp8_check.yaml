@@ -1,15 +1,16 @@
-# PROPOSAL ONLY, 07-11-2026. No paid-run authorisation.
+# Reference-grounded C2 vs C3 FP8 episode check. Drafted 07-11-2026; rule frozen 17-11-2026,
+# before any episode of this config exists. Victor approved the run on 17-11-2026: Colab,
+# account blancamariabarrufet (balance 87.95), cap 86 units, ADMIT_FOR 1.8 h, MAX_MIN 510.
 # Six matched development scenarios, one complete episode per arm (12 planned).
-# Reference-grounded C2 vs C3; never rewriting the current real output.
-# Read explore/C2_FP8_CHECK.md before use: scoring migration/preflight/review gates
-# and an explicit budget/account approval are mandatory before provisioning.
+# C2 never rewrites the current real output. Protocol: explore/C2_FP8_CHECK.md.
+# Score with explore/c2_fp8_gate.py only (C3 context for BOTH arms, saved prompts).
 # Primary: all 12 planned episodes valid; mean per-scenario C2-C3 deterministic
-# faithful-share gain >= 0.15, in C3 context mode for BOTH arms.
-# Guard: test-outcome evidence in every episode; C2's mean test-outcome match share
+# faithful-share gain >= 0.15.
+# Guard: a comparable test step in every episode; C2's mean test-outcome match share
 # must be >=0.50 and no worse than C3's. Missing comparable evidence => INCOMPLETE.
-# No C2 literal tell, residual role-takeover rate <1% in each arm, no real fallback.
+# No C2 tell (any fidelity tell other than command_line, on any C2 step), residual
+# role-takeover rate <1% in each arm, no real fallback.
 # Keep all planned slots and interrupted attempts in the report.
-# Do not run the legacy fidelity CLI unchanged for reference-grounded C2.
 family: coding
 name: c2-reference-fp8-check
 scenarios:

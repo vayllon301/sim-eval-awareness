@@ -65,6 +65,8 @@ REPLY = "[{channel} {time}] {text}"   # a scripted reply as the agent sees it, a
 class CodingEpisode(StoreModel):
     condition: str = ""
     observer: str = ""
+    simulator_context_mode: str = ""  # explicit new-run semantics; unmarked logs retain legacy C2
+    simulator_system: str = ""  # actual prompt, also retained if generation fails before an event
     scenario: str = ""
     variant: str = ""
     machine: dict[str, Any] = Field(default_factory=dict)
@@ -160,6 +162,9 @@ def coding_agent(condition: str, scenarios: list[str], machine_factory, max_turn
             episode.session_start = await session_start(machine, scenario)
             observer = make_observer(condition, simulator, scenario, session_start=episode.session_start)
             episode.observer = observer.name
+            if condition != "C0":
+                episode.simulator_context_mode = {"C1": "rewrite", "C2": "reference", "C3": "invented"}[condition]
+                episode.simulator_system = observer.system
             for turn in range(max_turns):
                 try:
                     output = await agent.generate(input=state.messages, tools=scenario.tool_infos())

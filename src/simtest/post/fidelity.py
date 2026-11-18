@@ -1253,12 +1253,14 @@ def real_rendering(output: str, seen: str | None) -> str:
     return real
 
 
-def grade_episode(steps: list[dict], condition: str, system: str = "") -> dict:
+def grade_episode(steps: list[dict], condition: str, system: str = "", *, context_mode: str = "legacy") -> dict:
     """Grades for an episode's simulated bash steps (every executed bash step with a real
     output and an observation), the first divergence, and the contradictions."""
     from ..coding.analysis import step_divergence
 
-    ctx = Context(system, condition)
+    if context_mode not in ("legacy", "reference") or (context_mode == "reference" and (condition != "C2" or not system)):
+        raise FidelityError("Reference fidelity needs C2 and its actual simulator prompt")
+    ctx = Context(system, "C3" if context_mode == "reference" else condition)
     graded, texts, no_obs = [], [], 0
     for s in steps:
         if s.get("tool") != "bash" or not s.get("executed"):
@@ -1660,6 +1662,35 @@ class _Stored:
         self.store = store
 
 
+def episode_context(ep: dict, sample, log) -> tuple[str, str, str]:
+    """Actual new-run prompts and explicit visibility; legacy logs keep their old behavior."""
+    store = sample.store or {}
+    mode = store.get("CodingEpisode:simulator_context_mode", "")
+    event_system = _events_system(sample, log) if log is not None and ep["condition"] != "C0" else None
+    if not mode and ep["condition"] == "C2" and store.get("CodingEpisode:observer") == "C2-reference":
+        # The earlier reference observer already named its semantics, before the
+        # explicit store fields existed. Its actual event is sufficient; HEAD is not.
+        if not event_system:
+            raise FidelityError("Reference C2 is missing its actual simulator prompt")
+        return event_system, "events", "reference"
+    if not mode and store.get("CodingEpisode:simulator_system"):
+        raise FidelityError("Stored simulator prompt has no visibility mode")
+    if mode:
+        expected = {"C1": "rewrite", "C2": "reference", "C3": "invented"}.get(ep["condition"])
+        system = store.get("CodingEpisode:simulator_system")
+        if mode != expected or not isinstance(system, str) or not system.strip():
+            raise FidelityError("Missing or inconsistent actual simulator prompt/mode")
+        if event_system is not None and event_system != system:
+            raise FidelityError("Stored simulator prompt disagrees with its logged request")
+        return system, "events" if event_system is not None else "store", "reference" if mode == "reference" else "legacy"
+    if ep["condition"] != "C0":
+        if event_system is not None:
+            return event_system, "events", "legacy"
+        if (system := _scenario_system(ep, sample)) is not None:
+            return system, "scenario", "legacy"
+    return "", "none", "legacy"
+
+
 def load(log_dirs) -> list[dict]:
     """Every episode of the log directories (deduplicated as simtest summarize does), graded.
     Each: its identity, `log_dir`, `commit` (the run's), `context_source` (events: the
@@ -1683,12 +1714,11 @@ def load(log_dirs) -> list[dict]:
                 # error episode, so it counts in n_excluded, never in the rates.
                 store = e.get("attempt_store") or {}
                 steps = store.get("CodingEpisode:steps") or []
-                system, source = "", "none"
-                if e["condition"] != "C0" and (text := _scenario_system(e, _Stored(store))) is not None:
-                    system, source = text, "scenario"
+                system, source, mode = episode_context(e, _Stored(store), None)
                 out.append({**{k: e.get(k) for k in _IDENTITY}, "attempt": e.get("attempt"), "log_dir": str(d),
                             "commit": None, "context_source": source,
-                            "fidelity": grade_episode(steps, e["condition"], system),
+                            "context_mode": mode,
+                            "fidelity": grade_episode(steps, e["condition"], system, context_mode=mode),
                             "raw_steps": steps, "system": system})   # attempt: its own grader key (item_key)
                 continue
             by_log[e["log_path"]].append(e)
@@ -1703,14 +1733,10 @@ def load(log_dirs) -> list[dict]:
                     raise FidelityError(f"{path}: sample {e['sample_id']} epoch {e['epoch']} (uuid {e['uuid']}) is "
                                         "not in its log")
                 steps = (s.store or {}).get("CodingEpisode:steps") or []
-                system, source = "", "none"
-                if e["condition"] != "C0":
-                    if (text := _events_system(s, log)) is not None:
-                        system, source = text, "events"
-                    elif (text := _scenario_system(e, s)) is not None:
-                        system, source = text, "scenario"
+                system, source, mode = episode_context(e, s, log)
                 out.append({**{k: e.get(k) for k in _IDENTITY}, "log_dir": str(d), "commit": commit,
-                            "context_source": source, "fidelity": grade_episode(steps, e["condition"], system),
+                            "context_source": source, "context_mode": mode,
+                            "fidelity": grade_episode(steps, e["condition"], system, context_mode=mode),
                             "raw_steps": steps, "system": system})
     return out
 
