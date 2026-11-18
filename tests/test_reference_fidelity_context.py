@@ -64,3 +64,20 @@ def test_reference_episode_records_actual_prompt_and_roundtrips(tmp_path, monkey
     stored = F.load([tmp_path/'logs'])[0]
     assert stored['context_source'] == 'store'
     assert stored['system'] == ep['system'] and stored['fidelity'] == ep['fidelity']
+
+
+def test_marked_episode_with_only_its_logged_prompt_uses_the_event(monkeypatch):
+    monkeypatch.setattr(F, '_events_system', lambda *a: 'actual reference prompt')
+    s = SimpleNamespace(store={'CodingEpisode:simulator_context_mode': 'reference'})
+    assert F.episode_context({'condition': 'C2'}, s, object()) == ('actual reference prompt', 'events', 'reference')
+
+
+def test_unmarked_c2_whose_logged_prompt_has_the_reference_is_graded_as_reference(monkeypatch):
+    monkeypatch.setattr(F, '_events_system', lambda *a: 'snapshot\n\n' + F.REFERENCE_MARK + ', from the same state')
+    s = SimpleNamespace(store={})
+    assert F.episode_context({'condition': 'C2'}, s, object())[2] == 'reference'
+
+
+def test_reference_mark_matches_the_prompt():
+    from simtest.coding import prompts
+    assert F.REFERENCE_MARK in prompts.reference_block([{'command': 'ls', 'output': 'x'}])

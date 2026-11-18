@@ -24,6 +24,18 @@ No prompt tuning on the controlled replay's queries is part of this proposal.
     must be graded in reference mode and contain its scenario's frozen reference block; C3's
     must not contain a reference.
   - More than one valid episode for a slot, or an episode outside the design: INCOMPLETE.
+  - **Test guard changed** (Victor, 17-11-2026, before any episode): the council review found
+    that Sim often runs no test (in `flows_cron`, 2 of 6 past episodes), so requiring a test in
+    all 12 slots would almost surely give INCOMPLETE (a rough 3%, not a result). The guard now
+    averages the slot shares over the scenarios where **both arms** ran a comparable test
+    step; fewer than **2** such scenarios is INCOMPLETE. A slot without a test no longer makes
+    the check INCOMPLETE. This replaces the "zero comparable test steps" clause below.
+  - Also INCOMPLETE: a valid slot whose simulator records are not one per graded bash step;
+    logs whose design, config name or commit is not this run's; logs the grader refuses.
+  - The tell gate covers every retained C2 attempt, failed ones included. Every attempt is
+    listed with its grades. A `reconcile` list (suspect words such as "simulated" or "...",
+    which `tells` can't flag because the prompt contains them; command-line tells that differ
+    from residual takeovers) must be resolved in the manual read before a verdict is reported.
 - Reference files (`scenarios/coding/<id>.reference.json`) are frozen; the scorer records
   their SHA-256 with the verdict.
 

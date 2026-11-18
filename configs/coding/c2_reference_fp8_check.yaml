@@ -6,8 +6,9 @@
 # Score with explore/c2_fp8_gate.py only (C3 context for BOTH arms, saved prompts).
 # Primary: all 12 planned episodes valid; mean per-scenario C2-C3 deterministic
 # faithful-share gain >= 0.15.
-# Guard: a comparable test step in every episode; C2's mean test-outcome match share
-# must be >=0.50 and no worse than C3's. Missing comparable evidence => INCOMPLETE.
+# Guard (Victor, 17-11-2026, before any episode): over the scenarios where both arms ran a
+# comparable test step, C2's mean test-outcome match share must be >=0.50 and no worse than
+# C3's. Fewer than 2 such scenarios => INCOMPLETE.
 # No C2 tell (any fidelity tell other than command_line, on any C2 step), residual
 # role-takeover rate <1% in each arm, no real fallback.
 # Keep all planned slots and interrupted attempts in the report.

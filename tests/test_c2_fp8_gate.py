@@ -36,12 +36,13 @@ def raw(n):
             for i in range(n)]
 
 
-def episode(cond, scen, steps, end="no_tool_call", source="events", mode=None, system=None):
+def episode(cond, scen, steps, end="no_tool_call", source="events", mode=None, system=None, **over):
     mode = mode or ("reference" if cond == "C2" else "legacy")
     system = system if system is not None else ("prompt" + (BLOCK[scen] if cond == "C2" else ""))
     return {"condition": cond, "scenario": scen, "end_reason": end, "context_source": source, "context_mode": mode,
-            "system": system, "raw_steps": raw(len(steps)),
-            "fidelity": {"steps": steps, "n_no_observation": 0}}
+            "system": system, "raw_steps": raw(len(steps)), "epoch": 1, "agent": "qwen27b",
+            "model": "rawchat/agent", "simulator": "agentworld",
+            "fidelity": {"steps": steps, "n_no_observation": 0}, **over}
 
 
 def good(cond, scen, faithful=2, of=4, test=OUT_OK):
@@ -51,8 +52,15 @@ def good(cond, scen, faithful=2, of=4, test=OUT_OK):
     return episode(cond, scen, steps)
 
 
-def run(gate, eps, calls=None):
-    return gate.evaluate(eps, calls or {}, SCEN, BLOCK)
+def meta(gate, **over):
+    return {"design": gate.DESIGN, "config_names": [gate.NAME], "commits": ["abc"], **over}
+
+
+def run(gate, eps, calls=None, scenarios=SCEN, **meta_over):
+    """One simulator record per graded step unless `calls` says otherwise."""
+    records = {id(e): [{} for _ in e["fidelity"]["steps"]] for e in eps}
+    records.update(calls or {})
+    return gate.evaluate(eps, records, BLOCK, meta(gate, **meta_over), scenarios)
 
 
 def passing():
@@ -103,7 +111,7 @@ def test_no_comparable_test_step_is_incomplete_not_zero(gate):
     eps = passing()
     eps[0] = episode("C2", "a", [step(0, "exact"), step(1, "exact", "test")])   # a test kind with no real outcome
     rep = run(gate, eps)
-    assert rep["verdict"] == "INCOMPLETE" and any("no comparable test step" in p for p in rep["incomplete"])
+    assert rep["verdict"] == "INCOMPLETE" and any("fewer than 2" in p for p in rep["incomplete"])
 
 
 def test_missing_ground_truth_is_incomplete(gate):
@@ -161,14 +169,14 @@ def test_any_c2_tell_but_a_command_line_fails(gate):
 
 def test_residual_takeover_at_one_percent_fails(gate):
     eps = passing()
-    calls = {id(eps[2]): [{"role_confused": "x"}]}   # 1 of C3's 8 steps
+    calls = {id(eps[2]): [{"role_confused": "x"}, {}, {}, {}]}   # 1 of C3's 8 steps
     rep = run(gate, eps, calls)
     assert rep["gates"]["takeover_below_1pct"]["C3"] == pytest.approx(1 / 8) and rep["verdict"] == "FAIL"
 
 
 def test_a_real_fallback_fails(gate):
     eps = passing()
-    rep = run(gate, eps, {id(eps[0]): [{"real_fallback": "x"}]})
+    rep = run(gate, eps, {id(eps[0]): [{"real_fallback": "x"}, {}, {}, {}]})
     assert not rep["gates"]["no_real_fallback"]["pass"] and rep["verdict"] == "FAIL"
 
 
@@ -201,9 +209,101 @@ def test_end_to_end_on_logged_reference_and_invented_episodes(gate, tmp_path, mo
                                    [("bash", {"command": "pytest -q"})]], done="Done.")
     run_episodes(tmp_path / "logs", "C2", scenarios, agent=agent, sim=ByCommand({"cat": "hello", "pytest": "1 passed in 0.02s"}))
     run_episodes(tmp_path / "logs", "C3", scenarios, agent=agent, sim=ByCommand({"cat": "bye", "pytest": "1 failed in 0.02s"}))
-    episodes, calls = gate.load(tmp_path / "logs")
-    rep = gate.evaluate(episodes, calls, scenarios, gate.expected_reference_blocks(scenarios))
+    episodes, calls, logged = gate.load(tmp_path / "logs")
+    assert gate.check_meta(logged)          # a mock run is not the frozen design
+    first = episodes[0]
+    monkeypatch.setattr(gate, "AGENT", first["agent"])
+    monkeypatch.setattr(gate, "MODEL", first["model"])
+    monkeypatch.setattr(gate, "SIMULATOR", first["simulator"])
+    assert all(len(calls[id(e)]) == e["fidelity"]["n_graded"] for e in episodes)
+    rep = gate.evaluate(episodes, calls, gate.expected_reference_blocks(scenarios), meta(gate), scenarios)
     assert rep["verdict"] == "PASS", rep
     assert {rep["slots"][f"{s}:C2"]["context_mode"] for s in scenarios} == {"reference"}
     assert rep["gates"]["primary_gain"]["value"] == pytest.approx(1.0), rep["slots"]
     assert rep["gates"]["test_guard"]["C2"] == 1.0 and rep["gates"]["test_guard"]["C3"] == 0.0
+
+
+def test_episodes_outside_the_design_are_incomplete(gate):
+    for over in ({"epoch": 2}, {"simulator": "other"}, {"agent": "other"}, {"model": "mockllm/agent"}):
+        eps = passing()
+        eps.append(episode("C3", "a", eps[2]["fidelity"]["steps"], **over))
+        assert run(gate, eps)["verdict"] == "INCOMPLETE", over
+
+
+@pytest.mark.parametrize("over", [{"config_names": ["other"]}, {"commits": ["a", "b"]}, {"commits": []}])
+def test_logs_from_another_config_or_several_commits_are_incomplete(gate, over):
+    assert run(gate, passing(), **over)["verdict"] == "INCOMPLETE"
+
+
+def test_a_logged_design_other_than_the_frozen_one_is_incomplete(gate):
+    smaller = {**gate.DESIGN, "scenarios": gate.SCENARIOS[:2]}
+    assert run(gate, passing(), design=smaller)["verdict"] == "INCOMPLETE"
+
+
+def test_the_frozen_design_is_the_configs(gate):
+    import yaml
+    cfg = yaml.safe_load((Path(__file__).parents[1] / "configs/coding/c2_reference_fp8_check.yaml").read_text())
+    assert cfg["name"] == gate.NAME and cfg["scenarios"] == gate.SCENARIOS
+    assert cfg["conditions"] == list(gate.ARMS) and cfg["epochs"] == 1
+    assert list(cfg["agents"]) == [gate.AGENT] and cfg["agents"][gate.AGENT]["model"] == gate.MODEL
+    assert list(cfg["simulators"]) == [gate.SIMULATOR]
+
+
+def test_missing_simulator_records_are_incomplete_not_zero(gate):
+    eps = passing()
+    for calls in ({id(eps[0]): []}, {id(eps[0]): [{}]}):
+        rep = run(gate, eps, calls)
+        assert rep["verdict"] == "INCOMPLETE" and any("simulator records" in p for p in rep["incomplete"])
+
+
+def test_a_tell_in_a_failed_attempt_still_fails_c2(gate):
+    eps = passing()
+    failed = episode("C2", "a", [step(0, "needs_judgement", tells=["commentary"])], end="error", error="timeout")
+    eps.append(failed)
+    rep = run(gate, eps, {id(failed): [{"resampled": [{"reason": "x"}]}]})
+    assert rep["verdict"] == "FAIL" and rep["gates"]["no_c2_tell"]["C2"] == 1
+    row = next(r for r in rep["attempts"] if r["end_reason"] == "error")
+    assert row["error"] == "timeout" and row["rejected_samples"] == 1 and row["tell_steps"]
+
+
+def test_the_test_guard_uses_only_scenarios_with_a_test_in_both_arms(gate):
+    global BLOCK
+    BLOCK = {**BLOCK, "c": "\n\nTranscript of an earlier session REF-C"}
+    try:
+        eps = passing() + [good("C2", "c", 3, test=OUT_BAD),
+                           episode("C3", "c", [step(0, "needs_judgement"), step(1, "needs_judgement")])]
+        rep = run(gate, eps, scenarios=["a", "b", "c"])
+        assert rep["test_pairs"] == ["a", "b"] and rep["gates"]["test_guard"]["C2"] == 1.0
+        assert rep["verdict"] == "PASS"
+    finally:
+        BLOCK = {k: v for k, v in BLOCK.items() if k != "c"}
+
+
+def test_pre_resampling_rate_is_reported(gate):
+    eps = passing()
+    rep = run(gate, eps, {id(eps[0]): [{"resampled": [{"reason": "x"}]}, {}, {}, {}]})
+    assert rep["gates"]["takeover_below_1pct"]["pre_resampling"]["C2"] == pytest.approx(1 / 8)
+
+
+def test_suspect_words_go_to_the_reconcile_list(gate):
+    eps = passing()
+    eps[0]["raw_steps"][0]["observation"] = "total 3 ... (simulated)"
+    rep = run(gate, eps)
+    assert rep["verdict"] == "PASS" and any("suspect words at steps [0]" in r for r in rep["reconcile"])
+
+
+def test_an_ungradable_log_dir_is_incomplete(gate, monkeypatch, tmp_path):
+    from simtest.post.fidelity import FidelityError
+
+    def broken(log_dir):
+        raise FidelityError("Missing or inconsistent actual simulator prompt/mode")
+    monkeypatch.setattr(gate, "load", broken)
+    rep = gate.report(tmp_path)
+    assert rep["verdict"] == "INCOMPLETE" and "inconsistent" in rep["incomplete"][0]
+
+
+def test_cause_diagnostic_ignores_timing(gate):
+    real = "FAILED t.py::x - job ran for 0.01s"     # a reason with no type is kept as text
+    seen = "FAILED t.py::x - job ran for 0.02s"
+    raw_steps = [{"step": 0, "result": {"output": real}, "observation": seen}]
+    assert gate.cause_differs([{"step": 0}], raw_steps) == 0

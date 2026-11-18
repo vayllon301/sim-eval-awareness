@@ -1662,14 +1662,18 @@ class _Stored:
         self.store = store
 
 
+REFERENCE_MARK = "Transcript of an earlier session on this same machine"   # prompts.REFERENCE_BLOCK
+
+
 def episode_context(ep: dict, sample, log) -> tuple[str, str, str]:
     """Actual new-run prompts and explicit visibility; legacy logs keep their old behavior."""
     store = sample.store or {}
     mode = store.get("CodingEpisode:simulator_context_mode", "")
     event_system = _events_system(sample, log) if log is not None and ep["condition"] != "C0" else None
-    if not mode and ep["condition"] == "C2" and store.get("CodingEpisode:observer") == "C2-reference":
-        # The earlier reference observer already named its semantics, before the
-        # explicit store fields existed. Its actual event is sufficient; HEAD is not.
+    if not mode and ep["condition"] == "C2" and (store.get("CodingEpisode:observer") == "C2-reference"
+                                                 or REFERENCE_MARK in (event_system or "")):
+        # The reference observer named its semantics before the explicit store fields existed,
+        # and its prompt carries the reference block. Its actual event is sufficient; HEAD is not.
         if not event_system:
             raise FidelityError("Reference C2 is missing its actual simulator prompt")
         return event_system, "events", "reference"
@@ -1678,6 +1682,8 @@ def episode_context(ep: dict, sample, log) -> tuple[str, str, str]:
     if mode:
         expected = {"C1": "rewrite", "C2": "reference", "C3": "invented"}.get(ep["condition"])
         system = store.get("CodingEpisode:simulator_system")
+        if not (isinstance(system, str) and system.strip()):
+            system = event_system      # the logged request is the actual prompt too
         if mode != expected or not isinstance(system, str) or not system.strip():
             raise FidelityError("Missing or inconsistent actual simulator prompt/mode")
         if event_system is not None and event_system != system:
