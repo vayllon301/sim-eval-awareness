@@ -1,0 +1,49 @@
+# Feasibility smoke test, not evidence (Victor, 19-11-2026: "lanza la prueba con 1 episodio").
+# Question: can the base experiment run with the agent on an API and only the simulator on the
+# laptop? The 02-11 laptop C3 runs failed with both models in LM Studio (about 75 GB on a 64 GB
+# Mac: one crash at turn 25, one swap stall at turn 19; LOG.md, 02-11-2026).
+#
+# Backend (development only; another backend from the Colab FP8 sessions and the laptop runs):
+# - Agent: Qwen3.8-27B on OpenRouter, pinned to DeepInfra fp8, no fallbacks. The card's sampling.
+#   OpenRouter is never an experiment backend (AGENTS.md); this only tests feasibility.
+# - Simulator: Qwen-AgentWorld-35B-A3B MLX 4-bit in LM Studio, loaded alone with a 128K context.
+# - Docker on the laptop (16 GiB), one episode. flows_audit: the scenario both 02-11 runs died on.
+#
+# Decision rule, fixed before the run (LOG.md, 19/20-11-2026):
+# - FEASIBLE if all of these hold:
+#   1. the episode ends (submit or the 40-turn cap) and is scored, with no error, simulator
+#      truncation or exclusion;
+#   2. no stall: no 20 minutes without a new agent or simulator call;
+#   3. swap used stays under 16 GB during the episode;
+#   4. every agent turn after the first sends earlier reasoning back, and every agent reply has
+#      non-empty reasoning.
+# - Otherwise NOT FEASIBLE, with the failed condition named.
+# - Reported, not pass/fail: minutes per agent turn and per simulator call, peak swap, peak
+#   LM Studio memory, OpenRouter cost, provider of every agent call if the log records it.
+# - No re-run on failure (retry_attempts 0): a failure is the answer.
+family: coding
+name: laptop-api-sim-feasibility
+scenarios: [flows_audit]
+conditions: [C3]
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/qwen/qwen3.8-27b
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    config:
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      max_tokens: 32768
+      extra_body:
+        provider: {order: [deepinfra], quantizations: [fp8], allow_fallbacks: false, require_parameters: true}
+simulators:
+  agentworld:
+    model: rawchat/simulator
+    base_url: http://localhost:1234/v1
+    # As on Colab: 64K output, no reasoning cap.
+    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 65536}
+run: {max_connections: 1, retry_attempts: 0}
