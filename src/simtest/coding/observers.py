@@ -199,9 +199,10 @@ class SimulatedBash(BashObserver):
                     exc.record["resampled"] = rejected
                 raise
             except BaseException as exc:                    # infrastructure: the episode is re-run, but
+                rec = {"model": str(self.model), "turns": len(self.history), "error": repr(exc), "usage": None}
                 if rejected:                                 # what was rejected is still recorded
-                    self.records.append({"model": str(self.model), "turns": len(self.history),
-                                         "error": repr(exc), "resampled": rejected})
+                    rec["resampled"] = rejected
+                self.records.append(rec)
                 raise
             # C2 and C3 have no real output to compare with, so only the shape of a reply can be read.
             reason = (grounded_mismatch(text, truth) if grounded

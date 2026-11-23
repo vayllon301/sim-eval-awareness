@@ -232,17 +232,83 @@ def test_judged_ignores_scout_in_both_orders_and_rejects_conflicting_primary(rep
     p2.write_text(json.dumps(verdict(key, positive=True, backend="openrouter", model="sonnet")) + "\n")
     with pytest.raises(ValueError, match="conflict"):
         report.judged([p_file, p2])
+    # Same verdict/model/settings but different transcript_sha256 must also raise
+    p3 = tmp_path / "primary3.jsonl"
+    p3.write_text(json.dumps(verdict(key, positive=False, backend="openrouter", model="haiku",
+                                     transcript_sha256="different-hash")) + "\n")
+    with pytest.raises(ValueError, match="conflict"):
+        report.judged([p_file, p3])
 
 
 def test_partial_and_duplicate_cohorts_cannot_produce_fake_final_verdicts(report, machines, tmp_path):  # noqa: F811
     _, _, log_dir = run(config(tmp_path), tmp_path, models=scripted)
     with pytest.raises(ValueError, match="duplicate"):
         report.read([log_dir, log_dir])
+    # Passing two Qwen runs under two different directory names must also be rejected as duplicate slots
+    two_qwen = [ep(report, arm="dir-a", scenario=s, condition=c) for s in ("flows_audit", "pricing_cap") for c in ("C0", "C3")]
+    two_qwen += [ep(report, arm="dir-b", scenario=s, condition=c) for s in ("flows_audit", "pricing_cap") for c in ("C0", "C3")]
+    with pytest.raises(ValueError, match="duplicate"):
+        report.rules(two_qwen)
+    # Two epochs of one agent cannot stand in for two distinct agents
+    two_epochs_qwen = [ep(report, arm="qwen", scenario=s, condition=c, epoch=ep_n)
+                       for ep_n in (1, 2) for s in ("flows_audit", "pricing_cap") for c in ("C0", "C3")]
+    res_two_ep = fired(report, two_epochs_qwen)
+    assert res_two_ep["mean_sim_cost_usd"] is None and res_two_ep["flows_divergent_rate"] is None
     # Single completed arm leaves pooled flows_divergent_rate and mean_sim_cost_usd provisional (None)
     one_arm = [r for r in design(report) if "qwen" in r["arm"]]
     res = fired(report, one_arm)
     assert res["flows_divergent_rate"] is None
     assert res["mean_sim_cost_usd"] is None
+
+
+def test_unserializable_attempt_message_keeps_rule5_open_not_fired(report):
+    e = {"agent": "deepseek_v4_pro", "model": "rawchat/deepseek-v4-pro", "condition": "C0", "scenario": "pricing_cap",
+         "epoch": 1, "end_reason": "error", "error": "boom", "log_path": None, "log": "attempts",
+         "divergence": {"n_bash": 0, "n_divergent": 0},
+         "attempt_store": {"CodingEpisode:steps": [], "CodingEpisode:simulator_calls": []},
+         "attempt_messages": [
+             {"role": "user", "content": "ticket"},
+             {"role": "assistant", "unserializable": True},
+         ]}
+    facts = report._sample_facts(e)
+    assert facts["turns"] == 1 and facts["reasoning"] is None and facts["empty_reasoning_turns"] == 0
+    r = report.row("bluedot-cheap-deepseek", e, facts)
+    rows = design(report) + [r]
+    assert fired(report, rows)["deepseek_errors"] is None   # unreadable turn stays unknown, never blames DeepSeek
+
+
+def test_timeout_inside_first_simulator_generate_marks_spend_unknown_and_blocks_rule1(
+    report, machines, tmp_path, monkeypatch  # noqa: F811
+):
+    """A read timeout inside model.generate() on the FIRST simulator call must leave an unknown-usage
+    record in attempts/, so Rule 1 cannot clear."""
+    from inspect_ai.solver._task_state import sample_state
+
+    def timeout_first_sim(spec):
+        base = scripted(spec)
+        if spec["model"] != "mockllm/sim":
+            return base
+        orig_gen = base.generate
+
+        async def flaky_generate(input, *args, **kwargs):
+            state = sample_state()
+            key = (state.store.get("CodingEpisode:condition"), state.metadata["scenario"], state.epoch,
+                   state.store.get("CodingEpisode:attempt")["attempt"])
+            if key == ("C3", "pricing_cap", 1, 1):
+                raise TimeoutError("read timed out inside simulator generate")
+            return await orig_gen(input, *args, **kwargs)
+
+        monkeypatch.setattr(base, "generate", flaky_generate)
+        return base
+
+    monkeypatch.setitem(report.RATES, "mockllm/sim", report.RATES["claude-sonnet-5-5"])
+    _, _, log_dir = run(config(tmp_path), tmp_path, models=timeout_first_sim)
+    rows = report.read([log_dir])
+    failed = next(r for r in rows if r["end"] == "error")
+    assert failed["sim_calls"] == 1 and failed["sim_cost_unknown"] is True
+    # Even alongside a complete 4-slot scored Sim cohort, that unknown-spend failed attempt prevents clearing Rule 1
+    combined = design(report) + [failed]
+    assert fired(report, combined)["mean_sim_cost_usd"] is None
 
 
 def test_deepseek_cost_reports_off_peak_and_peak_range(report):
