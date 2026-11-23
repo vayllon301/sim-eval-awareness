@@ -365,6 +365,7 @@ def load_run(log_dir):
             "fingerprint": rec.get("version"), "log": "attempts", "log_path": None,
             "sample_id": rec.get("sample_id"), "uuid": None, "attempt": attempt,
             "attempt_store": store,   # the attempt's own record (no log file holds it)
+            "attempt_messages": rec.get("messages") or [],
         })
     # - an attempt with no record but its admission: the process was killed (SIGKILL, a crash)
     #   before the solver could write it, and Inspect's crash recovery rebuilds such a sample with an

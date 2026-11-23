@@ -28,6 +28,6 @@ agents:
 simulators:
   sonnet55:
     model: anthropic/claude-sonnet-5-5
-    config: {reasoning_effort: medium, cache_prompt: true, max_tokens: 16384}
+    config: {reasoning_effort: medium, cache_prompt: true, max_tokens: 32768}
 simulators_for: {C3: [sonnet55]}
 run: {max_connections: 2, retry_attempts: 1, order_seed: 20261122}

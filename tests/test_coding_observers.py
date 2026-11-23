@@ -246,16 +246,12 @@ def test_c1_stays_checked_against_the_real_output():
     assert text == tool_output(REAL) and script.i == 2
 
 
-def test_an_empty_output_stays_an_empty_turn_for_every_simulator_but_native_anthropic():
-    """rawchat (vLLM, OpenRouter) and mock simulators: the history's empty turn goes out empty,
-    and a reply is never read as the Anthropic placeholder (tests/test_coding_anthropic.py)."""
-    from simtest.coding.observers import EMPTY_TURN
-
-    model = mock(ScriptedSimulator(["", EMPTY_TURN, "o3"]), "mockllm/sim")
+def test_an_empty_output_and_literal_no_content_stay_verbatim_in_history():
+    """Every simulator keeps empty replies empty and literal replies verbatim in history."""
+    model = mock(ScriptedSimulator(["", "(no content)", "o3"]), "mockllm/sim")
     obs = SimulatedBash("C3", model, TOOL, SNAP)
-    assert obs.empty_turn == ""
     first, _ = anyio.run(obs.observe, "touch a", result(""))
-    second, record = anyio.run(obs.observe, "mkdir b", result(""))
-    assert first == "" and second == EMPTY_TURN and "empty_placeholder" not in record
+    second, record = anyio.run(obs.observe, "printf '(no content)'", result("(no content)"))
+    assert first == "" and second == "(no content)" and "empty_placeholder" not in record
     msgs = obs.messages("ls", result("x"))
-    assert [m.content for m in msgs if m.role == "assistant"] == ["", EMPTY_TURN]
+    assert [m.content for m in msgs if m.role == "assistant"] == ["", "(no content)"]

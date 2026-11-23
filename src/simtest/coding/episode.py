@@ -343,8 +343,6 @@ async def _answer(observer, call, step, args, arg_error, real, notes: set[str]) 
             notes.add("simulator:command_line_kept")
         if record.get("real_fallback"):
             notes.add("simulator:real_output_fallback")
-        if record.get("empty_placeholder"):
-            notes.add("simulator:empty_placeholder")
     return observation
 
 

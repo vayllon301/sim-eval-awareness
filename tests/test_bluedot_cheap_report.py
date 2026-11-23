@@ -181,10 +181,100 @@ def test_awareness_rules_need_the_judge(report):
 
 def test_deepseek_rule_reads_only_the_deepseek_arm(report):
     assert fired(report, design(report, {("qwen", "pricing_cap", "C0"): {"end": "error"}}))["deepseek_errors"] is False
-    for change in ({"end": "agent_output_error"}, {"end": "error"}, {"reasoning": 11}):
+    for change in ({"end": "agent_output_error"}, {"reasoning": 11}):
         rows = design(report, {("deepseek", "pricing_cap", "C0"): change})
         assert fired(report, rows)["deepseek_errors"] is True, change
+    assert fired(report, design(report, {("deepseek", "pricing_cap", "C0"): {"end": "error"}}))["deepseek_errors"] is None
     assert fired(report, [r for r in design(report) if "qwen" in r["arm"]])["deepseek_errors"] is None
+
+
+def test_cost_rule_does_not_clear_with_unknown_spend_or_straddling_ttl_range(report):
+    # Unknown spend on an interrupted Sim attempt must prevent clearing Rule 1
+    rows = design(report) + [ep(report, end="error", sim_cost=None, sim_cost_min=None, sim_cost_max=None,
+                                sim_cost_unknown=True)]
+    assert fired(report, rows)["mean_sim_cost_usd"] is None
+    # Unresolved 1h cache-write range straddling $1.50/ep: 4 x $0.40 + failed attempt [$4.00, $5.00]
+    # -> total [$5.60, $6.60] / 4 = [$1.40, $1.65] -> straddles $1.50 -> None
+    straddle = design(report) + [ep(report, end="error", sim_cost=4.00, sim_cost_min=4.00, sim_cost_max=5.00,
+                                    sim_cost_unknown=False)]
+    assert fired(report, straddle)["mean_sim_cost_usd"] is None
+    # Verified zero-call failed attempt ($0.00 min & max, not unknown) still clears cleanly
+    zero = design(report) + [ep(report, end="error", sim_cost=0.0, sim_cost_min=0.0, sim_cost_max=0.0,
+                                sim_cost_unknown=False, sim_calls=0)]
+    assert fired(report, zero)["mean_sim_cost_usd"] is False
+
+
+def test_deepseek_rule_separates_agent_simulator_check_and_generic_errors(report):
+    # Simulator truncation or check_error on DeepSeek must NOT blame DeepSeek
+    for other_end in ("simulator_truncated", "simulator_output_error", "check_error"):
+        rows = design(report, {("deepseek", "flows_audit", "C3"): {"end": other_end}})
+        assert fired(report, rows)["deepseek_errors"] is False, other_end
+    # Generic infrastructure error has unknown attribution -> None (unless an agent error also exists)
+    rows = design(report, {("deepseek", "pricing_cap", "C0"): {"end": "error"}})
+    assert fired(report, rows)["deepseek_errors"] is None
+    # Agent-attributed failures and empty reasoning DO fire
+    for bad in ({"end": "agent_output_error"}, {"end": "agent_truncated"}, {"reasoning": 11}):
+        rows = design(report, {("deepseek", "pricing_cap", "C0"): bad})
+        assert fired(report, rows)["deepseek_errors"] is True, bad
+
+
+def test_judged_ignores_scout_in_both_orders_and_rejects_conflicting_primary(report, tmp_path):
+    key = "run::u1"
+    p_file = tmp_path / "primary.jsonl"
+    s_file = tmp_path / "scout.jsonl"
+    p_file.write_text(json.dumps(verdict(key, positive=False, backend="openrouter", model="haiku")) + "\n")
+    scout_rec = verdict(key, positive=True, judge="scout-v1", backend="scout", model="haiku") | {"judge": "scout"}
+    s_file.write_text(json.dumps(scout_rec) + "\n")
+    assert report.judged([p_file, s_file]) == {key: False}
+    assert report.judged([s_file, p_file]) == {key: False}
+    # Conflicting primary judge files must raise instead of letting last-file-win
+    p2 = tmp_path / "primary2.jsonl"
+    p2.write_text(json.dumps(verdict(key, positive=True, backend="openrouter", model="sonnet")) + "\n")
+    with pytest.raises(ValueError, match="conflict"):
+        report.judged([p_file, p2])
+
+
+def test_partial_and_duplicate_cohorts_cannot_produce_fake_final_verdicts(report, machines, tmp_path):  # noqa: F811
+    _, _, log_dir = run(config(tmp_path), tmp_path, models=scripted)
+    with pytest.raises(ValueError, match="duplicate"):
+        report.read([log_dir, log_dir])
+    # Single completed arm leaves pooled flows_divergent_rate and mean_sim_cost_usd provisional (None)
+    one_arm = [r for r in design(report) if "qwen" in r["arm"]]
+    res = fired(report, one_arm)
+    assert res["flows_divergent_rate"] is None
+    assert res["mean_sim_cost_usd"] is None
+
+
+def test_deepseek_cost_reports_off_peak_and_peak_range(report):
+    usage = tok(input=200_000, cache_read=1_000_000, output=100_000)
+    off = report.cost("rawchat/deepseek-v4-pro", usage)
+    peak = report.cost("rawchat/deepseek-v4-pro", usage, peak=True)
+    assert peak == pytest.approx(off * 2.0)
+
+
+def test_failed_attempt_counts_messages_and_actual_sim_calls_including_resamples(report):
+    e = {"agent": "deepseek_v4_pro", "model": "rawchat/deepseek-v4-pro", "condition": "C3", "scenario": "flows_audit",
+         "epoch": 1, "end_reason": "error", "error": "boom", "log_path": None, "log": "attempts",
+         "divergence": {"n_bash": 1, "n_divergent": 0},
+         "attempt_store": {
+             "CodingEpisode:steps": [{"turn": 1}],
+             "CodingEpisode:simulator_calls": [{
+                 "model": "anthropic/claude-sonnet-5-5",
+                 "usage": {"input_tokens": 100, "input_tokens_cache_write": 1000, "output_tokens": 50},
+                 "resampled": [{"usage": {"input_tokens": 100, "output_tokens": 40}}],
+             }],
+         },
+         "attempt_messages": [
+             {"role": "user", "content": "ticket"},
+             {"role": "assistant", "content": [{"type": "reasoning", "reasoning": "thinking 1"},
+                                               {"type": "text", "text": ""}]},
+             {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+         ]}
+    facts = report._sample_facts(e)
+    assert facts["turns"] == 2 and facts["reasoning"] == 1
+    r = report.row("bluedot-cheap-deepseek", e, facts)
+    assert r["sim_calls"] == 2   # 1 accepted + 1 resampled
+    assert r["sim_cost_min"] < r["sim_cost_max"]   # 5m vs 1h cache_write range on attempts/
 
 
 # --- a real run ------------------------------------------------------------------------------------
@@ -270,4 +360,39 @@ def test_a_failed_attempt_is_reported_not_dropped(report, machines, tmp_path, mo
     failed = next(r for r in rows if r["end"] == "error")
     assert (failed["scenario"], failed["condition"]) == ("pricing_cap", "C3") and "timed out" in failed["error"]
     assert failed["agent_tokens"] is None and failed["aware"] is None
+    assert failed["sim_calls"] == 0 and failed["sim_cost"] == 0.0 and failed["sim_cost_unknown"] is False
     assert "simulator call timed out" in report.format_report(rows)
+
+
+def test_a_retry_after_billable_simulator_work_keeps_spend_range_and_attempt_messages(
+    report, machines, tmp_path, monkeypatch  # noqa: F811
+):
+    """Fail attempt 1 AFTER one real simulator call: attempts/ preserves messages and simulator
+    spend, and prices its unresolved cache_write as a 5m..1h range."""
+    import simtest.coding.observers as obs_mod
+    from inspect_ai.solver._task_state import sample_state
+
+    orig_observe = obs_mod.SimulatedBash.observe
+    calls_seen = {}
+
+    async def fail_second_call(self, command, real):
+        state = sample_state()
+        key = (state.store.get("CodingEpisode:condition"), state.metadata["scenario"], state.epoch,
+               state.store.get("CodingEpisode:attempt")["attempt"])
+        if key == ("C3", "pricing_cap", 1, 1):
+            calls_seen[key] = calls_seen.get(key, 0) + 1
+            if calls_seen[key] == 2:
+                raise ConnectionError("transport dropped mid-episode")
+        return await orig_observe(self, command, real)
+
+    monkeypatch.setattr(obs_mod.SimulatedBash, "observe", fail_second_call)
+    monkeypatch.setitem(report.RATES, "mockllm/sim", report.RATES["claude-sonnet-5-5"])
+    _, _, log_dir = run(config(tmp_path), tmp_path, models=scripted)
+    rows = report.read([log_dir])
+    assert len(rows) == 9
+    failed = next(r for r in rows if r["end"] == "error")
+    assert failed["sim_calls"] == 1
+    assert failed["turns"] == 2 and failed["reasoning"] == 2
+    assert failed["sim_cost_unknown"] is False
+    assert failed["sim_cost_min"] < failed["sim_cost_max"]   # 1000 cache_write: 5m vs 1h range
+    assert failed["sim_cost_max"] - failed["sim_cost_min"] == pytest.approx(1000 * 1.50 / 1e6)

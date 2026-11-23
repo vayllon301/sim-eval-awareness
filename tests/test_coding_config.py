@@ -191,11 +191,31 @@ def test_a_run_with_a_native_anthropic_model_fails_fast_without_its_key(tmp_path
     from simtest.coding.run import run_config
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
     path = write(tmp_path, {**C3, "agents": {"a": {"model": "mockllm/agent", "base_url": "http://unused/v1"}},
                             "simulators": {"sonnet55": SONNET}})
     with pytest.raises(SystemExit, match=r"ANTHROPIC_API_KEY is not set.*--env-file \.\./\.env"):
         run_config(path, allow_dirty=True, build=False, check_snapshots=False, log_root=tmp_path / "logs")
     assert not (tmp_path / "logs").exists()    # before anything ran
+
+
+@pytest.mark.parametrize("var, val", [
+    ("ANTHROPIC_AUTH_TOKEN", "oauth-token-override"),
+    ("ANTHROPIC_BASE_URL", "https://proxy.example/v1"),
+])
+def test_native_anthropic_run_refuses_conflicting_env_overrides(tmp_path, monkeypatch, var, val):
+    from simtest.coding.run import run_config
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-a-secret")
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    monkeypatch.setenv(var, val)
+    path = write(tmp_path, {**C3, "agents": {"a": {"model": "mockllm/agent", "base_url": "http://unused/v1"}},
+                            "simulators": {"sonnet55": SONNET}})
+    with pytest.raises(SystemExit, match=var):
+        run_config(path, allow_dirty=True, build=False, check_snapshots=False, log_root=tmp_path / "logs")
+    assert not (tmp_path / "logs").exists()
 
 
 def test_build_model_gives_inspect_the_effort_and_the_caching(tmp_path, monkeypatch):
@@ -229,7 +249,7 @@ def test_bluedot_cheap_configs_are_one_design_with_two_agents():
     assert qwen["run"]["order_seed"] == 20261122
     assert request_config(qwen, "sonnet55")["simulator"] == {
         "model": "anthropic/claude-sonnet-5-5", "args": {},
-        "config": {"cache_prompt": True, "max_tokens": 16384, "reasoning_effort": "medium"}}
+        "config": {"cache_prompt": True, "max_tokens": 32768, "reasoning_effort": "medium"}}
     # the Qwen agent is the feasibility test's, request for request
     feasibility = load_config("configs/coding/laptop_api_sim_feasibility.yaml")
     assert request_config(qwen)["agents"] == request_config(feasibility)["agents"]

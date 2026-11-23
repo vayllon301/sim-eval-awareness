@@ -24,7 +24,8 @@ def apply() -> bool:
     """Make Inspect's `MessageParam(...)` calls work. True if it had to change anything."""
     import inspect_ai.model._providers.anthropic as provider
 
-    if callable(provider.MessageParam):
+    param = getattr(provider, "MessageParam", None)
+    if param is None or callable(param):
         return False
     provider.MessageParam = _message_param
     return True

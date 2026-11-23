@@ -298,6 +298,12 @@ def run_config(path, allow_dirty=False, log_root="logs", display=None, build=Tru
         api_key_envs = {s["args"].get("api_key_env") for s in specs}
         if any(s["model"].startswith(NATIVE_ANTHROPIC) for s in specs):
             api_key_envs.add(ANTHROPIC_API_KEY)   # Inspect's provider reads it; fail here, not mid-run
+            for conflicting in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+                if os.environ.get(conflicting):
+                    raise SystemExit(
+                        f"{conflicting} is set, which overrides native Anthropic's direct endpoint or "
+                        f"{ANTHROPIC_API_KEY} billing. Unset it before running."
+                    )
         for env in sorted(filter(None, api_key_envs)):
             if not os.environ.get(env):
                 raise SystemExit(f"{env} is not set. Run with: uv run --env-file ../.env simtest run ...")

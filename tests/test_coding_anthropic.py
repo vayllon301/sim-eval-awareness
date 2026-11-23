@@ -12,7 +12,7 @@ from inspect_ai.model import ChatMessageAssistant, ChatMessageUser
 import inspect_ai.model._providers.anthropic as provider
 from simtest.coding import anthropic_compat
 from simtest.coding.machine import ExecResult
-from simtest.coding.observers import EMPTY_TURN, SimulatedBash
+from simtest.coding.observers import SimulatedBash
 from simtest.coding.run import build_model, load_config
 from anthropic_helpers import FAKE_KEY, FakeAnthropic, reply
 
@@ -56,12 +56,16 @@ def test_the_pinned_inspect_and_sdk_disagree_on_message_param_and_the_shim_fixes
     assert anthropic_compat.apply() is False    # nothing left to change
 
 
-def test_inspect_sends_an_empty_assistant_turn_as_the_placeholder():
-    """Why EMPTY_TURN exists: this is what a command that printed nothing would become anyway."""
+def test_anthropic_compat_is_a_noop_if_upstream_removes_message_param(monkeypatch):
+    monkeypatch.delattr(provider, "MessageParam", raising=False)
+    assert anthropic_compat.apply() is False
+
+
+def test_inspect_sends_an_empty_assistant_turn_as_a_non_empty_wire_block():
+    """Anthropic rejects empty text blocks; Inspect encodes empty assistant turns on the wire."""
     anthropic_compat.apply()
     sent = anyio.run(provider.message_param, ChatMessageAssistant(content=""))
     assert sent == {"role": "assistant", "content": [{"type": "text", "text": "(no content)"}]}
-    assert EMPTY_TURN == "(no content)"
 
 
 def test_the_shipped_simulator_sends_medium_effort_summarized_thinking_and_caches():
@@ -71,7 +75,7 @@ def test_the_shipped_simulator_sends_medium_effort_summarized_thinking_and_cache
     assert fake.urls == ["https://api.anthropic.com/v1/messages"] * 2
     headers, body = fake.requests[0]
     assert headers["authorization"] == f"Bearer {FAKE_KEY}"    # ANTHROPIC_API_KEY, as SDK 2.4.0 sends it
-    assert body["model"] == "claude-sonnet-5-5" and body["max_tokens"] == 16384
+    assert body["model"] == "claude-sonnet-5-5" and body["max_tokens"] == 32768
     assert body["output_config"] == {"effort": "medium"}
     assert body["thinking"]["type"] == "adaptive" and body["thinking"]["display"] == "summarized"
     assert not {"temperature", "top_p", "top_k", "fallbacks"} & set(body)
@@ -101,26 +105,31 @@ def test_the_record_keeps_the_thinking_summary_the_visible_text_and_the_cache_to
     assert record["usage"]["input_tokens_cache_write"] == 20
 
 
-def test_a_command_that_prints_nothing_goes_out_as_the_placeholder_and_comes_back_empty():
-    # touch: a reply with thinking and no text. mkdir: the simulator repeats the placeholder it
-    # saw as its own earlier reply.
-    fake = FakeAnthropic([reply("file_a"), reply(None), reply(EMPTY_TURN), reply("a\nb")])
+def test_literal_no_content_and_genuinely_empty_replies_are_preserved_without_corrupting_output():
+    # Turn 1: genuine literal `(no content)` output (no prior empty turn) must stay intact.
+    # Turn 2: genuinely empty reply (thinking only, no text) must stay empty (`""`).
+    # Turn 3: literal `(no content)` after an empty turn must STILL stay intact (never silently stripped).
+    # Turn 4: normal output after both; outbound history has non-empty text blocks on every assistant turn.
+    fake = FakeAnthropic([reply("(no content)"), reply(None), reply("(no content)"), reply("a\nb")])
     obs = SimulatedBash("C3", sonnet55(fake), TOOL, SNAP)
-    seen = observe(obs, ("ls", "x"), ("touch a", ""), ("mkdir b", ""), ("ls", "y"))
-    assert [text for text, _ in seen] == ["file_a", "", "", "a\nb"]
-    assert obs.history == [("ls", "file_a"), ("touch a", ""), ("mkdir b", ""), ("ls", "a\nb")]   # empty stays empty
-    assert "empty_placeholder" not in seen[1][1] and seen[1][1]["raw"] == ""
-    assert seen[2][1]["empty_placeholder"] is True and seen[2][1]["raw"] == EMPTY_TURN   # the raw reply is kept
-    # what went out: no empty text block (the API refuses one), the placeholder instead
-    texts = [[b["text"] for b in t["content"]] for t in fake.bodies[3]["messages"] if t["role"] == "assistant"]
-    assert texts == [["file_a"], [EMPTY_TURN], [EMPTY_TURN]]
+    seen = observe(obs, ("printf '(no content)'", "(no content)"), ("touch a", ""),
+                   ("printf '(no content)'", "(no content)"), ("ls", "y"))
+    assert [text for text, _ in seen] == ["(no content)", "", "(no content)", "a\nb"]
+    assert obs.history == [
+        ("printf '(no content)'", "(no content)"), ("touch a", ""),
+        ("printf '(no content)'", "(no content)"), ("ls", "a\nb"),
+    ]
+    assert seen[0][1]["raw"] == "(no content)" and "empty_placeholder" not in seen[0][1]
+    assert seen[1][1]["raw"] == "" and "empty_placeholder" not in seen[1][1]
+    assert seen[2][1]["raw"] == "(no content)" and "empty_placeholder" not in seen[2][1]
+    # Outbound Anthropic history: every assistant message has a non-empty text block (no HTTP 400).
     assert all(b["text"].strip() for body in fake.bodies for t in body["messages"] if t["role"] == "assistant"
                for b in t["content"])
 
 
 def test_c1_has_no_history_so_it_never_reads_the_placeholder_back():
-    fake = FakeAnthropic([reply(EMPTY_TURN)] * 3)
+    fake = FakeAnthropic([reply("(no content)")] * 3)
     obs = SimulatedBash("C1", sonnet55(fake), TOOL, None)
     [(text, record)] = observe(obs, ("echo hi", "hi"))
-    assert obs.empty_turn == "" and "empty_placeholder" not in record
+    assert "empty_placeholder" not in record
     assert text == "hi" and record["real_fallback"] == "dropped"   # C1's own check, unchanged
