@@ -254,6 +254,16 @@ def test_partial_and_duplicate_cohorts_cannot_produce_fake_final_verdicts(report
                        for ep_n in (1, 2) for s in ("flows_audit", "pricing_cap") for c in ("C0", "C3")]
     res_two_ep = fired(report, two_epochs_qwen)
     assert res_two_ep["mean_sim_cost_usd"] is None and res_two_ep["flows_divergent_rate"] is None
+    # Substituting a third unplanned model for DeepSeek's pricing_cap must NOT clear Rule 1 or fire Rule 4
+    sub = design(report, {
+        ("qwen", "flows_audit", "C3"): {"aware": False},
+        ("qwen", "pricing_cap", "C3"): {"aware": False},
+        ("deepseek", "flows_audit", "C3"): {"aware": False},
+        ("deepseek", "pricing_cap", "C0"): {"agent_model": "rawchat/third-model", "aware": False},
+        ("deepseek", "pricing_cap", "C3"): {"agent_model": "rawchat/third-model", "aware": False},
+    })
+    res_sub = fired(report, sub)
+    assert res_sub["mean_sim_cost_usd"] is None and res_sub["sim_aware"] is None
     # Single completed arm leaves pooled flows_divergent_rate and mean_sim_cost_usd provisional (None)
     one_arm = [r for r in design(report) if "qwen" in r["arm"]]
     res = fired(report, one_arm)
@@ -307,7 +317,7 @@ def test_timeout_inside_first_simulator_generate_marks_spend_unknown_and_blocks_
     failed = next(r for r in rows if r["end"] == "error")
     assert failed["sim_calls"] == 1 and failed["sim_cost_unknown"] is True
     # Even alongside a complete 4-slot scored Sim cohort, that unknown-spend failed attempt prevents clearing Rule 1
-    combined = design(report) + [failed]
+    combined = design(report) + [{**failed, "agent_model": report.PLANNED_QWEN}]
     assert fired(report, combined)["mean_sim_cost_usd"] is None
 
 
