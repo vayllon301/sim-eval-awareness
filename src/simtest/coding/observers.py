@@ -19,6 +19,10 @@ times; if it still does, the agent gets the real output and the step records `re
 An empty real output is empty: no simulator call. In the pilot, when C2 still rewrote the
 real output, a simulator took the agent's role and, with its own replies in the history, kept
 it for 39 of 46 steps (LOG.md, 05-11-2026), so a wrong reply never enters the history.
+
+A native Anthropic simulator (`anthropic/...`) can't be sent an empty assistant turn, which is
+what a command that printed nothing is in a C2 or C3 history: see EMPTY_TURN. Its record keeps
+the readable summary of its thinking, never the signature (provider.readable_reasoning).
 """
 
 from __future__ import annotations
@@ -27,17 +31,30 @@ import re
 import time
 from collections import Counter
 
+from inspect_ai._util.constants import NO_CONTENT
 from inspect_ai.model import ChatMessage, ChatMessageAssistant, ChatMessageSystem, ChatMessageUser, Model
 
 from ..observers import IncompleteOutput, OutputError, incomplete_reason, is_infrastructure
 from ..unicode import sanitize_output
 from . import prompts
 from .machine import ExecResult, tool_output
-from .provider import reasoning_text
+from .provider import readable_reasoning
 from .snapshot import session_snapshot
 
 CONDITIONS = ("C0", "C1", "C2", "C3")
 RAW_LIMIT = 100_000  # characters of a simulator's raw reply kept in the step record
+# Anthropic's API refuses an empty text block, so Inspect's Anthropic provider sends an empty
+# assistant turn as NO_CONTENT, "(no content)" (inspect-ai 0.3.281, pinned by
+# tests/test_coding_anthropic.py). In a C2 or C3 history that turn is an earlier command that
+# printed nothing: the simulator reads its own earlier reply as those words, and can repeat
+# them for the next command that prints nothing, where the agent would see them. So for a
+# native Anthropic simulator the observer owns the placeholder, both ways: an empty output goes
+# out as EMPTY_TURN (the words Inspect would send anyway), and a reply that is exactly
+# EMPTY_TURN is read as empty; its record keeps the raw reply and `empty_placeholder`. Every
+# other provider gets the empty string, as before, and the history, the agent's view and C0
+# are the same for all of them.
+EMPTY_TURN = NO_CONTENT
+ANTHROPIC_PREFIX = "anthropic/"
 # A simulator that takes the agent's role answers with a command line instead of an output: the
 # agent's own command (or an earlier one) echoed back, or a "next" command it invented (session 5:
 # 23 of 881 C3 steps with the exemptions below, and 0 of the same steps' real outputs; LOG.md,
@@ -156,6 +173,9 @@ class SimulatedBash(BashObserver):
                  reference: list[dict] | None = None):
         super().__init__(condition)
         self.model = model
+        # C1 sends no history, so it never sends the placeholder and never reads one back.
+        native = str(model).startswith(ANTHROPIC_PREFIX)
+        self.empty_turn = EMPTY_TURN if native and condition != "C1" else ""
         self.name = {"C1": "C1-grounded", "C2": "C2-reference", "C3": "C3-free"}[condition]
         if condition == "C2" and not reference:
             raise ValueError("C2 needs a reference transcript")
@@ -170,7 +190,8 @@ class SimulatedBash(BashObserver):
         messages: list[ChatMessage] = [ChatMessageSystem(content=self.system)]
         if self.condition != "C1":
             for c, seen in self.history:
-                messages += [ChatMessageUser(content=prompts.call_turn(c)), ChatMessageAssistant(content=seen)]
+                messages += [ChatMessageUser(content=prompts.call_turn(c)),
+                             ChatMessageAssistant(content=seen or self.empty_turn)]
         if self.condition == "C1":
             messages.append(ChatMessageUser(content=prompts.grounded_turn(command, tool_output(real.output))))
         else:
@@ -234,7 +255,7 @@ class SimulatedBash(BashObserver):
         message = output.message
         raw = message.text
         record.update({
-            "raw": raw[:RAW_LIMIT], "raw_chars": len(raw), "reasoning": reasoning_text(message)[:RAW_LIMIT],
+            "raw": raw[:RAW_LIMIT], "raw_chars": len(raw), "reasoning": readable_reasoning(message)[:RAW_LIMIT],
             "stop_reason": output.stop_reason, "seconds": round(time.monotonic() - t0, 2),
             "usage": output.usage.model_dump(exclude_none=True) if output.usage else None,
             "invalid_unicode": changed,
@@ -243,7 +264,11 @@ class SimulatedBash(BashObserver):
             error = IncompleteOutput(flag, output.stop_reason)
             error.record = record
             raise error
-        return tool_output(parse(raw)), record
+        text = tool_output(parse(raw))
+        if self.empty_turn and text == self.empty_turn:   # the placeholder echoed back: see EMPTY_TURN
+            record["empty_placeholder"] = True
+            text = ""
+        return text, record
 
 
 def make_observer(condition: str, simulator: Model | None, scenario, session_start: str | None = None) -> BashObserver:

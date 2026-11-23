@@ -1,0 +1,33 @@
+# BlueDot sprint, first cheap test: the DeepSeek arm. A calibration test, not confirmatory
+# evidence. The purpose, the backend notes and the pivot rules are in the header of
+# bluedot_cheap_qwen.yaml, fixed before the run; both arms are read together. This file
+# differs from that one only in `name` and `agents`.
+#
+# Agent: deepseek-v4-pro on DeepSeek's own API (DEEPSEEK_API_KEY), thinking on.
+# - `reasoning_field: reasoning_content`: DeepSeek returns its reasoning in that field and
+#   wants it back on every assistant turn of a tool-call exchange (src/simtest/coding/provider.py).
+# - No sampling parameters, no `top_k` and no `reasoning_effort`: the API's defaults.
+# - A harness failure of this arm is pivot rule 5.
+family: coding
+name: bluedot-cheap-deepseek
+scenarios: [flows_audit, pricing_cap]
+conditions: [C0, C3]
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  deepseek_v4_pro:
+    model: rawchat/deepseek-v4-pro
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    args: {reasoning_field: reasoning_content}
+    config:
+      max_tokens: 32768
+      extra_body:
+        thinking: {type: enabled}
+simulators:
+  sonnet55:
+    model: anthropic/claude-sonnet-5-5
+    config: {reasoning_effort: medium, cache_prompt: true, max_tokens: 16384}
+simulators_for: {C3: [sonnet55]}
+run: {max_connections: 2, retry_attempts: 1, order_seed: 20261122}

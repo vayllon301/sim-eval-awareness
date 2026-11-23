@@ -1279,6 +1279,49 @@ probe does, through a small model provider, **`rawchat/<served-name>`** (`provid
   (`http://localhost:18000` agent, `:18001` simulator; `explore/colab_probe/serve.sh`), or
   OpenRouter for smoke tests only. `api_key_env` names an env var holding the key; the key
   never enters a config or a log.
+- `args: {reasoning_field: reasoning_content}` sends the raw chain of thought back in that
+  field instead of `reasoning`: DeepSeek's own API (`https://api.deepseek.com/v1`) reads it
+  there. Either field is read from a reply. The default, and every earlier config, is
+  `reasoning`.
+
+**A native Anthropic simulator** (`anthropic/claude-sonnet-5-5`, 22-11-2026; development
+only, for the BlueDot sprint's first cheap test). A simulator, never an agent: Anthropic
+returns a signed summary of the thinking, and the awareness measures read the raw chain of
+thought. It goes through Inspect's own provider, with ANTHROPIC_API_KEY; `simtest run`
+refuses to start without the key. What `load_config` enforces, and why:
+
+- No `base_url`, no `api_key_env`, and no model arg but `cache_ttl` (`5m`, `1h`, `auto`).
+- `reasoning_effort` is required and `effort` is refused. Inspect 0.3.281 sends
+  `reasoning_effort: medium` as `output_config: {effort: medium}` with `thinking: {type:
+  adaptive, display: summarized}`. `effort: medium` alone sends the same effort and leaves
+  `display` at the API's default, `omitted`: the thinking comes back empty.
+- No `temperature`, `top_p` or `top_k` (Inspect drops them with a warning), no
+  `reasoning_tokens` (a thinking budget, refused by the API), and no `fallback_models`
+  (another model would answer inside one experiment).
+- `cache_prompt: true` is Inspect's prompt caching: a breakpoint on the system prompt (the
+  snapshot), and automatic caching of the turns. It is on unless `cache_prompt` is `false`.
+  With `cache_ttl` left out, an episode starts on the 5-minute cache and moves to the 1-hour
+  one once a gap between simulator calls passed 5 minutes (writes then cost 2x input, not
+  1.25x).
+- The simulator's record keeps the thinking's readable summary in `reasoning`, never the
+  signature, and the cache read and write tokens in `usage`. Earlier thinking is not sent
+  back: the history is the commands and the outputs the agent saw, as for every simulator.
+- **A command that prints nothing.** Anthropic's API refuses an empty text block, so Inspect
+  sends an empty assistant turn as the words `(no content)`. In a Sim or Sim+ref history
+  that turn is an earlier command with no output, so the simulator would read its own
+  earlier reply as those words and could repeat them to the agent. The observer owns the
+  placeholder both ways for a native Anthropic simulator: an empty output goes out as
+  `(no content)`, and a reply that is exactly `(no content)` is read as empty. The step's
+  record keeps the raw reply and `empty_placeholder`, and the episode gets the note
+  `simulator:empty_placeholder`. The history, the agent's view, Real and every other
+  simulator are unchanged (`observers.py`, `EMPTY_TURN`).
+- **The pinned SDK.** Inspect 0.3.281 calls `MessageParam(...)`, which the `anthropic` SDK
+  2.4.0 made a union type: every request failed in `message_param` before it was sent.
+  `coding/anthropic_compat.py` gives the provider the call it expects (a plain dict), applied
+  when a native Anthropic model is built, and a no-op once either package is fixed.
+- All of it is checked offline against Inspect's real provider on a fake HTTP transport
+  (`tests/test_coding_anthropic.py`): the request that would go out, and a streamed reply
+  parsed back. No request has been sent to Anthropic from this code yet.
 
 **A messaging tool was added.** The honest exit in three of four scenarios is "ask the
 owner", which must be checkable by code, so the agent has a `send_message(channel, text)`

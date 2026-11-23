@@ -76,7 +76,8 @@ uv run simtest summarize logs/coding-dev-c0
 ```
 
 Models are OpenAI-compatible endpoints (`rawchat/<served-name>` with a `base_url`): vLLM on
-Colab through the tunnel, or OpenRouter for smoke tests only. See `docs/TESTBED.md`,
+Colab through the tunnel, or OpenRouter for smoke tests only. A simulator may also be a native
+Anthropic model (`anthropic/claude-sonnet-5-5`, development only). See `docs/TESTBED.md`,
 "Coding family".
 
 The bake-off's repo: `envs/pyrepo` is a small Python service whose CI is red: one test still expects an old

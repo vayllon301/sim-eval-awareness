@@ -22,6 +22,11 @@ model roles) and changes three things:
 Model args: `base_url` (required, e.g. http://localhost:18000/v1) and `api_key_env` (the
 name of an environment variable holding the key, e.g. OPENROUTER_API_KEY; none for a
 local vLLM). The key itself never appears in a config or a log.
+
+`reasoning_field` (default `reasoning`) names the field earlier reasoning is sent back in.
+DeepSeek's own API (https://api.deepseek.com/v1) reads `reasoning_content`, and wants it on
+every assistant turn of a tool-call exchange in thinking mode. Reading a response needs no
+setting: either field is read.
 """
 
 from __future__ import annotations
@@ -34,7 +39,8 @@ from inspect_ai.model import ChatMessage, ContentReasoning, GenerateConfig, mode
 from inspect_ai.model._openai import chat_choices_from_openai, openai_chat_message, openai_chat_tool_call_param
 from inspect_ai.model._providers.openai_compatible import OpenAICompatibleAPI
 
-REASONING_FIELD = "reasoning"
+REASONING_FIELD = "reasoning"                              # vLLM 0.32 and OpenRouter
+REASONING_FIELDS = (REASONING_FIELD, "reasoning_content")  # the second: DeepSeek's own API
 
 
 def reasoning_text(message) -> str:
@@ -44,11 +50,30 @@ def reasoning_text(message) -> str:
     return "".join(c.reasoning for c in message.content if isinstance(c, ContentReasoning))
 
 
+def readable_reasoning(message) -> str:
+    """The reasoning of an assistant message as a person reads it, for a record. A provider that
+    signs its reasoning (Inspect's Anthropic provider) puts the signature in `reasoning` and the
+    readable summary in `summary`, with `redacted` set: the record keeps the summary, never the
+    signature. Any other reasoning is `reasoning_text`, unchanged. Blocks are joined by a blank
+    line only when a redacted block is among them (Anthropic interleaves several)."""
+    if isinstance(message.content, str):
+        return ""
+    blocks = [c for c in message.content if isinstance(c, ContentReasoning)]
+    if not any(c.redacted for c in blocks):
+        return reasoning_text(message)
+    return "\n\n".join(t for t in ((c.summary or "") if c.redacted else c.reasoning for c in blocks) if t)
+
+
 class RawChatAPI(OpenAICompatibleAPI):
     def __init__(self, model_name: str, base_url: str | None = None, api_key: str | None = None,
-                 config: GenerateConfig = GenerateConfig(), api_key_env: str | None = None, **model_args: Any):
+                 config: GenerateConfig = GenerateConfig(), api_key_env: str | None = None,
+                 reasoning_field: str = REASONING_FIELD, **model_args: Any):
         if not base_url:
             raise PrerequisiteError("rawchat models need a base_url model arg (e.g. http://localhost:18000/v1)")
+        if reasoning_field not in REASONING_FIELDS:
+            raise PrerequisiteError(f"rawchat reasoning_field must be one of {list(REASONING_FIELDS)}, "
+                                    f"got {reasoning_field!r}")
+        self.reasoning_field = reasoning_field
         if api_key is None:
             if api_key_env:
                 api_key = os.environ.get(api_key_env)
@@ -73,7 +98,7 @@ class RawChatAPI(OpenAICompatibleAPI):
         for message in input:
             if message.role == "assistant":
                 turn: dict[str, Any] = {"role": "assistant", "content": message.text,
-                                        REASONING_FIELD: reasoning_text(message)}
+                                        self.reasoning_field: reasoning_text(message)}
                 if message.tool_calls:
                     turn["tool_calls"] = [openai_chat_tool_call_param(c) for c in message.tool_calls]
                 out.append(turn)

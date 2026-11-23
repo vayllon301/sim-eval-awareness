@@ -116,3 +116,132 @@ def test_pilot_config_keeps_session_5s_settings_and_concurrency():
     assert "max_connections" in header and "units" in header
     assert "12 in flight in total" in header and "one queue" in header
     assert "fp8_per_channel" in header and "per tensor over the whole batch" not in header   # LOG.md, 02-11-2026
+
+
+# --- a native Anthropic simulator, and DeepSeek's reasoning field ----------------------------------
+
+SONNET = {"model": "anthropic/claude-sonnet-5-5",
+          "config": {"reasoning_effort": "medium", "cache_prompt": True, "max_tokens": 16384}}
+C3 = {**BASE, "conditions": ["C0", "C3"]}
+
+
+def sim(tmp_path, **change):
+    spec = {**SONNET, **{k: v for k, v in change.items() if k != "config"}}
+    spec["config"] = {**SONNET["config"], **change.get("config", {})}
+    return write(tmp_path, {**C3, "simulators": {"sonnet55": spec}})
+
+
+def test_native_anthropic_simulator_needs_no_endpoint_and_keeps_its_request_settings(tmp_path):
+    cfg = load_config(sim(tmp_path))
+    spec = cfg["simulators"]["sonnet55"]
+    assert spec["model"] == "anthropic/claude-sonnet-5-5" and spec["args"] == {}
+    assert spec["config"]["reasoning_effort"] == "medium" and spec["config"]["cache_prompt"] is True
+    assert request_config(cfg, "sonnet55")["simulator"] == {
+        "model": "anthropic/claude-sonnet-5-5", "args": {},
+        "config": {"cache_prompt": True, "max_tokens": 16384, "reasoning_effort": "medium"}}
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"base_url": "https://api.anthropic.com"}, "own endpoint and ANTHROPIC_API_KEY"),
+    ({"api_key_env": "OTHER_KEY"}, "own endpoint and ANTHROPIC_API_KEY"),
+    ({"args": {"base_url": "https://proxy/v1"}}, "own endpoint and ANTHROPIC_API_KEY"),
+    ({"args": {"cache_ttl": "2h"}}, "cache_ttl"),
+    ({"config": {"temperature": 0.6}}, "sampling"),
+    ({"config": {"top_p": 0.95}}, "sampling"),
+    ({"config": {"top_k": 20}}, "sampling"),
+    ({"config": {"effort": "medium"}}, "set reasoning_effort"),
+    ({"config": {"reasoning_tokens": 4096}}, "reasoning_tokens"),
+    ({"config": {"fallback_models": ["claude-sonnet-5"]}}, "fallback_models"),
+    ({"config": {"reasoning_effort": None}}, "must set reasoning_effort"),
+])
+def test_native_anthropic_refuses_what_it_would_ignore_or_reject(tmp_path, change, message):
+    with pytest.raises(ConfigError, match=message):
+        load_config(sim(tmp_path, **change))
+
+
+def test_native_anthropic_accepts_a_cache_ttl(tmp_path):
+    cfg = load_config(sim(tmp_path, args={"cache_ttl": "1h"}))
+    assert request_config(cfg, "sonnet55")["simulator"]["args"] == {"cache_ttl": "1h"}   # fingerprinted
+
+
+def test_an_agent_cannot_be_a_native_anthropic_model(tmp_path):
+    # Its thinking comes back as a signed summary; the measures read the raw chain of thought.
+    data = {**BASE, "agents": {"claude": {"model": "anthropic/claude-sonnet-5-5", "config": {"max_tokens": 1000}}}}
+    with pytest.raises(ConfigError, match="raw chain of thought"):
+        load_config(write(tmp_path, data))
+
+
+def test_a_rawchat_model_still_needs_a_base_url(tmp_path):
+    with pytest.raises(ConfigError, match="base_url"):
+        load_config(write(tmp_path, {**BASE, "agents": {"a": {"model": "rawchat/agent"}}}))
+
+
+def test_reasoning_field_is_checked_at_load_and_is_a_request_setting(tmp_path):
+    agent = {"model": "rawchat/deepseek-v4-pro", "base_url": "https://api.deepseek.com/v1",
+             "api_key_env": "DEEPSEEK_API_KEY", "args": {"reasoning_field": "reasoning_content"}}
+    rc = request_config(load_config(write(tmp_path, {**BASE, "agents": {"a": agent}})))
+    assert rc["agents"]["a"]["args"] == {"reasoning_field": "reasoning_content",
+                                         "base_url": "https://api.deepseek.com/v1"}   # and no api_key_env
+    bad = {**agent, "args": {"reasoning_field": "thoughts"}}
+    with pytest.raises(ConfigError, match="reasoning_field"):
+        load_config(write(tmp_path, {**BASE, "agents": {"a": bad}}))
+
+
+def test_a_run_with_a_native_anthropic_model_fails_fast_without_its_key(tmp_path, monkeypatch):
+    from simtest.coding.run import run_config
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    path = write(tmp_path, {**C3, "agents": {"a": {"model": "mockllm/agent", "base_url": "http://unused/v1"}},
+                            "simulators": {"sonnet55": SONNET}})
+    with pytest.raises(SystemExit, match=r"ANTHROPIC_API_KEY is not set.*--env-file \.\./\.env"):
+        run_config(path, allow_dirty=True, build=False, check_snapshots=False, log_root=tmp_path / "logs")
+    assert not (tmp_path / "logs").exists()    # before anything ran
+
+
+def test_build_model_gives_inspect_the_effort_and_the_caching(tmp_path, monkeypatch):
+    from inspect_ai.model._providers.anthropic import AnthropicAPI
+
+    from simtest.coding.run import build_model
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-a-secret")
+    model = build_model(load_config(sim(tmp_path))["simulators"]["sonnet55"])
+    assert isinstance(model.api, AnthropicAPI) and str(model) == "anthropic/claude-sonnet-5-5"
+    assert model.config.reasoning_effort == "medium" and model.config.effort is None
+    assert model.config.cache_prompt is True and model.config.max_tokens == 16384
+    assert model.api.cache_ttl is None    # Inspect's "auto": 5 minutes, 1 hour after a long gap
+    # what Inspect makes of them (the wire request itself: tests/test_coding_anthropic.py)
+    params, extra_body, _, _ = model.api.completion_config(model.config)
+    assert params["output_config"] == {"effort": "medium"}
+    assert params["thinking"] == {"type": "adaptive", "display": "summarized"} and not extra_body
+
+
+def test_bluedot_cheap_configs_are_one_design_with_two_agents():
+    """configs/coding/bluedot_cheap_{qwen,deepseek}.yaml: 4 episodes each, the same but for the agent."""
+    qwen = load_config("configs/coding/bluedot_cheap_qwen.yaml")
+    deep = load_config("configs/coding/bluedot_cheap_deepseek.yaml")
+    assert (qwen["name"], deep["name"]) == ("bluedot-cheap-qwen", "bluedot-cheap-deepseek")
+    for key in ("scenarios", "conditions", "epochs", "max_turns", "deadline", "simulators", "simulators_for", "run"):
+        assert qwen[key] == deep[key], key
+    assert qwen["scenarios"] == ["flows_audit", "pricing_cap"] and qwen["conditions"] == ["C0", "C3"]
+    assert (qwen["epochs"], qwen["max_turns"], qwen["deadline"]) == (1, 40, 60)
+    assert qwen["simulators_for"] == {"C3": ["sonnet55"]}
+    assert qwen["run"]["max_connections"] == 2 and qwen["run"]["retry_attempts"] == 1
+    assert qwen["run"]["order_seed"] == 20261122
+    assert request_config(qwen, "sonnet55")["simulator"] == {
+        "model": "anthropic/claude-sonnet-5-5", "args": {},
+        "config": {"cache_prompt": True, "max_tokens": 16384, "reasoning_effort": "medium"}}
+    # the Qwen agent is the feasibility test's, request for request
+    feasibility = load_config("configs/coding/laptop_api_sim_feasibility.yaml")
+    assert request_config(qwen)["agents"] == request_config(feasibility)["agents"]
+    assert request_config(deep)["agents"]["deepseek_v4_pro"] == {
+        "model": "rawchat/deepseek-v4-pro",
+        "args": {"reasoning_field": "reasoning_content", "base_url": "https://api.deepseek.com/v1"},
+        "config": {"extra_body": {"thinking": {"type": "enabled"}}, "max_tokens": 32768}}
+    assert deep["agents"]["deepseek_v4_pro"]["args"]["api_key_env"] == "DEEPSEEK_API_KEY"
+    header = open("configs/coding/bluedot_cheap_qwen.yaml").read().split("\nfamily:")[0]
+    header = " ".join(line.lstrip("# ") for line in header.splitlines())     # the comment as running text
+    assert "not confirmatory evidence" in header and "Pivot rules, fixed before the run" in header
+    for rule in ("more than $1.50 per Sim episode", "more than 60% of the bash steps", "0 of the 2 complete",
+                 "3 or more of the 4 Real episodes", "0 of the 4 Sim episodes", "DEEPSEEK HARNESS"):
+        assert rule in header, rule
+    assert "bluedot_cheap_qwen.yaml" in open("configs/coding/bluedot_cheap_deepseek.yaml").read().split("\nfamily:")[0]

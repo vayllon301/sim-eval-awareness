@@ -31,7 +31,28 @@ The agent and the simulator run on OpenAI-compatible endpoints: `rawchat/<served
 with a base_url (vLLM on Colab through the tunnel, or OpenRouter for a smoke test only).
 `api_key_env` names an env var holding the key; the key never goes in the config or a log.
 Agents refuse `reasoning_effort` (the template default, xhigh, is the plan's setting) and
-must send the raw chain of thought back (the rawchat provider does).
+must send the raw chain of thought back (the rawchat provider does). `args.reasoning_field`
+names the field it goes back in (`reasoning`, or `reasoning_content` for DeepSeek's own API).
+
+A simulator may also be a native Anthropic model, through Inspect's own provider:
+
+    simulators:
+      sonnet55:
+        model: anthropic/claude-sonnet-5-5
+        config: {reasoning_effort: medium, cache_prompt: true, max_tokens: 16384}
+
+- No `base_url` and no `api_key_env`: Anthropic's endpoint and ANTHROPIC_API_KEY.
+- `reasoning_effort` is required, and `effort` refused. Inspect 0.3.281 sends `reasoning_effort`
+  as `output_config.effort` with `thinking: {type: adaptive, display: summarized}`. `effort`
+  alone sends the same effort and leaves `display` at the API's default, `omitted`: the
+  thinking comes back empty and the simulator's record loses it.
+- `temperature`, `top_p` and `top_k` are refused: Claude 4.7 and later think adaptively, and
+  Inspect drops them with a warning instead of sending them.
+- `cache_prompt` is Inspect's prompt caching, on unless it is `false`; `args.cache_ttl` is
+  `5m`, `1h` or `auto` (the default: 5 minutes, and 1 hour for the rest of an episode once a
+  gap passed 5 minutes).
+- An agent can't be one. Anthropic returns a signed summary of the thinking, never the raw
+  chain of thought, and the awareness measures read the raw one.
 """
 
 from __future__ import annotations
@@ -48,6 +69,7 @@ from inspect_ai.model import GenerateConfig, Model, get_model
 from ..task import NO_SIMULATOR, OPERATIONAL_CONFIG_KEYS
 from .images import build_all
 from .observers import CONDITIONS
+from .provider import REASONING_FIELDS
 from .scenario import load_scenario
 from .snapshot import check as check_snapshot
 from .task import SIMULATOR_NAME, make_design, panel_task
@@ -76,6 +98,13 @@ SIMULATOR_CONFIG_DEFAULTS = {"max_retries": 5, "timeout": 3600, "attempt_timeout
 # longer cancels the others (session 5 lost 12 at 75 minutes; LOG.md, 01-11-2026).
 EVAL_SET_OPTIONS = {"retry_attempts": 0, "retry_cleanup": False, "continue_on_fail": True}
 FORBIDDEN_AGENT_CONFIG = {"reasoning_effort"}  # the plan keeps the template default (xhigh)
+NATIVE_ANTHROPIC = "anthropic/"                # Inspect's own provider: a simulator only
+ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
+ANTHROPIC_SAMPLING = ("temperature", "top_p", "top_k")
+# effort: see the module docstring. reasoning_tokens: a thinking budget, which Claude 4.7 and
+# later refuse. fallback_models: another model would answer, inside one experiment.
+ANTHROPIC_FORBIDDEN_CONFIG = ("effort", "reasoning_tokens", "fallback_models")
+ANTHROPIC_ARGS = {"cache_ttl": ("5m", "1h", "auto")}
 
 
 class ConfigError(ValueError):
@@ -97,11 +126,38 @@ def _positive_int(where, v, minimum=1):
     return v
 
 
+def _native_anthropic(where, spec, config, agent):
+    """A native Anthropic spec's own rules (the module docstring gives the reasons)."""
+    if agent:
+        raise ConfigError(f"{where}: an agent can't be a native Anthropic model: it returns a summary of its "
+                          f"thinking, not the raw chain of thought the measures read. Use it as a simulator.")
+    args = spec.get("args") or {}
+    if bad := sorted(k for k in ("base_url", "api_key_env") if spec.get(k)) + sorted(set(args) - set(ANTHROPIC_ARGS)):
+        raise ConfigError(f"{where}: native Anthropic uses its own endpoint and {ANTHROPIC_API_KEY}; remove {bad} "
+                          f"(args allowed: {sorted(ANTHROPIC_ARGS)})")
+    for key, allowed in ANTHROPIC_ARGS.items():
+        if key in args and args[key] not in allowed:
+            raise ConfigError(f"{where}.args.{key} must be one of {list(allowed)}, got {args[key]!r}")
+    if bad := [k for k in ANTHROPIC_SAMPLING if config.get(k) is not None]:
+        raise ConfigError(f"{where}.config: remove the sampling parameters {bad}: Claude 4.7 and later think "
+                          f"adaptively, and Inspect drops them instead of sending them")
+    if bad := [k for k in ANTHROPIC_FORBIDDEN_CONFIG if config.get(k) is not None]:
+        raise ConfigError(f"{where}.config: a native Anthropic model must not set {bad}"
+                          + (" (set reasoning_effort: Inspect sends it as the effort, with the thinking summarized)"
+                             if "effort" in bad else ""))
+    if config.get("reasoning_effort") is None:
+        raise ConfigError(f"{where}.config: a native Anthropic model must set reasoning_effort (the effort "
+                          f"Inspect sends, with the thinking summarized); the API's default isn't recorded")
+
+
 def _model_spec(where, spec, agent):
-    _keys(where, spec, MODEL_KEYS, {"model", "base_url"})
+    _keys(where, spec, MODEL_KEYS, {"model"})
     model = spec["model"]
-    if not (isinstance(model, str) and model.startswith(("rawchat/", "mockllm/"))):
-        raise ConfigError(f"{where}.model must start with rawchat/ or mockllm/, got {model!r}")
+    if not (isinstance(model, str) and model.startswith(("rawchat/", "mockllm/", NATIVE_ANTHROPIC))):
+        raise ConfigError(f"{where}.model must start with rawchat/, mockllm/ or {NATIVE_ANTHROPIC}, got {model!r}")
+    native = model.startswith(NATIVE_ANTHROPIC)
+    if not native and "base_url" not in spec:
+        raise ConfigError(f"{where}: missing keys ['base_url']")
     config = spec.get("config") or {}
     _keys(f"{where}.config", config, set(GenerateConfig.model_fields))
     if agent and (bad := sorted(FORBIDDEN_AGENT_CONFIG & set(config))):
@@ -111,6 +167,10 @@ def _model_spec(where, spec, agent):
     except Exception as exc:
         raise ConfigError(f"{where}.config: {exc}") from exc
     args = dict(spec.get("args") or {})
+    if native:
+        _native_anthropic(where, spec, config, agent)
+    elif (field := args.get("reasoning_field")) is not None and field not in REASONING_FIELDS:
+        raise ConfigError(f"{where}.args.reasoning_field must be one of {list(REASONING_FIELDS)}, got {field!r}")
     if spec.get("base_url"):
         args["base_url"] = spec["base_url"]
     if spec.get("api_key_env"):
@@ -192,7 +252,9 @@ def load_config(path):
 def request_config(cfg, simulator=None):
     def request(spec):
         config = {k: v for k, v in sorted(spec["config"].items()) if k not in OPERATIONAL_CONFIG_KEYS}
-        args = {k: v for k, v in spec["args"].items() if k != "api_key_env"}  # the env var name isn't a request setting
+        # The env var name isn't a request setting. Every other arg is (base_url, reasoning_field,
+        # cache_ttl), so it stays in the fingerprint.
+        args = {k: v for k, v in spec["args"].items() if k != "api_key_env"}
         return {"model": spec["model"], "config": config, "args": args}
 
     return {"agents": {k: request(s) for k, s in cfg["agents"].items()},
@@ -200,6 +262,10 @@ def request_config(cfg, simulator=None):
 
 
 def build_model(spec) -> Model:
+    if spec["model"].startswith(NATIVE_ANTHROPIC):
+        from . import anthropic_compat
+
+        anthropic_compat.apply()   # the pinned Inspect and anthropic SDK disagree on one type
     config = GenerateConfig(**spec["config"], fail_on_refusal=False)
     return get_model(spec["model"], config=config, memoize=False, **spec["args"])
 
@@ -228,7 +294,10 @@ def run_config(path, allow_dirty=False, log_root="logs", display=None, build=Tru
     if git_dirty() and not allow_dirty:
         raise SystemExit("Refusing to run from a dirty git working tree: commit first, or pass --allow-dirty.")
     if models is None:
-        api_key_envs = {s["args"].get("api_key_env") for s in [*cfg["agents"].values(), *cfg["simulators"].values()]}
+        specs = [*cfg["agents"].values(), *cfg["simulators"].values()]
+        api_key_envs = {s["args"].get("api_key_env") for s in specs}
+        if any(s["model"].startswith(NATIVE_ANTHROPIC) for s in specs):
+            api_key_envs.add(ANTHROPIC_API_KEY)   # Inspect's provider reads it; fail here, not mid-run
         for env in sorted(filter(None, api_key_envs)):
             if not os.environ.get(env):
                 raise SystemExit(f"{env} is not set. Run with: uv run --env-file ../.env simtest run ...")
