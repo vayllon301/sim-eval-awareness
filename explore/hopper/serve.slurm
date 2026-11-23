@@ -1,9 +1,11 @@
 #!/bin/bash
 # Exploratory (Hopper sessions; docs/SESSIONS.md). Not part of the testbed.
 #
-# A Slurm job that serves both models for one chunk of a run: two GPUs of one node, one model per
-# card, both at 128K (explore/colab_probe/serve.sh's two-gpu profile; the job refuses to serve any
-# other). submit_chunks.sh, on the laptop, submits it once per chunk; run_chunks.sh, on the laptop,
+# A Slurm job that serves both models for one chunk of a run, both at 128K, on the profile of
+# explore/colab_probe/serve.sh that PROFILE names: two-gpu (two GPUs of one node, one model per card;
+# the default, and the --gres below) or one-gpu-96g (one card of 90-135 GB, both models on it, as on
+# Hopper's H100 NVL nodes; submit_chunks.sh then passes --gres=gpu:1). The job refuses to serve any
+# profile but the one named. submit_chunks.sh, on the laptop, submits it once per chunk; run_chunks.sh, on the laptop,
 # waits for it, opens the tunnel and runs the chunk's episodes. Inspect, Docker and the logs stay on
 # the laptop; only vLLM runs here.
 #
@@ -22,8 +24,9 @@
 # admitting episodes early enough to leave room for the longest one.
 #
 # Required (sbatch --export): WORK (scratch, about 110 GB free; the venv and the models stay there for
-# the next jobs), SERVE_SH, STATUS_DIR, TIME_LIMIT_MIN. Optional: MIX (no effect on two GPUs), EAGER,
-# SIM_QUANT (submit_chunks.sh always names fp8_per_channel), PROFILE (two-gpu), HEALTH_POLL (60).
+# the next jobs), SERVE_SH, STATUS_DIR, TIME_LIMIT_MIN. Optional: MIX (no effect on two GPUs; on one, the memory split), EAGER,
+# SIM_QUANT (submit_chunks.sh always names fp8_per_channel), PROFILE (two-gpu; submit_chunks.sh always
+# names it), HEALTH_POLL (60).
 #SBATCH --job-name=sim-serve
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

@@ -131,6 +131,23 @@ def test_another_profile_is_refused_before_serving(tmp_path):
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_job_serves_the_one_gpu_profile_it_is_given(tmp_path):
+    # Hopper's nodes: one H100 NVL of 94 GB each, so serve.sh picks one-gpu-96g (LOG.md, 23-11-2026)
+    proc, state = run_slurm(tmp_path, {"HEALTHY_CHECKS": "1", "PROFILE": "one-gpu-96g", "FAKE_PROFILE": "one-gpu-96g",
+                                       "MIX": "c3"})
+    assert status(tmp_path, state / "status-at-first-check")["state"] == "ready"
+    assert f"serve WORK={tmp_path / 'work'} MIX=c3" in (state / "calls.log").read_text()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_one_gpu_profile_is_refused_where_serve_sh_picks_another(tmp_path):
+    proc, state = run_slurm(tmp_path, {"PROFILE": "one-gpu-96g"})      # the node has two GPUs
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "failed"
+    assert not (state / "calls.log").exists() or "serve WORK" not in (state / "calls.log").read_text()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
 @pytest.mark.parametrize("missing", ["WORK", "SERVE_SH", "STATUS_DIR", "TIME_LIMIT_MIN"])
 def test_required_settings(tmp_path, missing):
     proc, state = run_slurm(tmp_path, {missing: None})
@@ -288,6 +305,27 @@ def test_one_job_per_chunk_each_after_the_previous(tmp_path):
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_the_default_profile_asks_each_job_for_two_gpus(tmp_path):
+    proc, state, logs = submit(tmp_path)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    for c in sbatches(calls_of(state)):
+        assert "--gres=gpu:2" in c and "PROFILE=two-gpu" in c
+    assert "# profile=two-gpu" in next((logs / "hopper").glob("*.jobs")).read_text()
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+@pytest.mark.parametrize("profile", ["one-gpu-96g", "one-gpu-141g"])
+def test_a_one_gpu_profile_asks_each_job_for_one_gpu_and_names_it(tmp_path, profile):
+    proc, state, logs = submit(tmp_path, {"PROFILE": profile})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    sb = sbatches(calls_of(state))
+    assert len(sb) == 3
+    for c in sb:
+        assert "--gres=gpu:1" in c and "--gres=gpu:2" not in c and f"PROFILE={profile}" in c
+    assert f"# profile={profile}" in next((logs / "hopper").glob("*.jobs")).read_text()
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
 def test_a_failed_submission_cancels_the_jobs_already_submitted(tmp_path):
     proc, state, logs = submit(tmp_path, {"FAIL_SBATCH": "3"})
     assert proc.returncode == 1
@@ -309,8 +347,11 @@ def test_a_failed_submission_cancels_the_jobs_already_submitted(tmp_path):
     ({"SIM_QUANT": "fp8"}, HEAD, "SIM_QUANT"),                        # a leftover in the shell
     ({"EQUIV_CONTEXTS": "/nonexistent/c.jsonl"}, HEAD, "contexts"),   # the check couldn't run on the first job
     ({"RECORDING_PROBLEM": "real.jsonl is missing"}, HEAD, "real.jsonl is missing"),
+    ({"PROFILE": "one-gpu-80g"}, HEAD, "PROFILE"),                    # 64K: episodes need 128K
+    ({"PROFILE": "two_gpu"}, HEAD, "PROFILE"),
+    ({"SBATCH_ARGS": "--partition=gpu --gres=gpu:2"}, HEAD, "--gres"),  # PROFILE sets the GPUs
 ], ids=["login", "time", "setup", "work", "relative-work", "comma-work", "comma-remote-dir", "preflight", "dirty", "old-scheme",
-       "no-contexts", "no-recording"])
+       "no-contexts", "no-recording", "profile-80g", "profile-typo", "gres-by-hand"])
 def test_submission_refusals(tmp_path, env, preflight, needle):
     proc, state, logs = submit(tmp_path, env, preflight)
     assert proc.returncode == 1
