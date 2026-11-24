@@ -75,20 +75,23 @@ relay_start() {   # the reverse tunnel; succeeds once both sockets exist on the 
   RELAY_PID=$!
   for i in $(seq 1 "${RELAY_WAIT:-30}"); do
     if [ -S "$SOCK/agent.sock" ] && [ -S "$SOCK/simulator.sock" ]; then return 0; fi
-    kill -0 "$RELAY_PID" 2>/dev/null || return 1
+    kill -0 "$RELAY_PID" 2>/dev/null || break
     sleep "${RELAY_TICK:-2}"
   done
+  relay_stop   # a failed attempt never stays up to pass the next check
   return 1
 }
 # The servers outlive serve.sh (setsid), and a job whose process tracking follows the process tree
 # (Hopper: proctrack/linuxproc) loses them once serve.sh exits: a cancelled job left both serving,
 # outside any job, on its GPU (LOG.md, 23/24-11-2026). So the job stops them itself, by the process
 # groups serve.sh records, whenever it exits: TERM first, KILL after STOP_WAIT seconds (20; Slurm's
-# KillWait is 30).
+# KillWait is 30). WORK is shared by jobs (and nodes), so the job copies the groups its own serve.sh
+# recorded to STATUS_DIR/<job id>.pids and stops only those: never groups an earlier job left in WORK.
 PIDS="$WORK/probe/agent.pid $WORK/probe/simulator.pid"
+OWN_PIDS=$STATUS_DIR/$JOB.pids
 stop_servers() {
-  local f pg pgs="" i alive
-  for f in $PIDS; do [ -f "$f" ] && pgs+=" $(cat "$f")"; done
+  local pg pgs i alive
+  pgs=$(cat "$OWN_PIDS" 2>/dev/null || true)
   [ -n "$pgs" ] || return 0
   for pg in $pgs; do kill -TERM -- "-$pg" 2>/dev/null || true; done
   for i in $(seq 1 "${STOP_WAIT:-20}"); do
@@ -98,9 +101,10 @@ stop_servers() {
     sleep 1
   done
   for pg in $pgs; do kill -KILL -- "-$pg" 2>/dev/null || true; done
-  rm -f $PIDS
+  rm -f "$OWN_PIDS"
 }
 mkdir -p "$STATUS_DIR"
+rm -f "$OWN_PIDS"
 status starting
 # The time limit and scancel send SIGTERM (vLLM gets it too).
 trap 'relay_stop; stop_servers' EXIT
@@ -130,7 +134,10 @@ for port in 8000 8001; do
     exit 1
   fi
 done
-if ! bash "$SERVE_SH" || ! cp "$WORK/probe/server.txt" "$STATUS.server"; then
+serve_rc=0
+bash "$SERVE_SH" || serve_rc=$?
+cat $PIDS >"$OWN_PIDS" 2>/dev/null || true   # what this job's serve.sh started, even if it failed
+if [ "$serve_rc" != 0 ] || ! cp "$WORK/probe/server.txt" "$STATUS.server"; then
   status failed
   exit 1
 fi

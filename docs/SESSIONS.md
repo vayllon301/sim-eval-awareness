@@ -127,7 +127,8 @@ refuses `SIM_QUANT=fp8`.
 - **The relay (`RELAY_HOST`).** Hopper refuses SSH from the login host into a node, even with our job
   on it. With `RELAY_HOST` set, `serve.slurm` runs `ssh -R` from the node to the login host once both
   servers answer, with `RELAY_KEY` (default `~/.ssh/id_ed25519_node`, a key the login host accepts
-  for forwarding only: `restrict,port-forwarding` in `authorized_keys`). Each server becomes a Unix
+  for forwarding only: `restrict,port-forwarding,command="/bin/false"` in `authorized_keys`; the relay
+  runs `ssh -N`, so the forced command never runs). Each server becomes a Unix
   socket in `status/<job id>.sock/` (mode 700), and the status file says `sock=<that directory>`.
   `run_chunks.sh` then forwards the laptop's 18000 and 18001 to the sockets. The servers stay on the
   node's loopback, and nothing listens on the cluster network. A dropped relay is restarted; after
@@ -161,7 +162,7 @@ explore/hopper/submit_chunks.sh CONFIG <durations file>
 
 - Before the first job: `uv` in `~/.local/bin` (Hopper's `python3` has no pip, so `serve.sh` can't
   install it), and the relay key (`ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_node -N ""`, then its
-  `.pub` line in `~/.ssh/authorized_keys` behind `restrict,port-forwarding`). The venv and both models
+  `.pub` line in `~/.ssh/authorized_keys` behind `restrict,port-forwarding,command="/bin/false"`). The venv and both models
   can come down in a CPU job first, so no GPU waits on the downloads.
 - A job takes about 20 minutes from start to ready, most of it the simulator loading 65 GB from
   the shared filesystem.

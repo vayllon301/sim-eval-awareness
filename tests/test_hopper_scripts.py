@@ -165,6 +165,7 @@ def test_the_one_gpu_profile_is_refused_where_serve_sh_picks_another(tmp_path):
 # RELAY_FAIL_FROM on.
 RELAY_SSH = REC + """n=$(grep -c '^ssh' "$STATE/calls.log")
 if [ "${RELAY_FAIL_FROM:-0}" -ne 0 ] && [ "$n" -ge "$RELAY_FAIL_FROM" ]; then exit 255; fi
+if [ "${RELAY_HANG_FROM:-0}" -ne 0 ] && [ "$n" -ge "$RELAY_HANG_FROM" ]; then exec sleep 30; fi   # never connects
 for a in "$@"; do case "$a" in *.sock:127.0.0.1:*)
   p=${a%%:127.0.0.1:*}
   "$PYTHON" -c 'import os, socket, sys; os.chdir(os.path.dirname(sys.argv[1])); socket.socket(socket.AF_UNIX).bind(os.path.basename(sys.argv[1]))' "$p" ;;
@@ -254,7 +255,7 @@ def test_the_job_stops_its_servers_when_it_ends(tmp_path):
     assert status(tmp_path)["state"] == "server-died"
     pids = server_pids(state)
     assert len(pids) == 2 and not any(alive(p) for p in pids)
-    assert not (tmp_path / "work" / "probe" / "agent.pid").exists()
+    assert not (tmp_path / "status" / "42.pids").exists()      # the job's own record; WORK's is the next job's to clear
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
@@ -299,9 +300,50 @@ def test_an_earlier_jobs_process_groups_are_not_this_jobs_to_stop(tmp_path):
         probe.mkdir(parents=True)
         (probe / "agent.pid").write_text(f"{other.pid}\n")
         run_slurm(tmp_path, {"HEALTHY_CHECKS": "1"})
-        assert alive(other.pid)
+        assert other.poll() is None
     finally:
         other.kill()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_relay_restart_that_hangs_is_stopped_and_counted(tmp_path):
+    """A restart whose ssh never connects must not stay alive and pass the next health check."""
+    proc, state = run_relay(tmp_path, {"RELAY_SHORT": "1", "RELAY_HANG_FROM": "2", "RELAY_WAIT": "5"})
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "relay-died"
+    assert len(ssh_calls(state)) == 4
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_job_that_stops_before_serving_leaves_an_earlier_jobs_groups_alone(tmp_path):
+    """The pid files in WORK may be an earlier job's: a job that ends before serving (here a profile
+    mismatch) must not stop what they name."""
+    other = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        probe = tmp_path / "work" / "probe"
+        probe.mkdir(parents=True)
+        (probe / "agent.pid").write_text(f"{other.pid}\n")
+        proc, state = run_slurm(tmp_path, {"FAKE_PROFILE": "one-gpu-80g"})
+        assert status(tmp_path)["state"] == "failed"
+        assert other.poll() is None              # our own child: a killed one would be a zombie, so poll
+    finally:
+        other.kill()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_job_stops_its_own_servers_even_if_the_shared_pid_files_go(tmp_path):
+    """WORK is shared: another job may remove its pid files. The job keeps its own copy."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1"}, background=True)
+    for _ in range(200):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "ready":
+            break
+        time.sleep(0.05)
+    pids = server_pids(state)
+    for f in (tmp_path / "work" / "probe").glob("*.pid"):
+        f.unlink()
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=30)
+    assert not any(alive(x) for x in pids)
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
