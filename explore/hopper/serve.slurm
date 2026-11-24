@@ -85,13 +85,13 @@ relay_start() {   # the reverse tunnel; succeeds once both sockets exist on the 
 # (Hopper: proctrack/linuxproc) loses them once serve.sh exits: a cancelled job left both serving,
 # outside any job, on its GPU (LOG.md, 23/24-11-2026). So the job stops them itself, by the process
 # groups serve.sh records, whenever it exits: TERM first, KILL after STOP_WAIT seconds (20; Slurm's
-# KillWait is 30). WORK is shared by jobs (and nodes), so the job copies the groups its own serve.sh
-# recorded to STATUS_DIR/<job id>.pids and stops only those: never groups an earlier job left in WORK.
-PIDS="$WORK/probe/agent.pid $WORK/probe/simulator.pid"
-OWN_PIDS=$STATUS_DIR/$JOB.pids
+# KillWait is 30). WORK is shared by jobs (and nodes), so serve.sh writes each group, the moment it
+# starts that server, to this job's own PID_DIR (STATUS_DIR/<job id>.pid.d), and the job stops only
+# those: never groups an earlier job left, and a cancel during startup still finds what started.
+export PID_DIR=$STATUS_DIR/$JOB.pid.d
 stop_servers() {
   local pg pgs i alive
-  pgs=$(cat "$OWN_PIDS" 2>/dev/null || true)
+  pgs=$(cat "$PID_DIR"/*.pid 2>/dev/null || true)
   [ -n "$pgs" ] || return 0
   for pg in $pgs; do kill -TERM -- "-$pg" 2>/dev/null || true; done
   for i in $(seq 1 "${STOP_WAIT:-20}"); do
@@ -101,10 +101,10 @@ stop_servers() {
     sleep 1
   done
   for pg in $pgs; do kill -KILL -- "-$pg" 2>/dev/null || true; done
-  rm -f "$OWN_PIDS"
+  rm -rf "$PID_DIR"
 }
 mkdir -p "$STATUS_DIR"
-rm -f "$OWN_PIDS"
+rm -rf "$PID_DIR"
 status starting
 # The time limit and scancel send SIGTERM (vLLM gets it too).
 trap 'relay_stop; stop_servers' EXIT
@@ -126,7 +126,6 @@ echo "$dry"
 
 # A server already answering here is not this job's (one left from an earlier job, or someone else's):
 # serving next to it would fail, and its health checks would pass for this job.
-rm -f $PIDS   # an earlier job's process groups, perhaps on another node, are not this job's to stop
 for port in 8000 8001; do
   if curl -s -o /dev/null -m 5 "localhost:$port/health"; then
     echo "serve.slurm: something already answers on $NODE:$port: refusing to serve next to it"
@@ -134,10 +133,7 @@ for port in 8000 8001; do
     exit 1
   fi
 done
-serve_rc=0
-bash "$SERVE_SH" || serve_rc=$?
-cat $PIDS >"$OWN_PIDS" 2>/dev/null || true   # what this job's serve.sh started, even if it failed
-if [ "$serve_rc" != 0 ] || ! cp "$WORK/probe/server.txt" "$STATUS.server"; then
+if ! bash "$SERVE_SH" || ! cp "$WORK/probe/server.txt" "$STATUS.server"; then
   status failed
   exit 1
 fi

@@ -49,9 +49,13 @@ mkdir -p "$WORK/probe"
 touch "$STATE/serving"
 # each "server" is its own process group, as setsid starts vLLM, and serve.sh records it
 if [ -n "${FAKE_SERVERS:-}" ]; then
+  mkdir -p "${PID_DIR:-$WORK/probe}"
   for name in agent simulator; do
-    "$PYTHON" -c 'import subprocess; print(subprocess.Popen(["sleep", "60"], start_new_session=True).pid)' > "$WORK/probe/$name.pid"
-    cat "$WORK/probe/$name.pid" >> "$STATE/server-pids"
+    pid=$("$PYTHON" -c 'import subprocess; print(subprocess.Popen(["sleep", "60"], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)')
+    echo "$pid" > "${PID_DIR:-$WORK/probe}/$name.pid"
+    echo "$pid" >> "$STATE/server-pids"
+    # FAKE_SLOW: the agent is up and the simulator still loading when the job is cancelled
+    [ -z "${FAKE_SLOW:-}" ] || { touch "$STATE/agent-up"; sleep "$FAKE_SLOW"; exit 1; }
   done
 fi
 [ -n "${NO_SERVER_LINES:-}" ] || echo "gpu: stand-in" > "$WORK/probe/server.txt"
@@ -255,7 +259,7 @@ def test_the_job_stops_its_servers_when_it_ends(tmp_path):
     assert status(tmp_path)["state"] == "server-died"
     pids = server_pids(state)
     assert len(pids) == 2 and not any(alive(p) for p in pids)
-    assert not (tmp_path / "status" / "42.pids").exists()      # the job's own record; WORK's is the next job's to clear
+    assert not (tmp_path / "status" / "42.pid.d").exists()     # the job's own record
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
@@ -273,6 +277,22 @@ def test_a_cancelled_job_stops_its_servers(tmp_path):
     p.wait(timeout=30)
     assert status(tmp_path)["state"] == "ended"
     assert not any(alive(x) for x in pids)
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_job_cancelled_while_its_models_load_stops_what_already_started(tmp_path):
+    """TERM while serve.sh still loads the simulator: the agent is already up in its own group."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "FAKE_SLOW": "2"}, background=True)
+    for _ in range(200):
+        if (state / "agent-up").exists():
+            break
+        time.sleep(0.05)
+    assert (state / "agent-up").exists()
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=30)
+    assert status(tmp_path)["state"] == "ended"
+    (agent,) = server_pids(state)
+    assert not alive(agent)
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")

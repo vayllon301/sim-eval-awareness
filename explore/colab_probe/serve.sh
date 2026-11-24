@@ -222,8 +222,10 @@ serve() {
   fi
   local pid=$!
   # setsid made the server its own process group: its id lets a scheduler's job stop it (serve.slurm),
-  # since the server outlives this script and a job's process tracking may lose it then.
-  echo "$pid" >"$OUT/$name.pid"
+  # since the server outlives this script and a job's process tracking may lose it then. PID_DIR is
+  # the job's own directory (serve.slurm); the id is written the moment the server starts.
+  mkdir -p "${PID_DIR:-$OUT}"
+  echo "$pid" >"${PID_DIR:-$OUT}/$name.pid"
   until curl -sf "localhost:$port/health" >/dev/null; do
     if ! kill -0 "$pid" 2>/dev/null; then tail -50 "$OUT/$name.log"; exit 1; fi
     sleep 5
