@@ -92,7 +92,8 @@ relay_start() {   # the reverse tunnel; succeeds once both sockets exist on the 
 export PID_DIR=$STATUS_DIR/$JOB.pid.d
 stop_servers() {
   local pg pgs i alive
-  mkdir -p "$PID_DIR" && touch "$PID_DIR/closed"
+  { mkdir -p "$PID_DIR" && touch "$PID_DIR/closed"; } \
+    || echo "serve.slurm: could not close registration ($PID_DIR/closed); stopping the servers anyway"
   pgs=$(cat "$PID_DIR"/*.pid 2>/dev/null || true)
   [ -n "$pgs" ] || return 0
   for pg in $pgs; do kill -TERM -- "-$pg" 2>/dev/null || true; done
@@ -103,7 +104,7 @@ stop_servers() {
     sleep 1
   done
   for pg in $pgs; do kill -KILL -- "-$pg" 2>/dev/null || true; done
-  rm -f "$PID_DIR"/*.pid   # 'closed' stays: a server still launching must find it
+  rm -f "$PID_DIR"/*.pid || true   # 'closed' stays: a server still launching must find it
 }
 mkdir -p "$STATUS_DIR"
 rm -rf "$PID_DIR"

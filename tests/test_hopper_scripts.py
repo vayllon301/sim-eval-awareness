@@ -297,6 +297,24 @@ def test_a_job_cancelled_while_its_models_load_stops_what_already_started(tmp_pa
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_cleanup_still_stops_the_servers_if_registration_cannot_be_closed(tmp_path):
+    """A failed marker (a full disk, a read-only directory) must not stop the cleanup itself."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1"}, background=True)
+    for _ in range(200):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "ready":
+            break
+        time.sleep(0.05)
+    pid_dir = tmp_path / "status" / "42.pid.d"
+    pid_dir.chmod(0o500)                     # 'closed' can't be made
+    try:
+        p.send_signal(signal.SIGTERM)
+        p.wait(timeout=30)
+        assert not any(alive(x) for x in server_pids(state))
+    finally:
+        pid_dir.chmod(0o700)
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
 def test_a_job_that_fails_after_serving_stops_what_it_started(tmp_path):
     proc, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "NO_SERVER_LINES": "1"})
     assert status(tmp_path)["state"] == "failed"
