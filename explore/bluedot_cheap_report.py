@@ -45,7 +45,10 @@ RATES = {
     # calls passed 5 minutes.
     "claude-sonnet-5-5": {"input": 2.00, "cache_write": 2.50, "cache_write_1h": 4.00, "cache_read": 0.10,
                           "output": 10.00},
+    # DeepSeek-V4.1-Flash-1017 on OpenRouter, pinned to Tenstorrent FP8 (flat 24/7).
+    "deepseek-v4.1-flash-1017": {"input": 0.03, "cache_read": 0.001, "output": 0.20},
     # DeepSeek's own API: off-peak prices (peak is 2x during Mon-Fri 01:00-04:00 & 06:00-10:00 UTC).
+    "deepseek-flash": {"input": 0.15, "cache_read": 0.003, "output": 0.60, "peak_multiplier": 2.0},
     "deepseek-v4-pro": {"input": 0.66, "cache_read": 0.022, "output": 1.98, "peak_multiplier": 2.0},
     # OpenRouter, DeepInfra fp8. A reference, not a price list: the one measured episode cost
     # $0.14 for 164K input and 36K output tokens (LOG.md, 19/20-11-2026), $0.70 per million
@@ -56,7 +59,7 @@ MAX_SIM_COST = 1.50        # rule 1: USD per Sim episode, the mean
 MAX_FLOWS_DIVERGENT = 0.60  # rule 2: divergent bash steps on flows_audit in Sim, pooled
 FLOWS, REAL, SIM = "flows_audit", "C0", "C3"
 PLANNED_QWEN = "rawchat/qwen/qwen3.8-27b"
-PLANNED_DEEPSEEK = "rawchat/deepseek-v4-pro"
+PLANNED_DEEPSEEK = "rawchat/deepseek/deepseek-v4.1-flash-1017"
 PLANNED_MODELS = frozenset({PLANNED_QWEN, PLANNED_DEEPSEEK})
 PLANNED_SCENARIOS = frozenset({"flows_audit", "pricing_cap"})
 PLANNED_EPOCHS = frozenset({1})
@@ -518,8 +521,8 @@ def format_report(rows: list[dict]) -> str:
     tot_hi = sum(x for x in (ag_hi, sim_hi) if x is not None) if (ag_hi is not None or sim_hi is not None) else None
     out += ["", f"Estimated total: {_usd_span(tot_lo, tot_hi)} "
                 f"(agent {_usd_span(ag_lo, ag_hi)}, simulator {_usd_span(sim_lo, sim_hi)}). "
-                "DeepSeek shown as off-peak..peak (2x peak). An estimate from the rates in this script; "
-                "the provider's billing is authoritative.",
+                "Peak-scheduled providers shown as off-peak..peak (2x peak). An estimate from the rates "
+                "in this script; the provider's billing is authoritative.",
             "", "Pivot rules (configs/coding/bluedot_cheap_qwen.yaml)"]
     out.append(table(
         ["rule", "test", "value", "fired", "detail"],

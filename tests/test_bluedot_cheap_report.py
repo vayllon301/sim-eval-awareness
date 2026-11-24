@@ -52,7 +52,11 @@ def test_sonnet_cost_prices_each_kind_of_token(report):
 
 def test_deepseek_and_qwen_costs(report):
     usage = tok(input=200_000, cache_read=1_000_000, output=100_000)
-    # off-peak: $0.66 input, $0.022 cache read, $1.98 output per million
+    # OpenRouter Tenstorrent FP8 (flat 24/7): $0.03 input, $0.001 cache read, $0.20 output per million
+    assert report.cost("rawchat/deepseek/deepseek-v4.1-flash-1017", usage) == pytest.approx(0.006 + 0.001 + 0.020)
+    assert report.cost("rawchat/deepseek/deepseek-v4.1-flash-1017", usage, peak=True) == pytest.approx(0.027)
+    # Direct API off-peak: $0.15/$0.003/$0.60 (flash) and $0.66/$0.022/$1.98 (v4-pro)
+    assert report.cost("rawchat/deepseek-flash", usage) == pytest.approx(0.030 + 0.003 + 0.060)
     assert report.cost("rawchat/deepseek-v4-pro", usage) == pytest.approx(0.132 + 0.022 + 0.198)
     # the feasibility episode: 164K in and 36K out cost $0.14 (the reference this rate comes from)
     assert report.cost("rawchat/qwen/qwen3.8-27b", tok(input=164_000, output=36_000)) == pytest.approx(0.14)
@@ -98,7 +102,7 @@ def test_inspect_keeps_the_cache_ttl_split_in_the_logged_response(report, monkey
 
 def ep(report, arm="bluedot-cheap-qwen", scenario="flows_audit", condition="C3", end="finished", bash=10, divergent=0,
        turns=12, reasoning=12, sim_cost=0.40, aware="not judged", **over):
-    model = "rawchat/deepseek-v4-pro" if "deepseek" in arm else "rawchat/qwen/qwen3.8-27b"
+    model = "rawchat/deepseek/deepseek-v4.1-flash-1017" if "deepseek" in arm else "rawchat/qwen/qwen3.8-27b"
     real = condition == "C0"
     row = {"arm": arm, "agent": "a", "agent_model": model, "scenario": scenario, "condition": condition, "epoch": 1,
            "end": end, "error": None, "turns": turns, "bash": bash, "divergent": 0 if real else divergent,
@@ -272,7 +276,7 @@ def test_partial_and_duplicate_cohorts_cannot_produce_fake_final_verdicts(report
 
 
 def test_unserializable_attempt_message_keeps_rule5_open_not_fired(report):
-    e = {"agent": "deepseek_v4_pro", "model": "rawchat/deepseek-v4-pro", "condition": "C0", "scenario": "pricing_cap",
+    e = {"agent": "deepseek_flash", "model": "rawchat/deepseek/deepseek-v4.1-flash-1017", "condition": "C0", "scenario": "pricing_cap",
          "epoch": 1, "end_reason": "error", "error": "boom", "log_path": None, "log": "attempts",
          "divergence": {"n_bash": 0, "n_divergent": 0},
          "attempt_store": {"CodingEpisode:steps": [], "CodingEpisode:simulator_calls": []},
@@ -329,7 +333,7 @@ def test_deepseek_cost_reports_off_peak_and_peak_range(report):
 
 
 def test_failed_attempt_counts_messages_and_actual_sim_calls_including_resamples(report):
-    e = {"agent": "deepseek_v4_pro", "model": "rawchat/deepseek-v4-pro", "condition": "C3", "scenario": "flows_audit",
+    e = {"agent": "deepseek_flash", "model": "rawchat/deepseek/deepseek-v4.1-flash-1017", "condition": "C3", "scenario": "flows_audit",
          "epoch": 1, "end_reason": "error", "error": "boom", "log_path": None, "log": "attempts",
          "divergence": {"n_bash": 1, "n_divergent": 0},
          "attempt_store": {

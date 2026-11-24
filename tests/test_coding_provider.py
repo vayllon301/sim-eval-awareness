@@ -107,11 +107,23 @@ def test_plain_reasoning_content_is_read_ahead_of_reasoning_details():
 def test_deepseek_request_carries_the_thinking_switch_and_no_sampling():
     from simtest.coding.run import load_config
 
-    spec = load_config("configs/coding/bluedot_cheap_deepseek.yaml")["agents"]["deepseek_v4_pro"]
-    config = GenerateConfig(**spec["config"])
-    params = deepseek().completion_params(config, tools=True)
-    assert params["model"] == "deepseek-v4-pro" and params["max_tokens"] == 32768
-    assert params["extra_body"] == {"thinking": {"type": "enabled"}}
+    # Direct DeepSeek API still passes thinking switch without sampling parameters.
+    direct_config = GenerateConfig(max_tokens=32768, extra_body={"thinking": {"type": "enabled"}})
+    direct_params = deepseek().completion_params(direct_config, tools=True)
+    assert direct_params["model"] == "deepseek-v4-pro" and direct_params["max_tokens"] == 32768
+    assert direct_params["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert not {"temperature", "top_p", "reasoning_effort"} & set(direct_params)
+
+    # The cheap-test DeepSeek config pins OpenRouter Tenstorrent FP8 with reasoning enabled and no sampling.
+    spec = load_config("configs/coding/bluedot_cheap_deepseek.yaml")["agents"]["deepseek_flash"]
+    or_api = RawChatAPI("deepseek/deepseek-v4.1-flash-1017", base_url="https://openrouter.ai/api/v1", api_key="x")
+    params = or_api.completion_params(GenerateConfig(**spec["config"]), tools=True)
+    assert params["model"] == "deepseek/deepseek-v4.1-flash-1017" and params["max_tokens"] == 32768
+    assert params["extra_body"] == {
+        "reasoning": {"enabled": True},
+        "provider": {"order": ["tenstorrent"], "quantizations": ["fp8"],
+                     "allow_fallbacks": False, "require_parameters": True},
+    }
     assert not {"temperature", "top_p", "reasoning_effort"} & set(params)
 
 

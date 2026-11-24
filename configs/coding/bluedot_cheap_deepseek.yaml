@@ -3,10 +3,13 @@
 # bluedot_cheap_qwen.yaml, fixed before the run; both arms are read together. This file
 # differs from that one only in `name` and `agents`.
 #
-# Agent: deepseek-v4-pro on DeepSeek's own API (DEEPSEEK_API_KEY), thinking on.
-# - `reasoning_field: reasoning_content`: DeepSeek returns its reasoning in that field and
-#   wants it back on every assistant turn of a tool-call exchange (src/simtest/coding/provider.py).
-# - No sampling parameters, no `top_k` and no `reasoning_effort`: the API's defaults.
+# Agent: DeepSeek-V4.1-Flash-1017 (the dated snapshot behind `deepseek-flash`) on OpenRouter,
+# pinned to Tenstorrent FP8 (`order: [tenstorrent], quantizations: [fp8]`), no fallbacks:
+# $0.03/M input, $0.001/M cache read, $0.20/M output flat 24/7 (3x-5x cheaper than DeepSeek's
+# direct API even off-peak, and uses OPENROUTER_API_KEY).
+# - OpenRouter default `reasoning_field: reasoning`; thinking explicitly enabled via
+#   `extra_body.reasoning`.
+# - No sampling parameters, no `top_k` and no `reasoning_effort`: the model's defaults.
 # - A harness failure of this arm is pivot rule 5.
 family: coding
 name: bluedot-cheap-deepseek
@@ -16,15 +19,15 @@ epochs: 1
 max_turns: 40
 deadline: 60
 agents:
-  deepseek_v4_pro:
-    model: rawchat/deepseek-v4-pro
-    base_url: https://api.deepseek.com/v1
-    api_key_env: DEEPSEEK_API_KEY
-    args: {reasoning_field: reasoning_content}
+  deepseek_flash:
+    model: rawchat/deepseek/deepseek-v4.1-flash-1017
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
     config:
       max_tokens: 32768
       extra_body:
-        thinking: {type: enabled}
+        reasoning: {enabled: true}
+        provider: {order: [tenstorrent], quantizations: [fp8], allow_fallbacks: false, require_parameters: true}
 simulators:
   sonnet55:
     model: anthropic/claude-sonnet-5-5

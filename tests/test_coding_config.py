@@ -253,11 +253,19 @@ def test_bluedot_cheap_configs_are_one_design_with_two_agents():
     # the Qwen agent is the feasibility test's, request for request
     feasibility = load_config("configs/coding/laptop_api_sim_feasibility.yaml")
     assert request_config(qwen)["agents"] == request_config(feasibility)["agents"]
-    assert request_config(deep)["agents"]["deepseek_v4_pro"] == {
-        "model": "rawchat/deepseek-v4-pro",
-        "args": {"reasoning_field": "reasoning_content", "base_url": "https://api.deepseek.com/v1"},
-        "config": {"extra_body": {"thinking": {"type": "enabled"}}, "max_tokens": 32768}}
-    assert deep["agents"]["deepseek_v4_pro"]["args"]["api_key_env"] == "DEEPSEEK_API_KEY"
+    assert request_config(deep)["agents"]["deepseek_flash"] == {
+        "model": "rawchat/deepseek/deepseek-v4.1-flash-1017",
+        "args": {"base_url": "https://openrouter.ai/api/v1"},
+        "config": {
+            "extra_body": {
+                "reasoning": {"enabled": True},
+                "provider": {"order": ["tenstorrent"], "quantizations": ["fp8"],
+                             "allow_fallbacks": False, "require_parameters": True},
+            },
+            "max_tokens": 32768,
+        },
+    }
+    assert deep["agents"]["deepseek_flash"]["args"]["api_key_env"] == "OPENROUTER_API_KEY"
     header = open("configs/coding/bluedot_cheap_qwen.yaml").read().split("\nfamily:")[0]
     header = " ".join(line.lstrip("# ") for line in header.splitlines())     # the comment as running text
     assert "not confirmatory evidence" in header and "Pivot rules, fixed before the run" in header
