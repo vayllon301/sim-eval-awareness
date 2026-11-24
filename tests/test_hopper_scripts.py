@@ -51,7 +51,9 @@ touch "$STATE/serving"
 if [ -n "${FAKE_SERVERS:-}" ]; then
   mkdir -p "${PID_DIR:-$WORK/probe}"
   for name in agent simulator; do
-    pid=$("$PYTHON" -c 'import subprocess; print(subprocess.Popen(["sleep", "60"], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)')
+    # FAKE_STUBBORN: a server that ignores TERM, so cleanup must wait and KILL it
+    if [ -n "${FAKE_STUBBORN:-}" ]; then cmd='["sh", "-c", "trap \\"\\" TERM; sleep 60"]'; else cmd='["sleep", "60"]'; fi
+    pid=$("$PYTHON" -c "import subprocess; print(subprocess.Popen($cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)")
     echo "$pid" > "${PID_DIR:-$WORK/probe}/$name.pid"
     echo "$pid" >> "$STATE/server-pids"
     # FAKE_SLOW: the agent is up and the simulator still loading when the job is cancelled
@@ -354,6 +356,22 @@ def test_a_relay_that_cannot_be_cleaned_up_does_not_keep_the_servers_up(tmp_path
         assert not any(alive(x) for x in server_pids(state))
     finally:
         sock.chmod(0o700)
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_cancel_during_cleanup_does_not_cut_it_short(tmp_path):
+    """The job is already stopping its servers (one died) when scancel's TERM arrives: cleanup goes on."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "FAKE_STUBBORN": "1", "HEALTHY_CHECKS": "2",
+                                    "STOP_WAIT": "4"}, background=True)
+    for _ in range(400):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "server-died":
+            break
+        time.sleep(0.05)
+    assert status(tmp_path)["state"] == "server-died"
+    time.sleep(0.5)                                 # cleanup is waiting for the stubborn servers
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=30)
+    assert not any(alive(x) for x in server_pids(state))
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")

@@ -110,7 +110,8 @@ mkdir -p "$STATUS_DIR"
 rm -rf "$PID_DIR"
 status starting
 # The time limit and scancel send SIGTERM (vLLM gets it too).
-trap 'set +e; stop_servers; relay_stop' EXIT   # best-effort, the servers first: nothing may keep them up
+# Best-effort, the servers first, and deaf to a later TERM (a cancel during cleanup): nothing may keep them up.
+trap 'trap "" TERM; set +e; stop_servers; relay_stop' EXIT
 trap 'status ended; exit 0' TERM
 
 # The profile serve.sh would pick on this node's GPUs (its dry run starts nothing).
