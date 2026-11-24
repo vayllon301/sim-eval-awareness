@@ -535,3 +535,17 @@ def test_each_server_records_its_process_group_for_the_job_to_stop(tmp_path):
     assert real.returncode == 0, real.stderr + real.stdout
     for name in ("agent", "simulator"):
         assert (work / "probe" / f"{name}.pid").read_text().strip().isdigit()
+
+
+def test_a_pid_dir_that_cannot_be_made_starts_no_server(tmp_path):
+    """The job's PID_DIR is made before any server starts: a server must never run unrecorded."""
+    work = tmp_path / "work"
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    rec = tmp_path / "rec.txt"
+    real = run(tmp_path, {"WORK": str(work), "GPU_MIB": NVL_MIB, "GPU_COUNT": "1", "PID_DIR": str(blocker / "pids")},
+               dry=False, record=rec)
+    assert real.returncode != 0
+    import time
+    time.sleep(1)                     # a server started in the background records itself a moment later
+    assert not rec.exists() or rec.read_text() == ""

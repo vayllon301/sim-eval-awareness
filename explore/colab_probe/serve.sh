@@ -215,6 +215,7 @@ serve() {
   echo "$name: memory $mem, context $maxlen" | tee -a "$OUT/versions.txt"
   vllm_args "$name" "$port" "$model" "$mem" "$maxlen" "$@"
   show_cmd "$gpu" | tee -a "$OUT/versions.txt"
+  mkdir -p "${PID_DIR:-$OUT}"   # before the server starts: it is never left running unrecorded
   if [ -n "$gpu" ]; then
     CUDA_VISIBLE_DEVICES=$gpu setsid nohup "${CMD[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
   else
@@ -224,7 +225,6 @@ serve() {
   # setsid made the server its own process group: its id lets a scheduler's job stop it (serve.slurm),
   # since the server outlives this script and a job's process tracking may lose it then. PID_DIR is
   # the job's own directory (serve.slurm); the id is written the moment the server starts.
-  mkdir -p "${PID_DIR:-$OUT}"
   echo "$pid" >"${PID_DIR:-$OUT}/$name.pid"
   until curl -sf "localhost:$port/health" >/dev/null; do
     if ! kill -0 "$pid" 2>/dev/null; then tail -50 "$OUT/$name.log"; exit 1; fi
