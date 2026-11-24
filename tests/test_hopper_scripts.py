@@ -259,7 +259,8 @@ def test_the_job_stops_its_servers_when_it_ends(tmp_path):
     assert status(tmp_path)["state"] == "server-died"
     pids = server_pids(state)
     assert len(pids) == 2 and not any(alive(p) for p in pids)
-    assert not (tmp_path / "status" / "42.pid.d").exists()     # the job's own record
+    assert not list((tmp_path / "status" / "42.pid.d").glob("*.pid"))   # the job's own record, emptied
+    assert (tmp_path / "status" / "42.pid.d" / "closed").exists()        # registration stays closed
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")

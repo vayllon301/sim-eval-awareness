@@ -85,12 +85,14 @@ relay_start() {   # the reverse tunnel; succeeds once both sockets exist on the 
 # (Hopper: proctrack/linuxproc) loses them once serve.sh exits: a cancelled job left both serving,
 # outside any job, on its GPU (LOG.md, 23/24-11-2026). So the job stops them itself, by the process
 # groups serve.sh records, whenever it exits: TERM first, KILL after STOP_WAIT seconds (20; Slurm's
-# KillWait is 30). WORK is shared by jobs (and nodes), so serve.sh writes each group, the moment it
-# starts that server, to this job's own PID_DIR (STATUS_DIR/<job id>.pid.d), and the job stops only
-# those: never groups an earlier job left, and a cancel during startup still finds what started.
+# KillWait is 30). WORK is shared by jobs (and nodes), so each server records its own group, before
+# vLLM starts, in this job's PID_DIR (STATUS_DIR/<job id>.pid.d), and the job stops only those: never
+# groups an earlier job left. Cleanup first closes registration (PID_DIR/closed; a server launched
+# after that gives up), then reads the groups: a cancel at any moment finds a server or stops it.
 export PID_DIR=$STATUS_DIR/$JOB.pid.d
 stop_servers() {
   local pg pgs i alive
+  mkdir -p "$PID_DIR" && touch "$PID_DIR/closed"
   pgs=$(cat "$PID_DIR"/*.pid 2>/dev/null || true)
   [ -n "$pgs" ] || return 0
   for pg in $pgs; do kill -TERM -- "-$pg" 2>/dev/null || true; done
@@ -101,7 +103,7 @@ stop_servers() {
     sleep 1
   done
   for pg in $pgs; do kill -KILL -- "-$pg" 2>/dev/null || true; done
-  rm -rf "$PID_DIR"
+  rm -f "$PID_DIR"/*.pid   # 'closed' stays: a server still launching must find it
 }
 mkdir -p "$STATUS_DIR"
 rm -rf "$PID_DIR"

@@ -215,17 +215,20 @@ serve() {
   echo "$name: memory $mem, context $maxlen" | tee -a "$OUT/versions.txt"
   vllm_args "$name" "$port" "$model" "$mem" "$maxlen" "$@"
   show_cmd "$gpu" | tee -a "$OUT/versions.txt"
-  mkdir -p "${PID_DIR:-$OUT}"   # before the server starts: it is never left running unrecorded
+  # setsid makes the server its own process group, whose id lets a scheduler's job stop it
+  # (serve.slurm): the server outlives this script, and a job's process tracking may lose it then.
+  # The server records that id itself, before vLLM starts, in PID_DIR (the job's own directory,
+  # serve.slurm; $OUT otherwise), and gives up if the job's cleanup has begun (PID_DIR/closed, made
+  # before the cleanup reads the ids). So a cancel at any moment either finds the server or stops it.
+  mkdir -p "${PID_DIR:-$OUT}"
+  local launch=(bash -c 'echo "$$" >"$1" && [ ! -e "${1%/*}/closed" ] || exit 1; shift; exec "$@"'
+                serve-launch "${PID_DIR:-$OUT}/$name.pid" "${CMD[@]}")
   if [ -n "$gpu" ]; then
-    CUDA_VISIBLE_DEVICES=$gpu setsid nohup "${CMD[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
+    CUDA_VISIBLE_DEVICES=$gpu setsid nohup "${launch[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
   else
-    setsid nohup "${CMD[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
+    setsid nohup "${launch[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
   fi
   local pid=$!
-  # setsid made the server its own process group: its id lets a scheduler's job stop it (serve.slurm),
-  # since the server outlives this script and a job's process tracking may lose it then. PID_DIR is
-  # the job's own directory (serve.slurm); the id is written the moment the server starts.
-  echo "$pid" >"${PID_DIR:-$OUT}/$name.pid"
   until curl -sf "localhost:$port/health" >/dev/null; do
     if ! kill -0 "$pid" 2>/dev/null; then tail -50 "$OUT/$name.log"; exit 1; fi
     sleep 5

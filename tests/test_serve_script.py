@@ -549,3 +549,19 @@ def test_a_pid_dir_that_cannot_be_made_starts_no_server(tmp_path):
     import time
     time.sleep(1)                     # a server started in the background records itself a moment later
     assert not rec.exists() or rec.read_text() == ""
+
+
+def test_a_server_never_starts_once_the_jobs_cleanup_has_begun(tmp_path):
+    """serve.slurm closes registration (PID_DIR/closed) before it reads the groups to stop: a server
+    launched after that must give up rather than run unrecorded (a cancel's snapshot can miss it)."""
+    work = tmp_path / "work"
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    (pid_dir / "closed").write_text("")
+    rec = tmp_path / "rec.txt"
+    real = run(tmp_path, {"WORK": str(work), "GPU_MIB": NVL_MIB, "GPU_COUNT": "1", "PID_DIR": str(pid_dir)},
+               dry=False, record=rec)
+    assert real.returncode != 0
+    import time
+    time.sleep(1)
+    assert not rec.exists() or rec.read_text() == ""
