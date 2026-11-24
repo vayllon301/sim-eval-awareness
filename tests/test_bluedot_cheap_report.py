@@ -102,7 +102,7 @@ def test_inspect_keeps_the_cache_ttl_split_in_the_logged_response(report, monkey
 
 def ep(report, arm="bluedot-cheap-qwen", scenario="flows_audit", condition="C3", end="finished", bash=10, divergent=0,
        turns=12, reasoning=12, sim_cost=0.40, aware="not judged", **over):
-    model = "rawchat/deepseek-flash" if "deepseek" in arm else "rawchat/qwen/qwen3.8-27b"
+    model = "rawchat/deepseek-flash" if "deepseek" in arm else "rawchat/agent"
     real = condition == "C0"
     row = {"arm": arm, "agent": "a", "agent_model": model, "scenario": scenario, "condition": condition, "epoch": 1,
            "end": end, "error": None, "turns": turns, "bash": bash, "divergent": 0 if real else divergent,

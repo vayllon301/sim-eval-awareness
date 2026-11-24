@@ -7,10 +7,9 @@
 # and `agents`: same scenarios, conditions, epochs, turn cap, deadline, simulator and queue.
 #
 # Backend (development only; no result here is evidence for a comparison):
-# - Agent: Qwen3.8-27B on OpenRouter, pinned to DeepInfra fp8, no fallbacks, the card's
-#   sampling: as configs/coding/laptop_api_sim_feasibility.yaml. For the Colab FP8 reference
-#   backend, point it at the tunnel instead: `model: rawchat/agent`,
-#   `base_url: http://localhost:18000/v1`, no `api_key_env` and no `extra_body`.
+# - Agent: Qwen3.8-27B FP8 on Hopper through the SSH tunnel (`rawchat/agent` at
+#   `http://localhost:18000/v1`, the card's sampling, matching `configs/coding/pilot.yaml`).
+#   Calibrates the exact Hopper FP8 backend the main Qwen arm will use (LOG.md, 24-11-2026).
 # - Simulator: anthropic/claude-sonnet-5-5 through Inspect's own provider (ANTHROPIC_API_KEY),
 #   effort medium with the thinking summarized, prompt caching on, 32K output. No sampling
 #   parameters: the model takes none (src/simtest/coding/run.py).
@@ -45,16 +44,9 @@ max_turns: 40
 deadline: 60
 agents:
   qwen27b:
-    model: rawchat/qwen/qwen3.8-27b
-    base_url: https://openrouter.ai/api/v1
-    api_key_env: OPENROUTER_API_KEY
-    config:
-      temperature: 1.0
-      top_p: 0.95
-      top_k: 20
-      max_tokens: 32768
-      extra_body:
-        provider: {order: [deepinfra], quantizations: [fp8], allow_fallbacks: false, require_parameters: true}
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
 simulators:
   sonnet55:
     model: anthropic/claude-sonnet-5-5

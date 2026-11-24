@@ -250,9 +250,9 @@ def test_bluedot_cheap_configs_are_one_design_with_two_agents():
     assert request_config(qwen, "sonnet55")["simulator"] == {
         "model": "anthropic/claude-sonnet-5-5", "args": {},
         "config": {"cache_prompt": True, "max_tokens": 32768, "reasoning_effort": "medium"}}
-    # the Qwen agent is the feasibility test's, request for request
-    feasibility = load_config("configs/coding/laptop_api_sim_feasibility.yaml")
-    assert request_config(qwen)["agents"] == request_config(feasibility)["agents"]
+    # the Qwen agent is Hopper/pilot's FP8 tunnel endpoint, request for request
+    pilot = load_config("configs/coding/pilot.yaml")
+    assert request_config(qwen)["agents"] == request_config(pilot)["agents"]
     assert request_config(deep)["agents"]["deepseek_flash"] == {
         "model": "rawchat/deepseek-flash",
         "args": {"base_url": "https://api.deepseek.com/v1", "reasoning_field": "reasoning_content"},
