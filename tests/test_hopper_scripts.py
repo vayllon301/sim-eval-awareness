@@ -45,11 +45,22 @@ FAKE_SERVE = """#!/bin/sh
 # stands in for explore/colab_probe/serve.sh: the dry run prints a profile; the real run "serves"
 if [ "${DRY_RUN:-}" = 1 ]; then echo "profile: ${FAKE_PROFILE:-two-gpu} (2 GPU of 81559 MiB), vllm 0.32.0, work $WORK"; exit 0; fi
 echo "serve WORK=$WORK MIX=${MIX:-} SIM_QUANT=${SIM_QUANT:-}" >> "$STATE/calls.log"
-[ -n "${NO_SERVER_LINES:-}" ] || { mkdir -p "$WORK/probe"; echo "gpu: stand-in" > "$WORK/probe/server.txt"; }
+mkdir -p "$WORK/probe"
+touch "$STATE/serving"
+# each "server" is its own process group, as setsid starts vLLM, and serve.sh records it
+if [ -n "${FAKE_SERVERS:-}" ]; then
+  for name in agent simulator; do
+    "$PYTHON" -c 'import subprocess; print(subprocess.Popen(["sleep", "60"], start_new_session=True).pid)' > "$WORK/probe/$name.pid"
+    cat "$WORK/probe/$name.pid" >> "$STATE/server-pids"
+  done
+fi
+[ -n "${NO_SERVER_LINES:-}" ] || echo "gpu: stand-in" > "$WORK/probe/server.txt"
 exit "${SERVE_RC:-0}"
 """
-# healthy for HEALTHY_CHECKS calls, then down; it copies the status file the first time it is asked
-SLURM_CURL = REC + """[ -e "$STATE/status-at-first-check" ] || cp "$STATUS_DIR/42" "$STATE/status-at-first-check"
+# nothing answers before serve.sh has served (or STALE: a server left from an earlier job answers);
+# then healthy for HEALTHY_CHECKS calls, then down; it copies the status file the first time it is asked
+SLURM_CURL = """if [ ! -e "$STATE/serving" ]; then [ -n "${STALE:-}" ] && exit 0; exit 7; fi
+""" + REC + """[ -e "$STATE/status-at-first-check" ] || cp "$STATUS_DIR/42" "$STATE/status-at-first-check"
 n=$(grep -c '^curl' "$STATE/calls.log")
 [ "$n" -le "${HEALTHY_CHECKS:-1000000}" ] && exit 0
 exit 7
@@ -66,6 +77,7 @@ def run_slurm(tmp_path: Path, env: dict | None = None, background=False):
     full = {"PATH": f"{stubs}:/usr/bin:/bin", "STATE": str(state), "SLURM_JOB_ID": "42",
             "SLURMD_NODENAME": "gpu07", "WORK": str(tmp_path / "work"), "SERVE_SH": str(serve),
             "STATUS_DIR": str(tmp_path / "status"), "TIME_LIMIT_MIN": "720", "HEALTH_POLL": "0.05",
+            "PYTHON": sys.executable, "STOP_WAIT": "3",
             **(env or {})}
     full = {k: v for k, v in full.items() if v is not None}
     if background:
@@ -219,6 +231,77 @@ def test_a_relay_that_cannot_be_restarted_ends_the_job(tmp_path):
     assert proc.returncode == 1
     assert status(tmp_path)["state"] == "relay-died"
     assert len(ssh_calls(state)) == 4                            # the first, then 3 failed restarts
+
+
+def alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def server_pids(state: Path) -> list[int]:
+    return [int(x) for x in (state / "server-pids").read_text().split()]
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_job_stops_its_servers_when_it_ends(tmp_path):
+    """The servers outlive serve.sh: a job that only exits would leave them on the GPU (Hopper, job 7085)."""
+    proc, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "HEALTHY_CHECKS": "2"})
+    assert status(tmp_path)["state"] == "server-died"
+    pids = server_pids(state)
+    assert len(pids) == 2 and not any(alive(p) for p in pids)
+    assert not (tmp_path / "work" / "probe" / "agent.pid").exists()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_cancelled_job_stops_its_servers(tmp_path):
+    """scancel and the time limit send TERM: the job stops both process groups before it goes."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1"}, background=True)
+    for _ in range(200):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "ready":
+            break
+        time.sleep(0.05)
+    assert status(tmp_path)["state"] == "ready"
+    pids = server_pids(state)
+    assert all(alive(x) for x in pids)
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=30)
+    assert status(tmp_path)["state"] == "ended"
+    assert not any(alive(x) for x in pids)
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_job_that_fails_after_serving_stops_what_it_started(tmp_path):
+    proc, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "NO_SERVER_LINES": "1"})
+    assert status(tmp_path)["state"] == "failed"
+    assert not any(alive(x) for x in server_pids(state))
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_server_already_answering_is_refused_before_serving(tmp_path):
+    proc, state = run_slurm(tmp_path, {"STALE": "1"})
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "failed"
+    assert "already answers" in proc.stdout
+    assert not (state / "serving").exists()                     # serve.sh never ran
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_an_earlier_jobs_process_groups_are_not_this_jobs_to_stop(tmp_path):
+    """WORK is shared between jobs (and nodes): a pid file left there names processes elsewhere."""
+    other = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        probe = tmp_path / "work" / "probe"
+        probe.mkdir(parents=True)
+        (probe / "agent.pid").write_text(f"{other.pid}\n")
+        run_slurm(tmp_path, {"HEALTHY_CHECKS": "1"})
+        assert alive(other.pid)
+    finally:
+        other.kill()
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")

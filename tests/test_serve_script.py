@@ -525,3 +525,13 @@ def test_the_server_lines_survive_a_log_without_them(tmp_path):
     proc = run(tmp_path, {"WORK": str(work), "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "VENV": ""}, dry=False, record=rec)
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "Quantizing" not in (work / "probe" / "server.txt").read_text()
+
+
+def test_each_server_records_its_process_group_for_the_job_to_stop(tmp_path):
+    """The servers outlive the script (setsid); serve.slurm stops them by these ids when its job ends."""
+    work = tmp_path / "work"
+    real = run(tmp_path, {"WORK": str(work), "GPU_MIB": NVL_MIB, "GPU_COUNT": "1", "MIX": "c3"}, dry=False,
+               record=tmp_path / "rec.txt")
+    assert real.returncode == 0, real.stderr + real.stdout
+    for name in ("agent", "simulator"):
+        assert (work / "probe" / f"{name}.pid").read_text().strip().isdigit()

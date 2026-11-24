@@ -221,6 +221,9 @@ serve() {
     setsid nohup "${CMD[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
   fi
   local pid=$!
+  # setsid made the server its own process group: its id lets a scheduler's job stop it (serve.slurm),
+  # since the server outlives this script and a job's process tracking may lose it then.
+  echo "$pid" >"$OUT/$name.pid"
   until curl -sf "localhost:$port/health" >/dev/null; do
     if ! kill -0 "$pid" 2>/dev/null; then tail -50 "$OUT/$name.log"; exit 1; fi
     sleep 5
