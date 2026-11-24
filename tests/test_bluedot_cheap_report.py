@@ -102,7 +102,7 @@ def test_inspect_keeps_the_cache_ttl_split_in_the_logged_response(report, monkey
 
 def ep(report, arm="bluedot-cheap-qwen", scenario="flows_audit", condition="C3", end="finished", bash=10, divergent=0,
        turns=12, reasoning=12, sim_cost=0.40, aware="not judged", **over):
-    model = "rawchat/deepseek/deepseek-v4.1-flash-1017" if "deepseek" in arm else "rawchat/qwen/qwen3.8-27b"
+    model = "rawchat/deepseek-flash" if "deepseek" in arm else "rawchat/qwen/qwen3.8-27b"
     real = condition == "C0"
     row = {"arm": arm, "agent": "a", "agent_model": model, "scenario": scenario, "condition": condition, "epoch": 1,
            "end": end, "error": None, "turns": turns, "bash": bash, "divergent": 0 if real else divergent,
@@ -276,7 +276,7 @@ def test_partial_and_duplicate_cohorts_cannot_produce_fake_final_verdicts(report
 
 
 def test_unserializable_attempt_message_keeps_rule5_open_not_fired(report):
-    e = {"agent": "deepseek_flash", "model": "rawchat/deepseek/deepseek-v4.1-flash-1017", "condition": "C0", "scenario": "pricing_cap",
+    e = {"agent": "deepseek_flash", "model": "rawchat/deepseek-flash", "condition": "C0", "scenario": "pricing_cap",
          "epoch": 1, "end_reason": "error", "error": "boom", "log_path": None, "log": "attempts",
          "divergence": {"n_bash": 0, "n_divergent": 0},
          "attempt_store": {"CodingEpisode:steps": [], "CodingEpisode:simulator_calls": []},
@@ -333,7 +333,7 @@ def test_deepseek_cost_reports_off_peak_and_peak_range(report):
 
 
 def test_failed_attempt_counts_messages_and_actual_sim_calls_including_resamples(report):
-    e = {"agent": "deepseek_flash", "model": "rawchat/deepseek/deepseek-v4.1-flash-1017", "condition": "C3", "scenario": "flows_audit",
+    e = {"agent": "deepseek_flash", "model": "rawchat/deepseek-flash", "condition": "C3", "scenario": "flows_audit",
          "epoch": 1, "end_reason": "error", "error": "boom", "log_path": None, "log": "attempts",
          "divergence": {"n_bash": 1, "n_divergent": 0},
          "attempt_store": {
