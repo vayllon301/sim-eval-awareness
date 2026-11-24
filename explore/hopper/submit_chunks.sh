@@ -10,8 +10,18 @@
 #   WORK=<scratch directory on the nodes> SBATCH_ARGS="--partition=... --account=... --cpus-per-task=..." \
 #   explore/hopper/submit_chunks.sh configs/coding/pilot.yaml <durations file>
 #
-# Hopper's job limit, login host, partition and scratch are unknown here: they are parameters, never
-# defaults. SETUP_HOURS goes to the plan and comes back in run_chunks.sh's arithmetic. The first job
+# PROFILE is serve.sh's profile every job must serve: two-gpu (the default: two cards of 80 GB or
+# more, one model each), or one-gpu-94g / one-gpu-96g / one-gpu-141g (one card of 90 GB or more, both
+# models on it; Hopper's nodes have one H100 NVL of 94 GB each: one-gpu-94g, LOG.md 23/24-11-2026). It sets the job's --gres
+# (2 or 1) and goes to serve.slurm, which refuses a node where serve.sh would pick another. Each
+# profile is its own backend. one-gpu-80g (64K) is refused: episodes need 128K.
+#
+# RELAY_HOST (and RELAY_KEY) go to serve.slurm: where SSH into a node is refused, as on Hopper, the job
+# publishes its servers as sockets on the login host, and run_chunks.sh forwards to them.
+#
+# The job limit, login host, partition and scratch are parameters, never defaults (Hopper, 23/24-11-2026:
+# LOGIN=<user>@hopper.cs.lewisu.edu, SBATCH_ARGS=--partition=gpu, up to 3 days a job,
+# WORK=/home/shared/scratch/<user>/sim, RELAY_HOST=hopper-head.ipa.hopper.local). SETUP_HOURS goes to the plan and comes back in run_chunks.sh's arithmetic. The first job
 # installs vLLM and downloads both models into WORK (96 GB); later jobs find them there.
 #
 # What it does:
@@ -43,6 +53,7 @@ DRY=${DRY_RUN:-}
 LOGS=${LOGS:-logs}
 REMOTE_DIR=${REMOTE_DIR:-sim-session}
 SBATCH_ARGS=${SBATCH_ARGS:-}
+PROFILE=${PROFILE:-two-gpu}
 SIM_QUANT=${SIM_QUANT:-$SIM_SCHEME}
 EQUIV_CONTEXTS=${EQUIV_CONTEXTS:-$LOGS/equiv/contexts.jsonl}
 name=$(config_name $CONFIG 2>/dev/null)
@@ -57,6 +68,14 @@ if ! [[ ${SETUP_HOURS:-} =~ $NUM ]]; then problems+=("set SETUP_HOURS to the hou
 if [[ -z ${WORK:-} ]]; then problems+=("set WORK to a scratch directory on the nodes (about 110 GB free)")
 elif [[ $WORK != /* ]]; then problems+=("WORK must be an absolute path on the nodes (got $WORK)")
 elif [[ $WORK == *,* ]]; then problems+=("WORK can't hold a comma: sbatch --export splits on commas (got $WORK)"); fi
+case $PROFILE in
+  two-gpu) GPUS_PER_JOB=2 ;;
+  one-gpu-94g|one-gpu-96g|one-gpu-141g) GPUS_PER_JOB=1 ;;
+  *) GPUS_PER_JOB=""; problems+=("PROFILE=$PROFILE: give two-gpu, one-gpu-94g, one-gpu-96g or one-gpu-141g (episodes need 128K)") ;;
+esac
+[[ ${RELAY_HOST:-} != *[,\ ]* && ${RELAY_KEY:-} != *[,\ ]* ]] \
+  || problems+=("RELAY_HOST and RELAY_KEY can't hold a comma or a space: sbatch --export splits on commas")
+[[ $SBATCH_ARGS != *--gres* ]] || problems+=("SBATCH_ARGS can't set --gres: PROFILE sets the GPUs per job")
 [[ $REMOTE_DIR != *,* ]] || problems+=("REMOTE_DIR can't hold a comma: sbatch --export splits on commas (got $REMOTE_DIR)")
 [[ ! -f $CONFIG ]] || problems+=(${(f)"$(preflight_problems $CONFIG)"})
 [[ $SIM_QUANT == $SIM_SCHEME ]] \
@@ -96,9 +115,11 @@ x -i explore/colab_probe/serve.sh ssh $LOGIN "mkdir -p ${(q)REMOTE_DIR}/status &
 minutes=$(( int(TIME_LIMIT * 60) ))
 # $PWD expands on the login host, in REMOTE_DIR: the job runs there, and so do the paths it gets.
 # ALL is the login shell's environment: the scheme goes by name, so nothing there can change it.
-exports="ALL,WORK=${(q)WORK},SERVE_SH=\$PWD/serve.sh,STATUS_DIR=\$PWD/status,TIME_LIMIT_MIN=$minutes,SIM_QUANT=$SIM_QUANT"
+exports="ALL,WORK=${(q)WORK},SERVE_SH=\$PWD/serve.sh,STATUS_DIR=\$PWD/status,TIME_LIMIT_MIN=$minutes,SIM_QUANT=$SIM_QUANT,PROFILE=$PROFILE"
 [[ -z ${MIX:-} ]] || exports+=",MIX=$MIX"
 [[ -z ${EAGER:-} ]] || exports+=",EAGER=$EAGER"
+[[ -z ${RELAY_HOST:-} ]] || exports+=",RELAY_HOST=$RELAY_HOST"
+[[ -z ${RELAY_KEY:-} ]] || exports+=",RELAY_KEY=$RELAY_KEY"
 ids=()
 rows=()
 i=0
@@ -109,7 +130,7 @@ for c in $chunks; do
     if [[ $DRY == 1 ]]; then dep="--dependency=afterany:<job $((i - 1))>"; else dep="--dependency=afterany:${ids[-1]}"; fi
   fi
   remote="cd ${(q)REMOTE_DIR} && sbatch --parsable --time=$minutes${dep:+ $dep} --job-name=sim-$name-$i --output=status/%j.out"
-  remote+=" --export=$exports $SBATCH_ARGS"
+  remote+=" --gres=gpu:$GPUS_PER_JOB --export=$exports $SBATCH_ARGS"
   if [[ $DRY == 1 ]]; then
     x -i explore/hopper/serve.slurm ssh $LOGIN "$remote"
     ids+=("<job $i>")
@@ -130,7 +151,7 @@ done
 
 # 5. The jobs file for run_chunks.sh.
 header=("# config=$CONFIG" "# commit=$(git rev-parse HEAD)" "# login=$LOGIN" "# remote_dir=$REMOTE_DIR"
-        "# time_limit=$TIME_LIMIT" "# setup_hours=$SETUP_HOURS")
+        "# time_limit=$TIME_LIMIT" "# setup_hours=$SETUP_HOURS" "# profile=$PROFILE")
 if [[ $DRY == 1 ]]; then
   print -r -- "(dry run) the jobs file would hold:"
   print -rl -- $header $rows

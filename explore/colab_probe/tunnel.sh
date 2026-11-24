@@ -12,9 +12,19 @@
 # host in between. It reconnects until it is killed.
 #
 #   SSH_TARGET=<node> SSH_JUMP=<login> explore/colab_probe/tunnel.sh >/tmp/tunnel.log 2>&1 &
+#
+# Where SSH into a node is refused (Hopper), the job publishes its servers as Unix sockets on the login
+# host (explore/hopper/serve.slurm, RELAY_HOST): SSH_SOCKETS is that directory and SSH_TARGET the login
+# host, and the ports go to <dir>/agent.sock and <dir>/simulator.sock.
+#
+#   SSH_TARGET=<login> SSH_SOCKETS=<dir> explore/colab_probe/tunnel.sh >/tmp/tunnel.log 2>&1 &
 set -u
 FORWARD=(-o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes
          -N -L 18000:127.0.0.1:8000 -L 18001:127.0.0.1:8001)
+if [ -n "${SSH_SOCKETS:-}" ]; then
+  FORWARD=(-o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes
+           -N -L "18000:$SSH_SOCKETS/agent.sock" -L "18001:$SSH_SOCKETS/simulator.sock")
+fi
 if [ -n "${SSH_TARGET:-}" ]; then
   jump=()
   [ -n "${SSH_JUMP:-}" ] && jump=(-J "$SSH_JUMP")

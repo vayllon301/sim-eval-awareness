@@ -27,10 +27,19 @@
 #   SSH_TARGET=<node> SSH_JUMP=<login> explore/colab_probe/tunnel.sh >/tmp/tunnel.log 2>&1 &   # the tunnel
 #
 # Profiles, by the GPUs the machine has (CUDA_VISIBLE_DEVICES, or GPUS, picks them):
-#   one-gpu-96g   one 90-135 GB card (Colab G4): both models at 128K, 0.47 / 0.47 (MIX=c3: 0.42 / 0.52)
+#   one-gpu-96g   one 97-135 GB card (Colab G4): both models at 128K, 0.47 / 0.47 (MIX=c3: 0.42 / 0.52)
+#   one-gpu-94g   one 90-97 GB card (Hopper's H100 NVL, 95,830 MiB): both at 128K, 0.47 / 0.47
+#                 (MIX=c3: 0.43 / 0.51; the G4's 0.42 leaves the agent 8.22 of the 8.33 GiB of KV that 128K
+#                 needs, LOG.md 23/24-11-2026)
 #   one-gpu-141g  one card of 135 GB or more (H200): as the G4, with more KV cache for each model
 #   one-gpu-80g   one 80 GB card (H100, A100): both at 64K. NOT equivalent to the G4 (a loud warning)
 #   two-gpu       two cards of 80 GB or more: one model per card, both at 128K, 0.90 each
+#
+# DeepGEMM: every profile but the G4's serves with VLLM_USE_DEEP_GEMM=0, shown in the served line.
+# On sm_90 vLLM would serve the agent's block FP8 with DeepGEMM, which compiles kernels at startup
+# (nvcc >= 12.9; Hopper's GPU nodes have 12.8) and rounds the FP8 scales to powers of two
+# (VLLM_USE_DEEP_GEMM_E8M0). The G4 (sm_120) can't run DeepGEMM, so off keeps the other cards on the
+# G4's kernel family. The G4's lines stay as every session ran them (LOG.md, 23/24-11-2026).
 #
 # DRY_RUN=1 prints the profile and the vllm command lines and exits: nothing is installed,
 # downloaded, created or started. GPU_MIB and GPU_COUNT stand in for nvidia-smi there. The G4's
@@ -95,7 +104,12 @@ if [ "$GPU_COUNT" -ge 2 ]; then
   # One model per card: no memory split to choose, so MIX has no effect.
   PROFILE=two-gpu mem=0.90 sim=0.90 len=131072
   AGENT_GPU=$(echo "$GPUS" | cut -d, -f1) SIM_GPU=$(echo "$GPUS" | cut -d, -f2)
-elif [ "$GPU_MIB" -ge 90000 ]; then
+elif [ "$GPU_MIB" -ge 90000 ] && [ "$GPU_MIB" -lt 97000 ]; then
+  # Hopper's H100 NVL (95,830 MiB): the G4's MIX=c3 split leaves the agent short of 128K, so one point
+  # moves to it (fit test, job 7085: agent 165,723 tokens of KV, simulator 588,323).
+  PROFILE=one-gpu-94g mem=0.47 sim=0.47 len=131072
+  if [ "${MIX:-}" = c3 ]; then mem=0.43 sim=0.51; fi
+elif [ "$GPU_MIB" -ge 97000 ]; then
   if [ "$GPU_MIB" -ge 135000 ]; then PROFILE=one-gpu-141g; else PROFILE=one-gpu-96g; fi
   # On the G4, 0.42 left the agent 7.6 of the 8.3 GiB of KV it needs at 128K (LOG.md, 29-10-2026).
   mem=0.47 sim=0.47 len=131072
@@ -116,6 +130,7 @@ EOF
 else
   die "one GPU of $GPU_MIB MiB is too small for both models (they need about 80 GB)"
 fi
+if [ "$PROFILE" = one-gpu-96g ]; then DEEP_GEMM=""; else DEEP_GEMM=0; fi
 AGENT_MEM=${AGENT_MEM:-$mem}
 SIM_MEM=${SIM_MEM:-$sim}
 AGENT_LEN=${AGENT_LEN:-$len}
@@ -146,6 +161,7 @@ vllm_args() {   # NAME PORT MODEL_DIR MEM_FRACTION MAX_LEN [extra vllm flags]
 show_cmd() {    # GPU: the command line as run, with the variables that change it
   local env=""
   [ -z "$1" ] || env+="CUDA_VISIBLE_DEVICES=$1 "
+  [ -z "$DEEP_GEMM" ] || env+="VLLM_USE_DEEP_GEMM=$DEEP_GEMM "
   [ "${EAGER:-}" != 1 ] || env+="VLLM_USE_V2_MODEL_RUNNER=0 "
   printf '%s%s' "$env" "${CMD[0]}"
   printf ' %q' "${CMD[@]:1}"
@@ -199,10 +215,18 @@ serve() {
   echo "$name: memory $mem, context $maxlen" | tee -a "$OUT/versions.txt"
   vllm_args "$name" "$port" "$model" "$mem" "$maxlen" "$@"
   show_cmd "$gpu" | tee -a "$OUT/versions.txt"
+  # setsid makes the server its own process group, whose id lets a scheduler's job stop it
+  # (serve.slurm): the server outlives this script, and a job's process tracking may lose it then.
+  # The server records that id itself, before vLLM starts, in PID_DIR (the job's own directory,
+  # serve.slurm; $OUT otherwise), and gives up if the job's cleanup has begun (PID_DIR/closed, made
+  # before the cleanup reads the ids). So a cancel at any moment either finds the server or stops it.
+  mkdir -p "${PID_DIR:-$OUT}"
+  local launch=(bash -c 'echo "$$" >"$1" && [ ! -e "${1%/*}/closed" ] || exit 1; shift; exec "$@"'
+                serve-launch "${PID_DIR:-$OUT}/$name.pid" "${CMD[@]}")
   if [ -n "$gpu" ]; then
-    CUDA_VISIBLE_DEVICES=$gpu setsid nohup "${CMD[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
+    CUDA_VISIBLE_DEVICES=$gpu setsid nohup "${launch[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
   else
-    setsid nohup "${CMD[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
+    setsid nohup "${launch[@]}" </dev/null >"$OUT/$name.log" 2>&1 &
   fi
   local pid=$!
   until curl -sf "localhost:$port/health" >/dev/null; do
@@ -212,6 +236,7 @@ serve() {
   stamp "$name-ready"
 }
 if [ "${EAGER:-}" = 1 ]; then export VLLM_USE_V2_MODEL_RUNNER=0; fi
+if [ -n "$DEEP_GEMM" ]; then export VLLM_USE_DEEP_GEMM=$DEEP_GEMM; else unset VLLM_USE_DEEP_GEMM; fi
 echo "engine: ${ENGINE[*]:-compiled (vLLM default)}" | tee -a "$OUT/versions.txt"
 # SIM_ONLY=1: stop the simulator an earlier run started (setsid made each server its own process
 # group, so its engine processes go with it) and wait until it is gone: SIGKILL after 3 minutes,

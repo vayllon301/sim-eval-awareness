@@ -45,6 +45,9 @@ SIM = ("vllm serve /content/models/simulator --served-model-name simulator --hos
        "--gpu-memory-utilization {mem} --max-model-len {len} --max-num-seqs 64 --language-model-only "
        "--reasoning-parser qwen3 --quantization fp8 --trust-remote-code")
 EAGER = "VLLM_USE_V2_MODEL_RUNNER=0 "
+# Every profile but the G4's serves with DeepGEMM off (LOG.md, 23/24-11-2026), shown in the line.
+DG = "VLLM_USE_DEEP_GEMM=0 "
+NVL_MIB = "95830"    # Hopper's H100 NVL
 
 # Captured from the pre-Hopper script (see the module docstring), one pair per G4 setting. Every
 # session so far: what SIM_QUANT=fp8 reproduces.
@@ -83,6 +86,7 @@ def _stubs(tmp_path: Path, record: Path | None = None) -> Path:
     if record is not None:
         (d / "vllm").write_text(
             "#!/bin/bash\n{ e=''; [ -n \"${CUDA_VISIBLE_DEVICES+x}\" ] && e+=\"CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \"; "
+            "[ -n \"${VLLM_USE_DEEP_GEMM+x}\" ] && e+=\"VLLM_USE_DEEP_GEMM=$VLLM_USE_DEEP_GEMM \"; "
             "[ -n \"${VLLM_USE_V2_MODEL_RUNNER+x}\" ] && e+=\"VLLM_USE_V2_MODEL_RUNNER=$VLLM_USE_V2_MODEL_RUNNER \"; "
             f"printf '%s' \"$e\"; printf 'vllm'; printf ' %q' \"$@\"; printf '\\n'; }} >> {record}\n"
             f"cat {record.parent / 'vllm-says'} 2>/dev/null\n")   # the server's own log lines, when a test gives them
@@ -148,36 +152,62 @@ def test_h200_serves_both_models_at_128k(tmp_path):
     proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": H200_MIB, "GPU_COUNT": "1"})
     got = lines(proc)
     assert "profile: one-gpu-141g" in proc.stdout
-    assert got == G4_DEFAULT[()]   # the G4's fractions leave each model more KV cache on 141 GB
+    assert got == [DG + x for x in G4_DEFAULT[()]]   # the G4's fractions leave each model more KV cache on 141 GB
+
+
+@pytest.mark.parametrize("mix,mem", [("", ("0.47", "0.47")), ("c3", ("0.43", "0.51"))])
+def test_the_h100_nvl_serves_both_at_128k_without_deepgemm(tmp_path, mix, mem):
+    """Hopper's H100 NVL (95,830 MiB): the G4's c3 split left the agent 8.22 of the 8.33 GiB of KV
+    that 128K needs; 0.43 / 0.51 served both (fit test, job 7085, LOG.md 23/24-11-2026)."""
+    proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": NVL_MIB, "GPU_COUNT": "1", "MIX": mix})
+    assert "profile: one-gpu-94g" in proc.stdout
+    assert lines(proc) == [DG + AGENT.format(mem=mem[0], len=131072), DG + SIM_PC.format(mem=mem[1], len=131072)]
+
+
+@pytest.mark.parametrize("mib,profile", [("90000", "one-gpu-94g"), ("96999", "one-gpu-94g"), ("97000", "one-gpu-96g")])
+def test_the_nvl_and_g4_profiles_split_at_97000_mib(tmp_path, mib, profile):
+    proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": mib, "GPU_COUNT": "1"})
+    assert f"profile: {profile}" in proc.stdout
+    assert all(x.startswith(DG) for x in lines(proc)) == (profile != "one-gpu-96g")
+
+
+def test_a_deepgemm_setting_left_in_the_shell_never_reaches_the_g4(tmp_path):
+    """The G4's servers run as every session ran them: a leftover VLLM_USE_DEEP_GEMM is unset."""
+    work = tmp_path / "work"
+    rec = tmp_path / "rec.txt"
+    real = run(tmp_path, {"WORK": str(work), "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "MIX": "c3", "VENV": "",
+                          "VLLM_USE_DEEP_GEMM": "0"}, dry=False, record=rec)
+    assert real.returncode == 0, real.stderr + real.stdout
+    assert rec.read_text().splitlines() == [x.replace("/content", str(work)) for x in G4_DEFAULT[(("MIX", "c3"),)]]
 
 
 def test_two_gpus_one_model_per_gpu_at_128k(tmp_path):
     proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": H100_MIB, "GPU_COUNT": "2"})
     agent, sim = lines(proc)
     assert "profile: two-gpu" in proc.stdout
-    assert agent == "CUDA_VISIBLE_DEVICES=0 " + AGENT.format(mem="0.90", len=131072)
-    assert sim == "CUDA_VISIBLE_DEVICES=1 " + SIM_PC.format(mem="0.90", len=131072)
+    assert agent == "CUDA_VISIBLE_DEVICES=0 " + DG + AGENT.format(mem="0.90", len=131072)
+    assert sim == "CUDA_VISIBLE_DEVICES=1 " + DG + SIM_PC.format(mem="0.90", len=131072)
 
 
 def test_two_gpus_follow_the_visible_devices(tmp_path):
     """A scheduler (Slurm) may hand out GPUs 3 and 5: each server gets one of them."""
     proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": H100_MIB, "CUDA_VISIBLE_DEVICES": "3,5"})
     agent, sim = lines(proc)
-    assert agent.startswith("CUDA_VISIBLE_DEVICES=3 vllm serve /content/models/agent ")
-    assert sim.startswith("CUDA_VISIBLE_DEVICES=5 vllm serve /content/models/simulator ")
+    assert agent.startswith("CUDA_VISIBLE_DEVICES=3 " + DG + "vllm serve /content/models/agent ")
+    assert sim.startswith("CUDA_VISIBLE_DEVICES=5 " + DG + "vllm serve /content/models/simulator ")
 
 
 def test_two_gpus_with_eager(tmp_path):
     proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": H100_MIB, "GPU_COUNT": "2", "EAGER": "1"})
     agent, sim = lines(proc)
-    assert agent == "CUDA_VISIBLE_DEVICES=0 " + EAGER + AGENT.format(mem="0.90", len=131072) + " --enforce-eager"
-    assert sim == "CUDA_VISIBLE_DEVICES=1 " + EAGER + SIM_PC.format(mem="0.90", len=131072) + " --enforce-eager"
+    assert agent == "CUDA_VISIBLE_DEVICES=0 " + DG + EAGER + AGENT.format(mem="0.90", len=131072) + " --enforce-eager"
+    assert sim == "CUDA_VISIBLE_DEVICES=1 " + DG + EAGER + SIM_PC.format(mem="0.90", len=131072) + " --enforce-eager"
 
 
 @pytest.mark.parametrize("mix", ["", "c3"])
 def test_one_80gb_gpu_keeps_64k_with_a_loud_warning(tmp_path, mix):
     proc = run(tmp_path, {"WORK": "/content", "GPU_MIB": H100_MIB, "GPU_COUNT": "1", "MIX": mix})
-    assert lines(proc) == H100_DEFAULT
+    assert lines(proc) == [DG + x for x in H100_DEFAULT]
     assert "profile: one-gpu-80g" in proc.stdout
     warning = proc.stderr
     assert "WARNING" in warning and "64K" in warning
@@ -294,9 +324,11 @@ def test_an_empty_sim_quant_is_the_final_scheme(tmp_path):
 
 def test_sim_quant_per_channel_on_every_profile(tmp_path):
     two = run(tmp_path, {"WORK": "/content", "GPU_MIB": H100_MIB, "GPU_COUNT": "2", "SIM_QUANT": "fp8_per_channel"})
-    assert lines(two)[1] == "CUDA_VISIBLE_DEVICES=1 " + SIM_PC.format(mem="0.90", len=131072)
+    assert lines(two)[1] == "CUDA_VISIBLE_DEVICES=1 " + DG + SIM_PC.format(mem="0.90", len=131072)
     h100 = run(tmp_path, {"WORK": "/content", "GPU_MIB": H100_MIB, "GPU_COUNT": "1", "SIM_QUANT": "fp8_per_channel"})
-    assert lines(h100) == [H100_LINES[0], SIM_PC.format(mem="0.50", len=65536)]
+    assert lines(h100) == [DG + H100_LINES[0], DG + SIM_PC.format(mem="0.50", len=65536)]
+    nvl = run(tmp_path, {"WORK": "/content", "GPU_MIB": NVL_MIB, "GPU_COUNT": "1", "SIM_QUANT": "fp8_per_channel"})
+    assert lines(nvl)[1] == DG + SIM_PC.format(mem="0.47", len=131072)
 
 
 @pytest.mark.parametrize("value", ["fp8_per_tensor", "fp8_per_block", "FP8", "nvfp4_per_token", "none"])
@@ -329,7 +361,8 @@ def test_sim_only_dry_run_prints_only_the_simulator(tmp_path):
     {"GPU_MIB": G4_MIB, "GPU_COUNT": "1", "MIX": "c3", "VENV": "", "SIM_QUANT": "fp8_per_channel"},
     {"GPU_MIB": G4_MIB, "GPU_COUNT": "1", "MIX": "c3", "VENV": "", "SIM_QUANT": "fp8_per_channel", "SIM_ONLY": "1"},
     {"GPU_MIB": H100_MIB, "GPU_COUNT": "2", "EAGER": "1", "SIM_QUANT": "fp8_per_channel", "SIM_ONLY": "1"},
-], ids=["per-channel", "sim-only", "sim-only-two-gpu-eager"])
+    {"GPU_MIB": NVL_MIB, "GPU_COUNT": "1", "MIX": "c3", "SIM_QUANT": "fp8_per_channel"},
+], ids=["per-channel", "sim-only", "sim-only-two-gpu-eager", "h100-nvl-c3"])
 def test_the_new_options_start_what_the_dry_run_prints(tmp_path, env):
     work = tmp_path / "work"
     dry = lines(run(tmp_path, {"WORK": str(work), **env}))
@@ -492,3 +525,43 @@ def test_the_server_lines_survive_a_log_without_them(tmp_path):
     proc = run(tmp_path, {"WORK": str(work), "GPU_MIB": G4_MIB, "GPU_COUNT": "1", "VENV": ""}, dry=False, record=rec)
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "Quantizing" not in (work / "probe" / "server.txt").read_text()
+
+
+def test_each_server_records_its_process_group_for_the_job_to_stop(tmp_path):
+    """The servers outlive the script (setsid); serve.slurm stops them by these ids when its job ends."""
+    work = tmp_path / "work"
+    real = run(tmp_path, {"WORK": str(work), "GPU_MIB": NVL_MIB, "GPU_COUNT": "1", "MIX": "c3"}, dry=False,
+               record=tmp_path / "rec.txt")
+    assert real.returncode == 0, real.stderr + real.stdout
+    for name in ("agent", "simulator"):
+        assert (work / "probe" / f"{name}.pid").read_text().strip().isdigit()
+
+
+def test_a_pid_dir_that_cannot_be_made_starts_no_server(tmp_path):
+    """The job's PID_DIR is made before any server starts: a server must never run unrecorded."""
+    work = tmp_path / "work"
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    rec = tmp_path / "rec.txt"
+    real = run(tmp_path, {"WORK": str(work), "GPU_MIB": NVL_MIB, "GPU_COUNT": "1", "PID_DIR": str(blocker / "pids")},
+               dry=False, record=rec)
+    assert real.returncode != 0
+    import time
+    time.sleep(1)                     # a server started in the background records itself a moment later
+    assert not rec.exists() or rec.read_text() == ""
+
+
+def test_a_server_never_starts_once_the_jobs_cleanup_has_begun(tmp_path):
+    """serve.slurm closes registration (PID_DIR/closed) before it reads the groups to stop: a server
+    launched after that must give up rather than run unrecorded (a cancel's snapshot can miss it)."""
+    work = tmp_path / "work"
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    (pid_dir / "closed").write_text("")
+    rec = tmp_path / "rec.txt"
+    real = run(tmp_path, {"WORK": str(work), "GPU_MIB": NVL_MIB, "GPU_COUNT": "1", "PID_DIR": str(pid_dir)},
+               dry=False, record=rec)
+    assert real.returncode != 0
+    import time
+    time.sleep(1)
+    assert not rec.exists() or rec.read_text() == ""

@@ -118,10 +118,21 @@ refuses `SIM_QUANT=fp8`.
   chunks of epochs, one per job, and submits `explore/hopper/serve.slurm` once per chunk with
   `--dependency=afterany:<previous>` and the simulator's scheme by name. If a submission fails, it
   cancels the jobs it already submitted.
-- `serve.slurm` asks for `--gres=gpu:2`. It runs `serve.sh`'s two-gpu profile (one model per card,
-  both at 128K) and refuses any other profile. It keeps the servers up until the job ends. It writes
-  `status/<job id>` next to `serve.sh` on the cluster (the node, the state, and the job's end time),
-  and `status/<job id>.server`, the server's scheme lines.
+- `PROFILE` names the profile every job serves: `two-gpu` (the default, two cards, one model each) or
+  a one-GPU profile, and sets each job's `--gres` (2 or 1). `serve.slurm` refuses a node where
+  `serve.sh` would pick another. Hopper's nodes have one H100 NVL each: `PROFILE=one-gpu-94g`. It
+  keeps the servers up until the job ends. It writes `status/<job id>` next to `serve.sh` on the
+  cluster (the node, the state, and the job's end time), and `status/<job id>.server`, the server's
+  scheme lines.
+- **The relay (`RELAY_HOST`).** Hopper refuses SSH from the login host into a node, even with our job
+  on it. With `RELAY_HOST` set, `serve.slurm` runs `ssh -R` from the node to the login host once both
+  servers answer, with `RELAY_KEY` (default `~/.ssh/id_ed25519_node`, a key the login host accepts
+  for forwarding only: `restrict,port-forwarding,command="/bin/false"` in `authorized_keys`; the relay
+  runs `ssh -N`, so the forced command never runs). Each server becomes a Unix
+  socket in `status/<job id>.sock/` (mode 700), and the status file says `sock=<that directory>`.
+  `run_chunks.sh` then forwards the laptop's 18000 and 18001 to the sockets. The servers stay on the
+  node's loopback, and nothing listens on the cluster network. A dropped relay is restarted; after
+  3 failed restarts in a row the job ends (`state=relay-died`).
 - `run_chunks.sh` runs on the laptop. For each chunk, it waits until the job is ready, opens the
   tunnel to the node through the login host, waits for both servers, and reads the job's scheme
   lines. On the first usable job it runs the setup check before any episode (BACKENDS.md), which
@@ -139,8 +150,26 @@ refuses `SIM_QUANT=fp8`.
   are left: the last line says `ids: NOT RUN`, and the exit is already 3 or 1. That chunk is submitted
   again anyway, and its job takes the IDs of the whole run.
 
-The job's time limit, the login host, the partition and the scratch path are unknown, so they are
-parameters only. A job killed at its time limit cuts the episodes still running, so `--admit-for`
+The job's time limit, the login host, the partition and the scratch path are parameters. On Hopper
+(LOG.md, 23/24-11-2026):
+
+```bash
+LOGIN=<user>@hopper.cs.lewisu.edu TIME_LIMIT=<h, up to 72> SETUP_HOURS=0.5 \
+WORK=/home/shared/scratch/<user>/sim PROFILE=one-gpu-94g MIX=c3 \
+RELAY_HOST=hopper-head.ipa.hopper.local SBATCH_ARGS="--partition=gpu --cpus-per-task=8 --mem=100G" \
+explore/hopper/submit_chunks.sh CONFIG <durations file>
+```
+
+- Before the first job: `uv` in `~/.local/bin` (Hopper's `python3` has no pip, so `serve.sh` can't
+  install it), and the relay key (`ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_node -N ""`, then its
+  `.pub` line in `~/.ssh/authorized_keys` behind `restrict,port-forwarding,command="/bin/false"`). The venv and both models
+  can come down in a CPU job first, so no GPU waits on the downloads.
+- A job takes about 20 minutes from start to ready, most of it the simulator loading 65 GB from
+  the shared filesystem.
+- Priority is fair-share and our account's share is small, so a job may wait to start; nothing
+  preempts a running one.
+
+A job killed at its time limit cuts the episodes still running, so `--admit-for`
 must leave room for the longest one. The plan keeps `TIME_LIMIT − SETUP_HOURS − admit_for` hours of
 room. `run_chunks.sh` keeps the same room before the job's real end: if the servers come up late,
 or the setup check takes time from the first job, the window shrinks, and a chunk with no room left
@@ -205,6 +234,8 @@ LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." P
   alone: `STEPS=setup AGENT_MEM=... SIM_MEM=...` (`session.sh` passes both to `serve.sh`). Its PASS
   admits no episodes: never run them with those fractions, since they mean another KV cache, and the
   gate refuses a run on any others. What comes next is Victor's to decide.
-- **Untested on the real systems.** None of these scripts has run against Colab or Slurm yet:
-  only against stubs (`tests/test_watchdog_script.py`, `test_session_script.py`,
-  `test_hopper_scripts.py`) and in dry runs.
+- **Partly tested on the real systems.** On Hopper (LOG.md, 23/24-11-2026), `serve.slurm` with the
+  relay ran as a job: both servers came up on one H100 NVL, the laptop reached them through
+  `tunnel.sh`'s socket mode, and a cancel left the GPU empty. `submit_chunks.sh` and `run_chunks.sh`,
+  and the setup check and episodes on Hopper, have run only against stubs
+  (`tests/test_hopper_scripts.py`), as has the watchdog (`test_watchdog_script.py`).

@@ -45,3 +45,14 @@ def test_no_jump_host_means_no_jump(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert calls and not calls[0].startswith("-J")
     assert calls[0].endswith("victor@hopper")
+
+
+def test_sockets_on_the_login_host_replace_the_node(tmp_path):
+    """Hopper: the job's relay publishes the servers as sockets on the login host (serve.slurm)."""
+    sock = "/home/victor/sim-session/status/77.sock"
+    proc, calls = run(tmp_path, {"SSH_TARGET": "victor@hopper", "SSH_SOCKETS": sock, "TUNNEL_TRIES": "2"})
+    assert proc.returncode == 0, proc.stderr
+    assert len(calls) == 2
+    for c in calls:
+        assert f"-N -L 18000:{sock}/agent.sock -L 18001:{sock}/simulator.sock victor@hopper" in c
+        assert "127.0.0.1:8000" not in c and not c.startswith("-J")

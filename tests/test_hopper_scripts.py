@@ -45,11 +45,28 @@ FAKE_SERVE = """#!/bin/sh
 # stands in for explore/colab_probe/serve.sh: the dry run prints a profile; the real run "serves"
 if [ "${DRY_RUN:-}" = 1 ]; then echo "profile: ${FAKE_PROFILE:-two-gpu} (2 GPU of 81559 MiB), vllm 0.32.0, work $WORK"; exit 0; fi
 echo "serve WORK=$WORK MIX=${MIX:-} SIM_QUANT=${SIM_QUANT:-}" >> "$STATE/calls.log"
-[ -n "${NO_SERVER_LINES:-}" ] || { mkdir -p "$WORK/probe"; echo "gpu: stand-in" > "$WORK/probe/server.txt"; }
+mkdir -p "$WORK/probe"
+touch "$STATE/serving"
+# each "server" is its own process group, as setsid starts vLLM, and serve.sh records it
+if [ -n "${FAKE_SERVERS:-}" ]; then
+  mkdir -p "${PID_DIR:-$WORK/probe}"
+  for name in agent simulator; do
+    # FAKE_STUBBORN: a server that ignores TERM, so cleanup must wait and KILL it
+    if [ -n "${FAKE_STUBBORN:-}" ]; then cmd='["sh", "-c", "trap \\"\\" TERM; sleep 60"]'; else cmd='["sleep", "60"]'; fi
+    pid=$("$PYTHON" -c "import subprocess; print(subprocess.Popen($cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)")
+    echo "$pid" > "${PID_DIR:-$WORK/probe}/$name.pid"
+    echo "$pid" >> "$STATE/server-pids"
+    # FAKE_SLOW: the agent is up and the simulator still loading when the job is cancelled
+    [ -z "${FAKE_SLOW:-}" ] || { touch "$STATE/agent-up"; sleep "$FAKE_SLOW"; exit 1; }
+  done
+fi
+[ -n "${NO_SERVER_LINES:-}" ] || echo "gpu: stand-in" > "$WORK/probe/server.txt"
 exit "${SERVE_RC:-0}"
 """
-# healthy for HEALTHY_CHECKS calls, then down; it copies the status file the first time it is asked
-SLURM_CURL = REC + """[ -e "$STATE/status-at-first-check" ] || cp "$STATUS_DIR/42" "$STATE/status-at-first-check"
+# nothing answers before serve.sh has served (or STALE: a server left from an earlier job answers);
+# then healthy for HEALTHY_CHECKS calls, then down; it copies the status file the first time it is asked
+SLURM_CURL = """if [ ! -e "$STATE/serving" ]; then [ -n "${STALE:-}" ] && exit 0; exit 7; fi
+""" + REC + """[ -e "$STATE/status-at-first-check" ] || cp "$STATUS_DIR/42" "$STATE/status-at-first-check"
 n=$(grep -c '^curl' "$STATE/calls.log")
 [ "$n" -le "${HEALTHY_CHECKS:-1000000}" ] && exit 0
 exit 7
@@ -66,6 +83,7 @@ def run_slurm(tmp_path: Path, env: dict | None = None, background=False):
     full = {"PATH": f"{stubs}:/usr/bin:/bin", "STATE": str(state), "SLURM_JOB_ID": "42",
             "SLURMD_NODENAME": "gpu07", "WORK": str(tmp_path / "work"), "SERVE_SH": str(serve),
             "STATUS_DIR": str(tmp_path / "status"), "TIME_LIMIT_MIN": "720", "HEALTH_POLL": "0.05",
+            "PYTHON": sys.executable, "STOP_WAIT": "3",
             **(env or {})}
     full = {k: v for k, v in full.items() if v is not None}
     if background:
@@ -128,6 +146,303 @@ def test_another_profile_is_refused_before_serving(tmp_path):
     assert status(tmp_path)["state"] == "failed"
     assert "one-gpu-80g" in proc.stdout + proc.stderr
     assert "serve WORK" not in (state / "calls.log").read_text() if (state / "calls.log").exists() else True
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_job_serves_the_one_gpu_profile_it_is_given(tmp_path):
+    # Hopper's nodes: one H100 NVL of 94 GB each, so serve.sh picks one-gpu-96g (LOG.md, 23-11-2026)
+    proc, state = run_slurm(tmp_path, {"HEALTHY_CHECKS": "1", "PROFILE": "one-gpu-96g", "FAKE_PROFILE": "one-gpu-96g",
+                                       "MIX": "c3"})
+    assert status(tmp_path, state / "status-at-first-check")["state"] == "ready"
+    assert f"serve WORK={tmp_path / 'work'} MIX=c3" in (state / "calls.log").read_text()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_one_gpu_profile_is_refused_where_serve_sh_picks_another(tmp_path):
+    proc, state = run_slurm(tmp_path, {"PROFILE": "one-gpu-96g"})      # the node has two GPUs
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "failed"
+    assert not (state / "calls.log").exists() or "serve WORK" not in (state / "calls.log").read_text()
+
+
+# The relay (RELAY_HOST): ssh -R from the node publishes both servers as sockets on the login host.
+# The stub binds the -R socket paths (from their directory: macOS caps a socket path at 104 bytes),
+# then stays up, or drops after 0.3 s for its first RELAY_SHORT calls, or fails from call
+# RELAY_FAIL_FROM on.
+RELAY_SSH = REC + """n=$(grep -c '^ssh' "$STATE/calls.log")
+if [ "${RELAY_FAIL_FROM:-0}" -ne 0 ] && [ "$n" -ge "$RELAY_FAIL_FROM" ]; then exit 255; fi
+if [ "${RELAY_HANG_FROM:-0}" -ne 0 ] && [ "$n" -ge "$RELAY_HANG_FROM" ]; then exec sleep 30; fi   # never connects
+for a in "$@"; do case "$a" in *.sock:127.0.0.1:*)
+  p=${a%%:127.0.0.1:*}
+  "$PYTHON" -c 'import os, socket, sys; os.chdir(os.path.dirname(sys.argv[1])); socket.socket(socket.AF_UNIX).bind(os.path.basename(sys.argv[1]))' "$p" ;;
+esac; done
+if [ "$n" -le "${RELAY_SHORT:-0}" ]; then sleep 0.3; exit 255; fi
+exec sleep 30
+"""
+RELAY_ENV = {"RELAY_HOST": "hopper-head.internal", "RELAY_KEY": "/home/v/.ssh/relay_key", "RELAY_TICK": "0.05",
+             "RELAY_WAIT": "40", "PYTHON": sys.executable}
+
+
+def run_relay(tmp_path: Path, env: dict):
+    (tmp_path / "stubs").mkdir(exist_ok=True)
+    stub_dir(tmp_path, {"ssh": RELAY_SSH})
+    return run_slurm(tmp_path, {**RELAY_ENV, **env})
+
+
+def ssh_calls(state: Path) -> list[str]:
+    return [c for c in (state / "calls.log").read_text().splitlines() if c.startswith("ssh ")]
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_without_a_relay_host_the_job_opens_no_relay(tmp_path):
+    proc, state = run_slurm(tmp_path, {"HEALTHY_CHECKS": "1"})
+    assert "sock" not in status(tmp_path, state / "status-at-first-check")
+    assert not [c for c in (state / "calls.log").read_text().splitlines() if c.startswith("ssh")]
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_relay_publishes_both_servers_as_sockets_before_ready(tmp_path):
+    proc, state = run_relay(tmp_path, {"HEALTHY_CHECKS": "2"})
+    first = status(tmp_path, state / "status-at-first-check")
+    sock = tmp_path / "status" / "42.sock"
+    assert first["state"] == "ready" and first["sock"] == str(sock)
+    (call,) = ssh_calls(state)
+    assert f"-R {sock}/agent.sock:127.0.0.1:8000" in call and f"-R {sock}/simulator.sock:127.0.0.1:8001" in call
+    assert "-i /home/v/.ssh/relay_key" in call and "ExitOnForwardFailure=yes" in call and " -N " in call
+    assert call.endswith(" hopper-head.internal")
+    assert oct(sock.stat().st_mode & 0o777) == "0o700"          # only we can reach the servers
+    assert status(tmp_path)["state"] == "server-died"
+    assert not (sock / "agent.sock").exists() and not (sock / "simulator.sock").exists()   # gone with the job
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_relay_that_never_comes_up_fails_the_job_before_ready(tmp_path):
+    proc, state = run_relay(tmp_path, {"RELAY_FAIL_FROM": "1"})
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "failed"
+    assert not (state / "status-at-first-check").exists()        # never said ready
+    assert "relay" in proc.stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_dropped_relay_is_restarted(tmp_path):
+    proc, state = run_relay(tmp_path, {"RELAY_SHORT": "1", "HEALTHY_CHECKS": "30"})
+    assert len(ssh_calls(state)) >= 2
+    assert "the relay dropped and is back" in proc.stdout
+    assert status(tmp_path)["state"] == "server-died"            # it ended on the servers, not the relay
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_relay_that_cannot_be_restarted_ends_the_job(tmp_path):
+    proc, state = run_relay(tmp_path, {"RELAY_SHORT": "1", "RELAY_FAIL_FROM": "2"})
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "relay-died"
+    assert len(ssh_calls(state)) == 4                            # the first, then 3 failed restarts
+
+
+def alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def server_pids(state: Path) -> list[int]:
+    return [int(x) for x in (state / "server-pids").read_text().split()]
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_job_stops_its_servers_when_it_ends(tmp_path):
+    """The servers outlive serve.sh: a job that only exits would leave them on the GPU (Hopper, job 7085)."""
+    proc, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "HEALTHY_CHECKS": "2"})
+    assert status(tmp_path)["state"] == "server-died"
+    pids = server_pids(state)
+    assert len(pids) == 2 and not any(alive(p) for p in pids)
+    assert not list((tmp_path / "status" / "42.pid.d").glob("*.pid"))   # the job's own record, emptied
+    assert (tmp_path / "status" / "42.pid.d" / "closed").exists()        # registration stays closed
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_cancelled_job_stops_its_servers(tmp_path):
+    """scancel and the time limit send TERM: the job stops both process groups before it goes."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1"}, background=True)
+    for _ in range(200):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "ready":
+            break
+        time.sleep(0.05)
+    assert status(tmp_path)["state"] == "ready"
+    pids = server_pids(state)
+    assert all(alive(x) for x in pids)
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=30)
+    assert status(tmp_path)["state"] == "ended"
+    assert not any(alive(x) for x in pids)
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_job_cancelled_while_its_models_load_stops_what_already_started(tmp_path):
+    """TERM while serve.sh still loads the simulator: the agent is already up in its own group."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "FAKE_SLOW": "2"}, background=True)
+    for _ in range(200):
+        if (state / "agent-up").exists():
+            break
+        time.sleep(0.05)
+    assert (state / "agent-up").exists()
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=30)
+    assert status(tmp_path)["state"] == "ended"
+    (agent,) = server_pids(state)
+    assert not alive(agent)
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_cleanup_still_stops_the_servers_if_registration_cannot_be_closed(tmp_path):
+    """A failed marker (a full disk, a read-only directory) must not stop the cleanup itself."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1"}, background=True)
+    for _ in range(200):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "ready":
+            break
+        time.sleep(0.05)
+    pid_dir = tmp_path / "status" / "42.pid.d"
+    pid_dir.chmod(0o500)                     # 'closed' can't be made
+    try:
+        p.send_signal(signal.SIGTERM)
+        p.wait(timeout=30)
+        assert not any(alive(x) for x in server_pids(state))
+    finally:
+        pid_dir.chmod(0o700)
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_cleanup_is_best_effort_even_when_nothing_can_be_written(tmp_path):
+    """A full disk: the marker and every log line fail. serve.slurm's own stop_servers, under the
+    job's set -euo pipefail, must still stop the registered groups."""
+    text = SLURM.read_text()
+    start = text.index("stop_servers() {")
+    body = text[start:text.index("\n}\n", start) + 3]
+    server = subprocess.Popen(["sleep", "60"], start_new_session=True, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL)
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    (pid_dir / "agent.pid").write_text(f"{server.pid}\n")
+    pid_dir.chmod(0o500)
+    try:
+        script = f"set -euo pipefail\nexport PID_DIR={pid_dir}\necho() {{ return 1; }}\n{body}\nstop_servers\n"
+        subprocess.run([BASH, "-c", script], env={"PATH": "/usr/bin:/bin", "STOP_WAIT": "3"}, timeout=30)
+        assert server.wait(timeout=10) is not None
+    finally:
+        pid_dir.chmod(0o700)
+        server.kill()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_relay_that_cannot_be_cleaned_up_does_not_keep_the_servers_up(tmp_path):
+    """The relay's sockets can't be removed (a read-only directory): the servers are stopped anyway."""
+    (tmp_path / "stubs").mkdir(exist_ok=True)
+    stub_dir(tmp_path, {"ssh": RELAY_SSH})
+    p, state = run_slurm(tmp_path, {**RELAY_ENV, "FAKE_SERVERS": "1"}, background=True)
+    for _ in range(400):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "ready":
+            break
+        time.sleep(0.05)
+    sock = tmp_path / "status" / "42.sock"
+    sock.chmod(0o500)
+    try:
+        p.send_signal(signal.SIGTERM)
+        p.wait(timeout=30)
+        assert not any(alive(x) for x in server_pids(state))
+    finally:
+        sock.chmod(0o700)
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_cancel_during_cleanup_does_not_cut_it_short(tmp_path):
+    """The job is already stopping its servers (one died) when scancel's TERM arrives: cleanup goes on."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "FAKE_STUBBORN": "1", "HEALTHY_CHECKS": "2",
+                                    "STOP_WAIT": "4"}, background=True)
+    for _ in range(400):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "server-died":
+            break
+        time.sleep(0.05)
+    assert status(tmp_path)["state"] == "server-died"
+    time.sleep(0.5)                                 # cleanup is waiting for the stubborn servers
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=30)
+    assert not any(alive(x) for x in server_pids(state))
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_job_that_fails_after_serving_stops_what_it_started(tmp_path):
+    proc, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "NO_SERVER_LINES": "1"})
+    assert status(tmp_path)["state"] == "failed"
+    assert not any(alive(x) for x in server_pids(state))
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_server_already_answering_is_refused_before_serving(tmp_path):
+    proc, state = run_slurm(tmp_path, {"STALE": "1"})
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "failed"
+    assert "already answers" in proc.stdout
+    assert not (state / "serving").exists()                     # serve.sh never ran
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_an_earlier_jobs_process_groups_are_not_this_jobs_to_stop(tmp_path):
+    """WORK is shared between jobs (and nodes): a pid file left there names processes elsewhere."""
+    other = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        probe = tmp_path / "work" / "probe"
+        probe.mkdir(parents=True)
+        (probe / "agent.pid").write_text(f"{other.pid}\n")
+        run_slurm(tmp_path, {"HEALTHY_CHECKS": "1"})
+        assert other.poll() is None
+    finally:
+        other.kill()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_relay_restart_that_hangs_is_stopped_and_counted(tmp_path):
+    """A restart whose ssh never connects must not stay alive and pass the next health check."""
+    proc, state = run_relay(tmp_path, {"RELAY_SHORT": "1", "RELAY_HANG_FROM": "2", "RELAY_WAIT": "5"})
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "relay-died"
+    assert len(ssh_calls(state)) == 4
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_job_that_stops_before_serving_leaves_an_earlier_jobs_groups_alone(tmp_path):
+    """The pid files in WORK may be an earlier job's: a job that ends before serving (here a profile
+    mismatch) must not stop what they name."""
+    other = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        probe = tmp_path / "work" / "probe"
+        probe.mkdir(parents=True)
+        (probe / "agent.pid").write_text(f"{other.pid}\n")
+        proc, state = run_slurm(tmp_path, {"FAKE_PROFILE": "one-gpu-80g"})
+        assert status(tmp_path)["state"] == "failed"
+        assert other.poll() is None              # our own child: a killed one would be a zombie, so poll
+    finally:
+        other.kill()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_job_stops_its_own_servers_even_if_the_shared_pid_files_go(tmp_path):
+    """WORK is shared: another job may remove its pid files. The job keeps its own copy."""
+    p, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1"}, background=True)
+    for _ in range(200):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "ready":
+            break
+        time.sleep(0.05)
+    pids = server_pids(state)
+    for f in (tmp_path / "work" / "probe").glob("*.pid"):
+        f.unlink()
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=30)
+    assert not any(alive(x) for x in pids)
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
@@ -288,6 +603,43 @@ def test_one_job_per_chunk_each_after_the_previous(tmp_path):
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_the_default_profile_asks_each_job_for_two_gpus(tmp_path):
+    proc, state, logs = submit(tmp_path)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    for c in sbatches(calls_of(state)):
+        assert "--gres=gpu:2" in c and "PROFILE=two-gpu" in c
+    assert "# profile=two-gpu" in next((logs / "hopper").glob("*.jobs")).read_text()
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+@pytest.mark.parametrize("profile", ["one-gpu-94g", "one-gpu-96g", "one-gpu-141g"])
+def test_a_one_gpu_profile_asks_each_job_for_one_gpu_and_names_it(tmp_path, profile):
+    proc, state, logs = submit(tmp_path, {"PROFILE": profile})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    sb = sbatches(calls_of(state))
+    assert len(sb) == 3
+    for c in sb:
+        assert "--gres=gpu:1" in c and "--gres=gpu:2" not in c and f"PROFILE={profile}" in c
+    assert f"# profile={profile}" in next((logs / "hopper").glob("*.jobs")).read_text()
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_the_relay_settings_go_to_every_job(tmp_path):
+    proc, state, logs = submit(tmp_path, {"PROFILE": "one-gpu-94g", "RELAY_HOST": "hopper-head.internal",
+                                          "RELAY_KEY": "/home/v/.ssh/relay_key"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    for c in sbatches(calls_of(state)):
+        assert "RELAY_HOST=hopper-head.internal" in c and "RELAY_KEY=/home/v/.ssh/relay_key" in c
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_no_relay_host_means_no_relay_settings(tmp_path):
+    proc, state, logs = submit(tmp_path)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert not [c for c in sbatches(calls_of(state)) if "RELAY_" in c]
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
 def test_a_failed_submission_cancels_the_jobs_already_submitted(tmp_path):
     proc, state, logs = submit(tmp_path, {"FAIL_SBATCH": "3"})
     assert proc.returncode == 1
@@ -309,8 +661,13 @@ def test_a_failed_submission_cancels_the_jobs_already_submitted(tmp_path):
     ({"SIM_QUANT": "fp8"}, HEAD, "SIM_QUANT"),                        # a leftover in the shell
     ({"EQUIV_CONTEXTS": "/nonexistent/c.jsonl"}, HEAD, "contexts"),   # the check couldn't run on the first job
     ({"RECORDING_PROBLEM": "real.jsonl is missing"}, HEAD, "real.jsonl is missing"),
+    ({"PROFILE": "one-gpu-80g"}, HEAD, "PROFILE"),                    # 64K: episodes need 128K
+    ({"PROFILE": "two_gpu"}, HEAD, "PROFILE"),
+    ({"SBATCH_ARGS": "--partition=gpu --gres=gpu:2"}, HEAD, "--gres"),  # PROFILE sets the GPUs
+    ({"RELAY_HOST": "a,b"}, HEAD, "RELAY_HOST"),
+    ({"RELAY_KEY": "/home/v/my key"}, HEAD, "RELAY_KEY"),
 ], ids=["login", "time", "setup", "work", "relative-work", "comma-work", "comma-remote-dir", "preflight", "dirty", "old-scheme",
-       "no-contexts", "no-recording"])
+       "no-contexts", "no-recording", "profile-80g", "profile-typo", "gres-by-hand", "comma-relay", "space-relay-key"])
 def test_submission_refusals(tmp_path, env, preflight, needle):
     proc, state, logs = submit(tmp_path, env, preflight)
     assert proc.returncode == 1
@@ -398,6 +755,33 @@ def test_each_chunk_waits_for_its_job_then_runs_on_its_node(tmp_path):
     first_cancel = next(i for i, c in enumerate(calls) if "scancel 1001" in c)
     assert first_cancel > first_run          # each job is cancelled once its chunk is done: the next starts
     assert any("1002" in c for c in cancelled)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_job_with_a_relay_is_reached_through_its_sockets_on_the_login_host(tmp_path):
+    """Hopper refuses SSH into a node, so serve.slurm's relay publishes the servers as sockets on the
+    login host, and the tunnel forwards to them there: no jump, no node."""
+    sock = "/home/victor/sim-session/status/1001.sock"
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 20) + f";sock={sock}"])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], jobs)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    tunnels = [c for c in calls_of(state) if c.startswith("ssh") and " -N " in c]
+    assert tunnels
+    for c in tunnels:
+        assert f"-L 18000:{sock}/agent.sock -L 18001:{sock}/simulator.sock" in c
+        assert "-J" not in c and "gpu07" not in c and c.endswith("victor@login.hopper")
+    assert len(runs(calls_of(state))) == 1
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_job_whose_relay_died_is_skipped(tmp_path):
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [starting("gpu07").replace("starting", "relay-died")])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], jobs)
+    assert proc.returncode == 3
+    assert not runs(calls_of(state))
+    assert "relay-died" in proc.stdout + proc.stderr
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")

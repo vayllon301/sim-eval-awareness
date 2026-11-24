@@ -17,12 +17,19 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
 
 | Profile | GPUs | Agent | Simulator | Notes |
 | --- | --- | --- | --- | --- |
-| `one-gpu-96g` | one 90–135 GB card (Colab G4) | 0.47 of the card, 128K | 0.47, 128K | `MIX=c3`: 0.42 / 0.52, for runs that are mostly the simulated conditions (Sim+ref, Sim) |
+| `one-gpu-96g` | one 97–135 GB card (Colab G4) | 0.47 of the card, 128K | 0.47, 128K | `MIX=c3`: 0.42 / 0.52, for runs that are mostly the simulated conditions (Sim+ref, Sim) |
+| `one-gpu-94g` | one 90–97 GB card (Hopper's H100 NVL, 95,830 MiB) | 0.47, 128K | 0.47, 128K | `MIX=c3`: 0.43 / 0.51. The G4's 0.42 left the agent 8.22 of the 8.33 GiB of KV that 128K needs (fit test, LOG.md 23/24-11-2026) |
 | `one-gpu-141g` | one card of 135 GB or more (H200) | as the G4 | as the G4 | the same fractions leave each model more KV cache |
 | `one-gpu-80g` | one 80 GB card (H100, A100) | 0.44, **64K** | 0.50, **64K** | a loud warning: not equivalent to the G4 (below) |
 | `two-gpu` | two cards of 80 GB or more | its own card, 0.90, 128K | its own card, 0.90, 128K | `MIX` has no effect |
 
 - vLLM is pinned at 0.32.0. The script refuses another version.
+- **DeepGEMM is off on every profile but the G4's** (`VLLM_USE_DEEP_GEMM=0`, at the start of the served
+  line, so the gate compares it). On sm_90 vLLM would run the agent's block FP8 through DeepGEMM, which
+  compiles kernels at startup (nvcc 12.9 or newer; Hopper's GPU nodes have 12.8) and rounds the scales
+  to powers of two (`VLLM_USE_DEEP_GEMM_E8M0`). The G4 (sm_120) can't run DeepGEMM, so off keeps the
+  other cards on the G4's kernel family. The G4's lines don't change, and a leftover setting in the shell
+  is unset there.
 - Both models come down at fixed commits, the ones every session's `versions.txt` records (29-10 to
   01-11-2026): `Qwen/Qwen3.8-27B-FP8` at `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a` and
   `Qwen/Qwen-AgentWorld-35B-A3B` at `60d2b0434a53d2e62a7c00a489586815d94ebffb`. They are not settings:
@@ -62,8 +69,9 @@ The script picks a profile from the GPUs it sees (`CUDA_VISIBLE_DEVICES`, or `GP
 DRY_RUN=1 WORK=/content GPU_MIB=97887 GPU_COUNT=1 MIX=c3 bash explore/colab_probe/serve.sh
 # Colab: see the script's header (colab new, ssh, the tunnel, colab stop)
 # Hopper, on a GPU node (behind a login host), then the tunnel from the laptop
-ssh <node> 'WORK=/scratch/$USER/sim MIX=c3 bash -s' < explore/colab_probe/serve.sh
-SSH_TARGET=<node> SSH_JUMP=<login> explore/colab_probe/tunnel.sh >/tmp/tunnel.log 2>&1 &
+# (SSH into a node is refused there: serve.slurm runs serve.sh in a job, and its relay publishes the
+# servers as sockets on the login host; docs/SESSIONS.md, section 4)
+SSH_TARGET=<user@login> SSH_SOCKETS=<status dir>/<job>.sock explore/colab_probe/tunnel.sh >/tmp/tunnel.log 2>&1 &
 ```
 
 The servers listen on the machine's loopback only. The tunnel brings them to the laptop's ports
