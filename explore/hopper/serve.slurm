@@ -91,6 +91,7 @@ relay_start() {   # the reverse tunnel; succeeds once both sockets exist on the 
 # after that gives up), then reads the groups: a cancel at any moment finds a server or stops it.
 export PID_DIR=$STATUS_DIR/$JOB.pid.d
 stop_servers() {
+  set +e   # cleanup is best-effort: no failed write (a full disk) may stop it before the groups are signalled
   local pg pgs i alive
   { mkdir -p "$PID_DIR" && touch "$PID_DIR/closed"; } \
     || echo "serve.slurm: could not close registration ($PID_DIR/closed); stopping the servers anyway"
@@ -104,13 +105,13 @@ stop_servers() {
     sleep 1
   done
   for pg in $pgs; do kill -KILL -- "-$pg" 2>/dev/null || true; done
-  rm -f "$PID_DIR"/*.pid || true   # 'closed' stays: a server still launching must find it
+  rm -f "$PID_DIR"/*.pid   # 'closed' stays: a server still launching must find it
 }
 mkdir -p "$STATUS_DIR"
 rm -rf "$PID_DIR"
 status starting
 # The time limit and scancel send SIGTERM (vLLM gets it too).
-trap 'relay_stop; stop_servers' EXIT
+trap 'set +e; stop_servers; relay_stop' EXIT   # best-effort, the servers first: nothing may keep them up
 trap 'status ended; exit 0' TERM
 
 # The profile serve.sh would pick on this node's GPUs (its dry run starts nothing).

@@ -315,6 +315,48 @@ def test_cleanup_still_stops_the_servers_if_registration_cannot_be_closed(tmp_pa
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_cleanup_is_best_effort_even_when_nothing_can_be_written(tmp_path):
+    """A full disk: the marker and every log line fail. serve.slurm's own stop_servers, under the
+    job's set -euo pipefail, must still stop the registered groups."""
+    text = SLURM.read_text()
+    start = text.index("stop_servers() {")
+    body = text[start:text.index("\n}\n", start) + 3]
+    server = subprocess.Popen(["sleep", "60"], start_new_session=True, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL)
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    (pid_dir / "agent.pid").write_text(f"{server.pid}\n")
+    pid_dir.chmod(0o500)
+    try:
+        script = f"set -euo pipefail\nexport PID_DIR={pid_dir}\necho() {{ return 1; }}\n{body}\nstop_servers\n"
+        subprocess.run([BASH, "-c", script], env={"PATH": "/usr/bin:/bin", "STOP_WAIT": "3"}, timeout=30)
+        assert server.wait(timeout=10) is not None
+    finally:
+        pid_dir.chmod(0o700)
+        server.kill()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_relay_that_cannot_be_cleaned_up_does_not_keep_the_servers_up(tmp_path):
+    """The relay's sockets can't be removed (a read-only directory): the servers are stopped anyway."""
+    (tmp_path / "stubs").mkdir(exist_ok=True)
+    stub_dir(tmp_path, {"ssh": RELAY_SSH})
+    p, state = run_slurm(tmp_path, {**RELAY_ENV, "FAKE_SERVERS": "1"}, background=True)
+    for _ in range(400):
+        if (tmp_path / "status" / "42").exists() and status(tmp_path)["state"] == "ready":
+            break
+        time.sleep(0.05)
+    sock = tmp_path / "status" / "42.sock"
+    sock.chmod(0o500)
+    try:
+        p.send_signal(signal.SIGTERM)
+        p.wait(timeout=30)
+        assert not any(alive(x) for x in server_pids(state))
+    finally:
+        sock.chmod(0o700)
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
 def test_a_job_that_fails_after_serving_stops_what_it_started(tmp_path):
     proc, state = run_slurm(tmp_path, {"FAKE_SERVERS": "1", "NO_SERVER_LINES": "1"})
     assert status(tmp_path)["state"] == "failed"
