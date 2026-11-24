@@ -234,6 +234,8 @@ LOGIN=<user@login> TIME_LIMIT=<h> WORK=<scratch> SBATCH_ARGS="--partition=..." P
   alone: `STEPS=setup AGENT_MEM=... SIM_MEM=...` (`session.sh` passes both to `serve.sh`). Its PASS
   admits no episodes: never run them with those fractions, since they mean another KV cache, and the
   gate refuses a run on any others. What comes next is Victor's to decide.
-- **Untested on the real systems.** None of these scripts has run against Colab or Slurm yet:
-  only against stubs (`tests/test_watchdog_script.py`, `test_session_script.py`,
-  `test_hopper_scripts.py`) and in dry runs.
+- **Partly tested on the real systems.** On Hopper (LOG.md, 23/24-11-2026), `serve.slurm` with the
+  relay ran as a job: both servers came up on one H100 NVL, the laptop reached them through
+  `tunnel.sh`'s socket mode, and a cancel left the GPU empty. `submit_chunks.sh` and `run_chunks.sh`,
+  and the setup check and episodes on Hopper, have run only against stubs
+  (`tests/test_hopper_scripts.py`), as has the watchdog (`test_watchdog_script.py`).
