@@ -11,13 +11,17 @@
 #   explore/hopper/submit_chunks.sh configs/coding/pilot.yaml <durations file>
 #
 # PROFILE is serve.sh's profile every job must serve: two-gpu (the default: two cards of 80 GB or
-# more, one model each), or one-gpu-96g / one-gpu-141g (one card of 90 GB or more, both models on it;
-# Hopper's nodes have one H100 NVL of 94 GB each, LOG.md 23-11-2026). It sets the job's --gres
+# more, one model each), or one-gpu-94g / one-gpu-96g / one-gpu-141g (one card of 90 GB or more, both
+# models on it; Hopper's nodes have one H100 NVL of 94 GB each: one-gpu-94g, LOG.md 23/24-11-2026). It sets the job's --gres
 # (2 or 1) and goes to serve.slurm, which refuses a node where serve.sh would pick another. Each
 # profile is its own backend. one-gpu-80g (64K) is refused: episodes need 128K.
 #
-# Hopper's job limit, login host, partition and scratch are unknown here: they are parameters, never
-# defaults. SETUP_HOURS goes to the plan and comes back in run_chunks.sh's arithmetic. The first job
+# RELAY_HOST (and RELAY_KEY) go to serve.slurm: where SSH into a node is refused, as on Hopper, the job
+# publishes its servers as sockets on the login host, and run_chunks.sh forwards to them.
+#
+# The job limit, login host, partition and scratch are parameters, never defaults (Hopper, 23/24-11-2026:
+# LOGIN=<user>@hopper.cs.lewisu.edu, SBATCH_ARGS=--partition=gpu, up to 3 days a job,
+# WORK=/home/shared/scratch/<user>/sim, RELAY_HOST=hopper-head.ipa.hopper.local). SETUP_HOURS goes to the plan and comes back in run_chunks.sh's arithmetic. The first job
 # installs vLLM and downloads both models into WORK (96 GB); later jobs find them there.
 #
 # What it does:
@@ -66,9 +70,11 @@ elif [[ $WORK != /* ]]; then problems+=("WORK must be an absolute path on the no
 elif [[ $WORK == *,* ]]; then problems+=("WORK can't hold a comma: sbatch --export splits on commas (got $WORK)"); fi
 case $PROFILE in
   two-gpu) GPUS_PER_JOB=2 ;;
-  one-gpu-96g|one-gpu-141g) GPUS_PER_JOB=1 ;;
-  *) GPUS_PER_JOB=""; problems+=("PROFILE=$PROFILE: give two-gpu, one-gpu-96g or one-gpu-141g (episodes need 128K)") ;;
+  one-gpu-94g|one-gpu-96g|one-gpu-141g) GPUS_PER_JOB=1 ;;
+  *) GPUS_PER_JOB=""; problems+=("PROFILE=$PROFILE: give two-gpu, one-gpu-94g, one-gpu-96g or one-gpu-141g (episodes need 128K)") ;;
 esac
+[[ ${RELAY_HOST:-} != *[,\ ]* && ${RELAY_KEY:-} != *[,\ ]* ]] \
+  || problems+=("RELAY_HOST and RELAY_KEY can't hold a comma or a space: sbatch --export splits on commas")
 [[ $SBATCH_ARGS != *--gres* ]] || problems+=("SBATCH_ARGS can't set --gres: PROFILE sets the GPUs per job")
 [[ $REMOTE_DIR != *,* ]] || problems+=("REMOTE_DIR can't hold a comma: sbatch --export splits on commas (got $REMOTE_DIR)")
 [[ ! -f $CONFIG ]] || problems+=(${(f)"$(preflight_problems $CONFIG)"})
@@ -112,6 +118,8 @@ minutes=$(( int(TIME_LIMIT * 60) ))
 exports="ALL,WORK=${(q)WORK},SERVE_SH=\$PWD/serve.sh,STATUS_DIR=\$PWD/status,TIME_LIMIT_MIN=$minutes,SIM_QUANT=$SIM_QUANT,PROFILE=$PROFILE"
 [[ -z ${MIX:-} ]] || exports+=",MIX=$MIX"
 [[ -z ${EAGER:-} ]] || exports+=",EAGER=$EAGER"
+[[ -z ${RELAY_HOST:-} ]] || exports+=",RELAY_HOST=$RELAY_HOST"
+[[ -z ${RELAY_KEY:-} ]] || exports+=",RELAY_KEY=$RELAY_KEY"
 ids=()
 rows=()
 i=0

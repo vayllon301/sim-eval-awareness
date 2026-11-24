@@ -147,6 +147,80 @@ def test_the_one_gpu_profile_is_refused_where_serve_sh_picks_another(tmp_path):
     assert not (state / "calls.log").exists() or "serve WORK" not in (state / "calls.log").read_text()
 
 
+# The relay (RELAY_HOST): ssh -R from the node publishes both servers as sockets on the login host.
+# The stub binds the -R socket paths (from their directory: macOS caps a socket path at 104 bytes),
+# then stays up, or drops after 0.3 s for its first RELAY_SHORT calls, or fails from call
+# RELAY_FAIL_FROM on.
+RELAY_SSH = REC + """n=$(grep -c '^ssh' "$STATE/calls.log")
+if [ "${RELAY_FAIL_FROM:-0}" -ne 0 ] && [ "$n" -ge "$RELAY_FAIL_FROM" ]; then exit 255; fi
+for a in "$@"; do case "$a" in *.sock:127.0.0.1:*)
+  p=${a%%:127.0.0.1:*}
+  "$PYTHON" -c 'import os, socket, sys; os.chdir(os.path.dirname(sys.argv[1])); socket.socket(socket.AF_UNIX).bind(os.path.basename(sys.argv[1]))' "$p" ;;
+esac; done
+if [ "$n" -le "${RELAY_SHORT:-0}" ]; then sleep 0.3; exit 255; fi
+exec sleep 30
+"""
+RELAY_ENV = {"RELAY_HOST": "hopper-head.internal", "RELAY_KEY": "/home/v/.ssh/relay_key", "RELAY_TICK": "0.05",
+             "RELAY_WAIT": "40", "PYTHON": sys.executable}
+
+
+def run_relay(tmp_path: Path, env: dict):
+    (tmp_path / "stubs").mkdir(exist_ok=True)
+    stub_dir(tmp_path, {"ssh": RELAY_SSH})
+    return run_slurm(tmp_path, {**RELAY_ENV, **env})
+
+
+def ssh_calls(state: Path) -> list[str]:
+    return [c for c in (state / "calls.log").read_text().splitlines() if c.startswith("ssh ")]
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_without_a_relay_host_the_job_opens_no_relay(tmp_path):
+    proc, state = run_slurm(tmp_path, {"HEALTHY_CHECKS": "1"})
+    assert "sock" not in status(tmp_path, state / "status-at-first-check")
+    assert not [c for c in (state / "calls.log").read_text().splitlines() if c.startswith("ssh")]
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_the_relay_publishes_both_servers_as_sockets_before_ready(tmp_path):
+    proc, state = run_relay(tmp_path, {"HEALTHY_CHECKS": "2"})
+    first = status(tmp_path, state / "status-at-first-check")
+    sock = tmp_path / "status" / "42.sock"
+    assert first["state"] == "ready" and first["sock"] == str(sock)
+    (call,) = ssh_calls(state)
+    assert f"-R {sock}/agent.sock:127.0.0.1:8000" in call and f"-R {sock}/simulator.sock:127.0.0.1:8001" in call
+    assert "-i /home/v/.ssh/relay_key" in call and "ExitOnForwardFailure=yes" in call and " -N " in call
+    assert call.endswith(" hopper-head.internal")
+    assert oct(sock.stat().st_mode & 0o777) == "0o700"          # only we can reach the servers
+    assert status(tmp_path)["state"] == "server-died"
+    assert not (sock / "agent.sock").exists() and not (sock / "simulator.sock").exists()   # gone with the job
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_relay_that_never_comes_up_fails_the_job_before_ready(tmp_path):
+    proc, state = run_relay(tmp_path, {"RELAY_FAIL_FROM": "1"})
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "failed"
+    assert not (state / "status-at-first-check").exists()        # never said ready
+    assert "relay" in proc.stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_dropped_relay_is_restarted(tmp_path):
+    proc, state = run_relay(tmp_path, {"RELAY_SHORT": "1", "HEALTHY_CHECKS": "30"})
+    assert len(ssh_calls(state)) >= 2
+    assert "the relay dropped and is back" in proc.stdout
+    assert status(tmp_path)["state"] == "server-died"            # it ended on the servers, not the relay
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_a_relay_that_cannot_be_restarted_ends_the_job(tmp_path):
+    proc, state = run_relay(tmp_path, {"RELAY_SHORT": "1", "RELAY_FAIL_FROM": "2"})
+    assert proc.returncode == 1
+    assert status(tmp_path)["state"] == "relay-died"
+    assert len(ssh_calls(state)) == 4                            # the first, then 3 failed restarts
+
+
 @pytest.mark.skipif(BASH is None, reason="needs bash")
 @pytest.mark.parametrize("missing", ["WORK", "SERVE_SH", "STATUS_DIR", "TIME_LIMIT_MIN"])
 def test_required_settings(tmp_path, missing):
@@ -314,7 +388,7 @@ def test_the_default_profile_asks_each_job_for_two_gpus(tmp_path):
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
-@pytest.mark.parametrize("profile", ["one-gpu-96g", "one-gpu-141g"])
+@pytest.mark.parametrize("profile", ["one-gpu-94g", "one-gpu-96g", "one-gpu-141g"])
 def test_a_one_gpu_profile_asks_each_job_for_one_gpu_and_names_it(tmp_path, profile):
     proc, state, logs = submit(tmp_path, {"PROFILE": profile})
     assert proc.returncode == 0, proc.stderr + proc.stdout
@@ -323,6 +397,22 @@ def test_a_one_gpu_profile_asks_each_job_for_one_gpu_and_names_it(tmp_path, prof
     for c in sb:
         assert "--gres=gpu:1" in c and "--gres=gpu:2" not in c and f"PROFILE={profile}" in c
     assert f"# profile={profile}" in next((logs / "hopper").glob("*.jobs")).read_text()
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_the_relay_settings_go_to_every_job(tmp_path):
+    proc, state, logs = submit(tmp_path, {"PROFILE": "one-gpu-94g", "RELAY_HOST": "hopper-head.internal",
+                                          "RELAY_KEY": "/home/v/.ssh/relay_key"})
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    for c in sbatches(calls_of(state)):
+        assert "RELAY_HOST=hopper-head.internal" in c and "RELAY_KEY=/home/v/.ssh/relay_key" in c
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_no_relay_host_means_no_relay_settings(tmp_path):
+    proc, state, logs = submit(tmp_path)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert not [c for c in sbatches(calls_of(state)) if "RELAY_" in c]
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
@@ -350,8 +440,10 @@ def test_a_failed_submission_cancels_the_jobs_already_submitted(tmp_path):
     ({"PROFILE": "one-gpu-80g"}, HEAD, "PROFILE"),                    # 64K: episodes need 128K
     ({"PROFILE": "two_gpu"}, HEAD, "PROFILE"),
     ({"SBATCH_ARGS": "--partition=gpu --gres=gpu:2"}, HEAD, "--gres"),  # PROFILE sets the GPUs
+    ({"RELAY_HOST": "a,b"}, HEAD, "RELAY_HOST"),
+    ({"RELAY_KEY": "/home/v/my key"}, HEAD, "RELAY_KEY"),
 ], ids=["login", "time", "setup", "work", "relative-work", "comma-work", "comma-remote-dir", "preflight", "dirty", "old-scheme",
-       "no-contexts", "no-recording", "profile-80g", "profile-typo", "gres-by-hand"])
+       "no-contexts", "no-recording", "profile-80g", "profile-typo", "gres-by-hand", "comma-relay", "space-relay-key"])
 def test_submission_refusals(tmp_path, env, preflight, needle):
     proc, state, logs = submit(tmp_path, env, preflight)
     assert proc.returncode == 1
@@ -439,6 +531,33 @@ def test_each_chunk_waits_for_its_job_then_runs_on_its_node(tmp_path):
     first_cancel = next(i for i, c in enumerate(calls) if "scancel 1001" in c)
     assert first_cancel > first_run          # each job is cancelled once its chunk is done: the next starts
     assert any("1002" in c for c in cancelled)
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_job_with_a_relay_is_reached_through_its_sockets_on_the_login_host(tmp_path):
+    """Hopper refuses SSH into a node, so serve.slurm's relay publishes the servers as sockets on the
+    login host, and the tunnel forwards to them there: no jump, no node."""
+    sock = "/home/victor/sim-session/status/1001.sock"
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [ready("gpu07", 20) + f";sock={sock}"])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], jobs)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    tunnels = [c for c in calls_of(state) if c.startswith("ssh") and " -N " in c]
+    assert tunnels
+    for c in tunnels:
+        assert f"-L 18000:{sock}/agent.sock -L 18001:{sock}/simulator.sock" in c
+        assert "-J" not in c and "gpu07" not in c and c.endswith("victor@login.hopper")
+    assert len(runs(calls_of(state))) == 1
+
+
+@pytest.mark.skipif(ZSH is None, reason="needs zsh")
+def test_a_job_whose_relay_died_is_skipped(tmp_path):
+    def jobs(state):
+        job(state, "1001", ["RUNNING"], [starting("gpu07").replace("starting", "relay-died")])
+    proc, state = run_chunks(tmp_path, [("1001", "1-1", "9.5")], jobs)
+    assert proc.returncode == 3
+    assert not runs(calls_of(state))
+    assert "relay-died" in proc.stdout + proc.stderr
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")

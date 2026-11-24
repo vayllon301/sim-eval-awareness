@@ -5,8 +5,9 @@
 # order:
 #   1. waits until the chunk's job runs and its status file says ready (the node, and the job's end);
 #   2. opens the tunnel to that node through the login host
-#      (SSH_TARGET=<node> SSH_JUMP=<login> explore/colab_probe/tunnel.sh) and waits for both
-#      /v1/models;
+#      (SSH_TARGET=<node> SSH_JUMP=<login> explore/colab_probe/tunnel.sh), or, when the status file
+#      names the job's relay (sock=<dir>, serve.slurm's RELAY_HOST), to its sockets on the login host
+#      (SSH_TARGET=<login> SSH_SOCKETS=<dir>), and waits for both /v1/models;
 #   3. reads the job's server lines (STATUS_DIR/<id>.server) into OUTDIR/server-<id>.txt;
 #   4. the first job that comes up only: the simulator's setup check on its servers, before any
 #      episode (explore/sim_quant.py, docs/BACKENDS.md; lib.zsh's setup_step): the scheme lines, the
@@ -145,7 +146,7 @@ wait_job() {
   if [[ $DRY == 1 ]]; then
     x ssh $LOGIN "$poll"
     print -r -- "  (until the job runs and its status says ready; every ${POLL}s)"
-    NODE="<node of job $id>" END=""
+    NODE="<node of job $id>" END="" SOCK=""
     return 0
   fi
   typeset -A kv
@@ -156,12 +157,12 @@ wait_job() {
       for line in ${(f)out}; do [[ $line != *=* ]] || kv[${line%%=*}]=${line#*=}; done
       st=${kv[squeue]:-} state=${kv[state]:-}
       case $state in
-        failed|server-died|ended) WHY="job $id: $state (see $REMOTE_DIR/status/$id.out)"; return 1 ;;
+        failed|server-died|relay-died|ended) WHY="job $id: $state (see $REMOTE_DIR/status/$id.out)"; return 1 ;;
       esac
       case $st in
         RUNNING)
           if [[ $state == ready && -n ${kv[node]:-} && ${kv[end]:-} =~ '^[0-9]+$' ]]; then
-            NODE=${kv[node]} END=${kv[end]}
+            NODE=${kv[node]} END=${kv[end]} SOCK=${kv[sock]:-}
             return 0
           fi
           if [[ ${kv[start]:-} =~ '^[0-9]+$' ]] && (( EPOCHSECONDS - kv[start] > ${SERVE_MIN:-90} * 60 )); then
@@ -206,7 +207,11 @@ for row in $rows; do
     continue
   fi
   say "job $id ready on $NODE"
-  x -b -o $OUTDIR/tunnel-$id.log env SSH_TARGET=$node_user$NODE SSH_JUMP=$LOGIN explore/colab_probe/tunnel.sh
+  if [[ -n $SOCK ]]; then   # the job's relay: sockets on the login host (serve.slurm, RELAY_HOST)
+    x -b -o $OUTDIR/tunnel-$id.log env SSH_TARGET=$LOGIN SSH_SOCKETS=$SOCK explore/colab_probe/tunnel.sh
+  else
+    x -b -o $OUTDIR/tunnel-$id.log env SSH_TARGET=$node_user$NODE SSH_JUMP=$LOGIN explore/colab_probe/tunnel.sh
+  fi
   tunnel_pid=$BG
   if ! wait_models $(( ${READY_MIN:-15} * 60 )); then
     note "$epochs: SKIPPED (job $id's servers didn't answer through the tunnel; see $OUTDIR/tunnel-$id.log)"
