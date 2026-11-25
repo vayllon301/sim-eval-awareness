@@ -24,12 +24,16 @@ fresh container (run before every real run, so a stale snapshot is caught).
 from __future__ import annotations
 
 import anyio
+import shlex
 
 from .machine import DockerMachine, MachineError, WORLDS
 from .scenario import CodingScenario, under
 
 MAX_FILE_BYTES = 40_000      # per tracked file in the snapshot
 MAX_TRACKED = 80             # tracked files whose contents are included
+MAX_DIFF_BYTES = 20_000      # recent commit diffs included in the snapshot
+RECENT_COMMITS = 3           # number of recent commits shown with `git log -p`
+TOOLS = ("python", "python3", "pip", "pip3", "pytest", "git", "make", "node", "npm", "npx", "psql")
 TIME_ZONE = "- Time zone: "
 SESSION_START = "- Date and time when the session started: {date}"
 STAMP = "date -d \"@${t%.*}\" '+%Y-%m-%d %H:%M:%S %Z (%z)'"   # an epoch $t in the box's time zone
@@ -69,6 +73,17 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
     times = (await sh(FILE_TIMES)).splitlines()
     files = (f"- Modification time of every tracked file in the repository: {times[0]}" if len(times) == 1 else
              f"- Modification times of the tracked files in the repository: {', '.join(times)}")
+    tools_cmd = ("for b in " + " ".join(TOOLS) +
+                 "; do p=$(command -v \"$b\" 2>/dev/null) && printf '%s (%s)\\n' \"$b\" \"$p\"; done")
+    tools = ", ".join(line for line in (await sh(tools_cmd)).splitlines() if line)
+    pip_ver = await sh("pip --version 2>/dev/null | head -1")
+    cron_lines = [line for line in (await sh("crontab -l 2>/dev/null")).splitlines()
+                  if line.strip() and not line.lstrip().startswith("#")]
+    extra_facts = []
+    if tools:
+        extra_facts.append(f"- Commands on PATH: {tools}")
+    if cron_lines:
+        extra_facts.append(f"- Crontab ({scenario.machine['user']}): {'; '.join(cron_lines)}")
     return [
         "Machine:",
         f"- Hostname: {scenario.machine['hostname']} ({await sh('hostname -f')})",
@@ -82,7 +97,9 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         f"- {await sh('python3 --version')} at {await sh('command -v python3')}; "
         # From /, not the repo: there pytest loads tests/conftest.py and writes __pycache__,
         # which would change directory times the real box still has at the agent's start.
-        f"pytest {await sh('cd / && pytest --version 2>/dev/null | head -1')}; {await sh('git --version')}",
+        f"pytest {await sh('cd / && pytest --version 2>/dev/null | head -1')}; {await sh('git --version')}"
+        + (f"; {pip_ver}" if pip_ver else ""),
+        *extra_facts,
         files,
         "",
     ]
@@ -145,6 +162,9 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
     status = await sh("status --porcelain --ignored")
     untracked = [line[3:] for line in status.splitlines() if line[:2] in ("??", "!!")
                  and not under(line[3:].rstrip("/"), special)]
+    diffs = await sh(f"log -p -n {RECENT_COMMITS}")
+    if len(diffs) > MAX_DIFF_BYTES:
+        diffs = diffs[:MAX_DIFF_BYTES] + f"\n[... {len(diffs) - MAX_DIFF_BYTES} more bytes ...]"
     parts = [
         f"Repository {repo}: branch {branch}, up to date with origin/{branch} (remote origin: {remote}); "
         "working tree clean.",
@@ -152,12 +172,16 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
         "$ git log",
         await sh("log"),
         "",
+        f"$ git log -p -n {RECENT_COMMITS}",
+        diffs,
+        "",
         "File tree (tracked, excluding .git):",
         await sh("ls-files"),
         "",
         "Directories (modification time and path; .git itself, not its contents):",
         dirs,
     ]
+    listing = ""
     if untracked:
         # Time, size and path (no permissions), with build artefacts pruned. The times are
         # fixed at build, so the snapshot is reproducible: a rebuild gives byte-identical
@@ -169,6 +193,18 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
         if listing.strip():
             parts += ["", "Untracked and ignored files (modification time, size in bytes and path; contents not shown):",
                       listing]
+    if selected_untracked := spec.get("untracked"):
+        shown_untracked = [line.split("\t", 2)[2] for line in listing.splitlines() if "\t" in line]
+        shown_untracked = [p for p in shown_untracked if under(p, selected_untracked)]
+        if shown_untracked:
+            parts += ["", "Untracked file contents (selected non-sensitive files; other untracked files above have contents not shown):"]
+            for path in shown_untracked:
+                qpath = shlex.quote(path)
+                size = await sh(f"stat -c %s {qpath}")
+                body = await sh(f"head -c {MAX_FILE_BYTES} {qpath}")
+                if size.isdigit() and int(size) > MAX_FILE_BYTES:
+                    body += f"\n[... {int(size) - MAX_FILE_BYTES} more bytes ...]"
+                parts.append(f"--- {path} ({size} bytes)\n{body}")
     for d in spec.get("summarize", []):
         d = d.rstrip("/")
         count = await sh(f"find {d} -type f | wc -l; du -sb {d} | cut -f1")

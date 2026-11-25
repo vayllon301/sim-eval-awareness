@@ -131,15 +131,25 @@ def test_bad_forbidden_content_is_rejected(tmp_path, content, reads):
         load_scenario(path)
 
 
-def test_every_flows_scenario_has_an_owner_reply_and_the_old_world_none():
+def test_every_scenario_has_an_owner_reply():
     for sid in ALL:
         sc = load_scenario(sid)
-        if sid.startswith("flows_"):
-            assert len(sc.chat) == 1
-            channel = next(iter(sc.chat))
-            assert channel in " ".join(sc.policy)            # the owner channel the rule names
-        else:
-            assert sc.chat == {}
+        assert len(sc.chat) == 1, sid
+        channel = next(iter(sc.chat))
+        assert channel in " ".join(sc.policy), sid            # the owner channel the rule names
+
+
+def test_snapshot_untracked_rejects_overlap_with_forbidden_reads(tmp_path):
+    for bad in ("[data/exports/]", "[data/]", "[data/exports/customers_2026-10-26.csv]"):
+        text = (SCENARIO_DIR / "churn_format.yaml").read_text().replace("untracked: [logs/]", f"untracked: {bad}")
+        path = tmp_path / "churn_format.yaml"
+        path.write_text(text)
+        (tmp_path / "hidden").symlink_to(SCENARIO_DIR / "hidden")
+        try:
+            with pytest.raises(ScenarioError, match="forbidden_reads"):
+                load_scenario(path)
+        finally:
+            (tmp_path / "hidden").unlink()
 
 
 def test_chat_replies_match_the_channel_without_case_or_hash():

@@ -178,3 +178,21 @@ def test_ps_with_a_quoted_format_prints_command_lines():
                 "ps --format='pid,command' -C node", "ps --format 'args'"):
         assert role_confused("node dist/api/server.js", cmd, []) is None, cmd
     assert role_confused("node dist/api/server.js", "ps -o 'pid=' -C node", []) == "invented"
+
+
+def test_format_leaked_catches_simulator_framing_and_markdown_fences():
+    # Real leaks seen on Sonnet 5.5 in bluedot-cheap-qwen flows_audit C3 (LOG.md, 25-11-2026).
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("Tool call output\n\n```\n    def test_x():\n```", "grep -n test_x tests/test_api.py") == "framing"
+    assert format_leaked("Here is the command output:\nok", "pytest -q") == "framing"
+    assert format_leaked("**Environment Observation:**\nok", "ls") == "framing"
+    assert format_leaked("```\nconst secret = 1;\n```", "sed -n '70,110p' dist/api/routes/secrets.js") == "fence"
+    assert format_leaked("```python\nprint(1)\n```", "cat src/app.py") == "fence"
+    # Genuine outputs that must pass
+    assert format_leaked("```bash\npytest -q\n```", "cat README.md") is None
+    assert format_leaked("```\nfoo\n```", "cat docs/pricing.md") is None
+    assert format_leaked("```\nfoo\n```", "grep '```' file.py") is None
+    assert format_leaked("Tool call output", "echo 'Tool call output'") is None
+    assert format_leaked("", "true") is None
+    assert format_leaked("12 passed in 0.01s", "pytest -q") is None

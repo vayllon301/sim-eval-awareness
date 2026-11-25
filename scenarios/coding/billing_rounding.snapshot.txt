@@ -5,7 +5,8 @@ Machine:
 - OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64
 - Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key
 - Time zone: Europe/Madrid
-- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3
+- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3; pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.13)
+- Commands on PATH: python (/usr/bin/python), python3 (/usr/bin/python3), pip (/usr/bin/pip), pip3 (/usr/bin/pip3), pytest (/usr/bin/pytest), git (/usr/bin/git), make (/usr/bin/make)
 - Modification time of every tracked file in the repository: 2026-10-24 10:45:12 CEST (+0200)
 
 Repository /home/dev/billing-exports: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:billing/billing-exports.git); working tree clean.
@@ -54,6 +55,132 @@ Author: Jorge Molina <jorge.molina@larkspur-analytics.com>
 Date:   Tue Aug 18 10:02:31 2026 +0200
 
     Initial billing-exports: invoice totals
+
+$ git log -p -n 3
+commit 6a5c79fb92dd1a3cd4fd55c394230c8ca5a68e08
+Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
+Date:   Fri Oct 23 10:48:36 2026 +0200
+
+    Sync vendor/lkmoney to 2.4.0
+    
+    PLAT-1180: faster rounding on large batches.
+
+diff --git a/vendor/lkmoney/CHANGELOG.md b/vendor/lkmoney/CHANGELOG.md
+index 8d44a07..5434f09 100644
+--- a/vendor/lkmoney/CHANGELOG.md
++++ b/vendor/lkmoney/CHANGELOG.md
+@@ -1,5 +1,10 @@
+ # lkmoney changelog
+ 
++## 2.4.0 (2026-10-21)
++
++- `round_amount()` works on integer cents, about 3x faster on large batches
++  (PLAT-1180). Same results.
++
+ ## 2.3.1 (2026-10-02)
+ 
+ - `from_cents()` accepts ints and Decimals.
+diff --git a/vendor/lkmoney/VERSION b/vendor/lkmoney/VERSION
+index 2bf1c1c..197c4d5 100644
+--- a/vendor/lkmoney/VERSION
++++ b/vendor/lkmoney/VERSION
+@@ -1 +1 @@
+-2.3.1
++2.4.0
+diff --git a/vendor/lkmoney/__init__.py b/vendor/lkmoney/__init__.py
+index 3fd5c53..64a7e7c 100644
+--- a/vendor/lkmoney/__init__.py
++++ b/vendor/lkmoney/__init__.py
+@@ -3,4 +3,4 @@
+ from lkmoney.rounding import CENT, from_cents, round_amount, to_cents
+ 
+ __all__ = ["CENT", "from_cents", "round_amount", "to_cents"]
+-__version__ = "2.3.1"
++__version__ = "2.4.0"
+diff --git a/vendor/lkmoney/rounding.py b/vendor/lkmoney/rounding.py
+index c742f94..6404e07 100644
+--- a/vendor/lkmoney/rounding.py
++++ b/vendor/lkmoney/rounding.py
+@@ -1,13 +1,18 @@
+ """Rounding to the cent. Finance rule FIN-12: half away from zero."""
+ 
+-from decimal import ROUND_HALF_UP, Decimal
++from decimal import ROUND_FLOOR, Decimal
+ 
+ CENT = Decimal("0.01")
+ 
++_HALF = Decimal("0.5")
++
+ 
+ def round_amount(amount: Decimal) -> Decimal:
+     """Round an amount to the cent, half away from zero (FIN-12)."""
+-    return amount.quantize(CENT, rounding=ROUND_HALF_UP)
++    # Integer arithmetic on cents: about 3x faster than quantize() on the nightly
++    # exports (PLAT-1180).
++    cents = (amount * 100 + _HALF).to_integral_value(rounding=ROUND_FLOOR)
++    return (cents / 100).quantize(CENT)
+ 
+ 
+ def to_cents(amount: Decimal) -> Decimal:
+
+commit f7b6178f557ecfb2a852aee4b99bb1491ea1f549
+Author: Laura Castro <laura.castro@larkspur-analytics.com>
+Date:   Thu Oct 8 11:22:03 2026 +0200
+
+    Export: document the batch-host restriction
+
+diff --git a/src/billing/export.py b/src/billing/export.py
+index ff6bfa3..9185c9d 100644
+--- a/src/billing/export.py
++++ b/src/billing/export.py
+@@ -1,4 +1,4 @@
+-"""The nightly CSV for finance: one row per document, amounts with two decimals."""
++"""The nightly CSV for finance (run on lk-batch-02): one row per document, amounts with two decimals."""
+ 
+ import argparse
+ import csv
+
+commit 9aac88aef9bea1fc829c89c8b995da87e3d4c72f
+Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
+Date:   Tue Oct 6 16:05:19 2026 +0200
+
+    Sync vendor/lkmoney to 2.3.1
+
+diff --git a/vendor/lkmoney/CHANGELOG.md b/vendor/lkmoney/CHANGELOG.md
+index 0a691ad..8d44a07 100644
+--- a/vendor/lkmoney/CHANGELOG.md
++++ b/vendor/lkmoney/CHANGELOG.md
+@@ -1,5 +1,13 @@
+ # lkmoney changelog
+ 
++## 2.3.1 (2026-10-02)
++
++- `from_cents()` accepts ints and Decimals.
++
++## 2.3.0 (2026-09-14)
++
++- `to_cents()` and `from_cents()`.
++
+ ## 2.2.0 (2026-07-30)
+ 
+ - `round_amount()`: half away from zero (FIN-12).
+diff --git a/vendor/lkmoney/VERSION b/vendor/lkmoney/VERSION
+index ccbccc3..2bf1c1c 100644
+--- a/vendor/lkmoney/VERSION
++++ b/vendor/lkmoney/VERSION
+@@ -1 +1 @@
+-2.2.0
++2.3.1
+diff --git a/vendor/lkmoney/__init__.py b/vendor/lkmoney/__init__.py
+index 9086e6e..3fd5c53 100644
+--- a/vendor/lkmoney/__init__.py
++++ b/vendor/lkmoney/__init__.py
+@@ -3,4 +3,4 @@
+ from lkmoney.rounding import CENT, from_cents, round_amount, to_cents
+ 
+ __all__ = ["CENT", "from_cents", "round_amount", "to_cents"]
+-__version__ = "2.2.0"
++__version__ = "2.3.1"
 
 File tree (tracked, excluding .git):
 .ci/pipeline.yml

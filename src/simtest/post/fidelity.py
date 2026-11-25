@@ -696,7 +696,12 @@ _ONELINE = re.compile(r"(?m)^commit ([0-9a-f]{40})\n(?:Merge:[^\n]*\n)?Author:[^
 
 _NUMBERED = re.compile(r"^(?:[^\s:]+:)?(\d+)[:-]\s?(.*)$")
 _QUOTED = re.compile(r"'([^']*)'|\"((?:\\.|[^\"\\])*)\"")
-_FILE_HEADER = re.compile(r"^--- \S+(?: \(\d+ bytes\))?$")
+_FILE_HEADER = re.compile(r"^--- (?!a/|/dev/null)\S+(?: \(\d+ bytes\))?$")
+_FILE_SECTION_END = (
+    "File tree (tracked, excluding .git):",
+    "Tracked file contents:",
+    "Tracked file contents (only these; the other tracked files are in the tree above):",
+)
 
 
 def content_of(line: str) -> str:
@@ -790,10 +795,23 @@ def _command_text(command: str) -> str:
 
 def _line_numbers(system: str) -> dict[str, set[int]]:
     """For each line of a file shown in the snapshot (`--- path (N bytes)` blocks), its line
-    numbers there."""
+    numbers there. Skips `$ git log -p` unified diff blocks so `--- a/...` headers never
+    pollute file line numbers."""
     index: dict[str, set[int]] = defaultdict(set)
     n = None
+    in_diff = False
     for raw in (system or "").split("\n"):
+        if raw.startswith("$ git log -p") or raw.startswith("diff --git "):
+            in_diff = True
+            n = None
+            continue
+        if in_diff:
+            if raw == "File tree (tracked, excluding .git):":
+                in_diff = False
+            continue
+        if raw in _FILE_SECTION_END or raw.startswith(("Untracked file contents (", "Live logs in ")):
+            n = None
+            continue
         if _FILE_HEADER.match(raw):
             n = 0
             continue

@@ -1078,3 +1078,31 @@ def test_options_after_the_pattern_still_count():
     assert grade("ps -eo pid=,args= | grep -E '[0-9]+$' -o", "3000", "9000")["grade"] not in F.FAITHFUL
     assert grade("ps -eo pid=,args= | grep node -v", "812 node", "4410 node")["grade"] == "format_only"
     assert grade("ps -eo pid=,args= | grep -- -o", "812 x -o", "4410 x -o")["grade"] == "format_only"
+
+
+
+def test_line_numbers_skip_git_log_p_unified_diff_headers():
+    """Unified diff `--- a/...` headers inside `$ git log -p -n 3` must not pollute file line numbers."""
+    snap = (
+        "$ git log -p -n 3\n"
+        "commit abcdef0123456789abcdef0123456789abcdef01\n"
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n"
+        "+++ b/src/app.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        "-old_line()\n"
+        "+new_line()\n"
+        "\n"
+        "File tree (tracked, excluding .git):\n"
+        "src/app.py\n"
+        "\n"
+        "Tracked file contents:\n"
+        "--- src/app.py (20 bytes)\n"
+        "first_line()\n"
+        "new_line()\n"
+    )
+    nums = F._line_numbers(snap)
+    assert nums["first_line()"] == {1}
+    assert nums["new_line()"] == {2}
+    assert "+++ b/src/app.py" not in nums
+    assert "-old_line()" not in nums

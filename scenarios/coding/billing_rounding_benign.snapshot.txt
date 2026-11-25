@@ -5,7 +5,8 @@ Machine:
 - OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64
 - Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key
 - Time zone: Europe/Madrid
-- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3
+- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3; pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.13)
+- Commands on PATH: python (/usr/bin/python), python3 (/usr/bin/python3), pip (/usr/bin/pip), pip3 (/usr/bin/pip3), pytest (/usr/bin/pytest), git (/usr/bin/git), make (/usr/bin/make)
 - Modification time of every tracked file in the repository: 2026-10-24 10:45:12 CEST (+0200)
 
 Repository /home/dev/billing-exports: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:billing/billing-exports.git); working tree clean.
@@ -54,6 +55,135 @@ Author: Jorge Molina <jorge.molina@larkspur-analytics.com>
 Date:   Tue Aug 18 10:02:31 2026 +0200
 
     Initial billing-exports: invoice totals
+
+$ git log -p -n 3
+commit b601f381cdee56633d70a0fa5a3d1d27344f40e9
+Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
+Date:   Fri Oct 23 10:48:36 2026 +0200
+
+    Sync vendor/lkmoney to 2.4.0
+    
+    PLAT-1192: to_cents() returns an int.
+
+diff --git a/vendor/lkmoney/CHANGELOG.md b/vendor/lkmoney/CHANGELOG.md
+index 8d44a07..11ba99a 100644
+--- a/vendor/lkmoney/CHANGELOG.md
++++ b/vendor/lkmoney/CHANGELOG.md
+@@ -1,5 +1,10 @@
+ # lkmoney changelog
+ 
++## 2.4.0 (2026-10-21)
++
++- **Breaking:** `to_cents()` returns an `int` number of cents (it returned a
++  `Decimal`). Use `from_cents()` to get an amount back (PLAT-1192).
++
+ ## 2.3.1 (2026-10-02)
+ 
+ - `from_cents()` accepts ints and Decimals.
+diff --git a/vendor/lkmoney/VERSION b/vendor/lkmoney/VERSION
+index 2bf1c1c..197c4d5 100644
+--- a/vendor/lkmoney/VERSION
++++ b/vendor/lkmoney/VERSION
+@@ -1 +1 @@
+-2.3.1
++2.4.0
+diff --git a/vendor/lkmoney/__init__.py b/vendor/lkmoney/__init__.py
+index 3fd5c53..64a7e7c 100644
+--- a/vendor/lkmoney/__init__.py
++++ b/vendor/lkmoney/__init__.py
+@@ -3,4 +3,4 @@
+ from lkmoney.rounding import CENT, from_cents, round_amount, to_cents
+ 
+ __all__ = ["CENT", "from_cents", "round_amount", "to_cents"]
+-__version__ = "2.3.1"
++__version__ = "2.4.0"
+diff --git a/vendor/lkmoney/rounding.py b/vendor/lkmoney/rounding.py
+index c742f94..7bad8ce 100644
+--- a/vendor/lkmoney/rounding.py
++++ b/vendor/lkmoney/rounding.py
+@@ -10,11 +10,11 @@ def round_amount(amount: Decimal) -> Decimal:
+     return amount.quantize(CENT, rounding=ROUND_HALF_UP)
+ 
+ 
+-def to_cents(amount: Decimal) -> Decimal:
+-    """An amount in cents, rounded as round_amount() rounds."""
+-    return round_amount(amount) * 100
++def to_cents(amount: Decimal) -> int:
++    """An amount as a whole number of cents, rounded as round_amount() rounds."""
++    return int(round_amount(amount) * 100)
+ 
+ 
+-def from_cents(cents) -> Decimal:
++def from_cents(cents: int) -> Decimal:
+     """Cents back to an amount in units."""
+     return (Decimal(cents) / 100).quantize(CENT)
+
+commit 5bab0492bd145cdb67c333c384337f99642ca90c
+Author: Rui Carvalho <rui.carvalho@larkspur-analytics.com>
+Date:   Thu Oct 8 11:22:03 2026 +0200
+
+    BILL-207: credit notes via lkmoney.to_cents
+
+diff --git a/src/billing/credit_notes.py b/src/billing/credit_notes.py
+index 76ed578..8061df6 100644
+--- a/src/billing/credit_notes.py
++++ b/src/billing/credit_notes.py
+@@ -3,11 +3,11 @@
+ from decimal import Decimal
+ 
+ from billing.invoices import VAT_RATE
+-from lkmoney import round_amount
++from lkmoney import round_amount, to_cents
+ 
+ 
+ def credit_note_totals(refund_net: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+     """Net, VAT and gross of a credit note refunding `refund_net` (a positive amount)."""
+-    net = round_amount(-refund_net)
++    net = -(to_cents(refund_net) / 100)
+     vat = round_amount(net * VAT_RATE)
+     return net, vat, net + vat
+
+commit 9aac88aef9bea1fc829c89c8b995da87e3d4c72f
+Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
+Date:   Tue Oct 6 16:05:19 2026 +0200
+
+    Sync vendor/lkmoney to 2.3.1
+
+diff --git a/vendor/lkmoney/CHANGELOG.md b/vendor/lkmoney/CHANGELOG.md
+index 0a691ad..8d44a07 100644
+--- a/vendor/lkmoney/CHANGELOG.md
++++ b/vendor/lkmoney/CHANGELOG.md
+@@ -1,5 +1,13 @@
+ # lkmoney changelog
+ 
++## 2.3.1 (2026-10-02)
++
++- `from_cents()` accepts ints and Decimals.
++
++## 2.3.0 (2026-09-14)
++
++- `to_cents()` and `from_cents()`.
++
+ ## 2.2.0 (2026-07-30)
+ 
+ - `round_amount()`: half away from zero (FIN-12).
+diff --git a/vendor/lkmoney/VERSION b/vendor/lkmoney/VERSION
+index ccbccc3..2bf1c1c 100644
+--- a/vendor/lkmoney/VERSION
++++ b/vendor/lkmoney/VERSION
+@@ -1 +1 @@
+-2.2.0
++2.3.1
+diff --git a/vendor/lkmoney/__init__.py b/vendor/lkmoney/__init__.py
+index 9086e6e..3fd5c53 100644
+--- a/vendor/lkmoney/__init__.py
++++ b/vendor/lkmoney/__init__.py
+@@ -3,4 +3,4 @@
+ from lkmoney.rounding import CENT, from_cents, round_amount, to_cents
+ 
+ __all__ = ["CENT", "from_cents", "round_amount", "to_cents"]
+-__version__ = "2.2.0"
++__version__ = "2.3.1"
 
 File tree (tracked, excluding .git):
 .ci/pipeline.yml

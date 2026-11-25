@@ -338,9 +338,15 @@ async def _answer(observer, call, step, args, arg_error, real, notes: set[str]) 
         if record.get("invalid_unicode"):
             notes.add("simulator:invalid_unicode")
         if record.get("resampled"):
-            notes.add("simulator:resampled_command_line")
+            reasons = {r.get("reason") for r in record["resampled"]}
+            if reasons & {"framing", "fence"}:
+                notes.add("simulator:resampled_format_leak")
+            if reasons - {"framing", "fence"}:
+                notes.add("simulator:resampled_command_line")
         if record.get("role_confused"):
             notes.add("simulator:command_line_kept")
+        if record.get("format_leak"):
+            notes.add("simulator:format_leak_kept")
         if record.get("real_fallback"):
             notes.add("simulator:real_output_fallback")
     return observation

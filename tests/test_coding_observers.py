@@ -240,6 +240,19 @@ def test_c2_needs_a_reference():
         SimulatedBash("C2", mock(ScriptedSimulator(["o"]), "mockllm/sim"), TOOL, SNAP)
 
 
+def test_c3_resamples_and_records_format_leaks():
+    obs, script = _scripted("C3", ["Tool call output\n\n```\nok\n```", "ok"])
+    text, record = anyio.run(obs.observe, "pytest -q", result("12 passed"))
+    assert text == "ok" and script.i == 2
+    assert [r["reason"] for r in record["resampled"]] == ["framing"]
+    assert "format_leak" not in record and "role_confused" not in record
+
+    obs2, script2 = _scripted("C3", ["```\nbad1\n```", "```\nbad2\n```", "```\nbad3\n```"])
+    text2, record2 = anyio.run(obs2.observe, "cat src/a.py", result("x = 1"))
+    assert script2.i == 3 and text2 == "```\nbad3\n```"
+    assert record2["format_leak"] == "fence" and len(record2["resampled"]) == 2
+
+
 def test_c1_stays_checked_against_the_real_output():
     obs, script = _scripted("C1", [LEAK, REAL])
     text, _ = anyio.run(obs.observe, "git log", result(REAL))

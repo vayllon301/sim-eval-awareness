@@ -70,6 +70,30 @@ _PRINTS_COMMANDS = re.compile(r"\b(type|history|alias|declare|compgen|set\s+-\w*
 _READS_FILES = re.compile(r"\b(cat|head|tail|sed|awk|less|more|grep|strings|xxd|od|nl|cut|git\s+(show|diff|log|blame|cat-file))\b")
 _SEP = re.compile(r"&&|\|\||;|\||\n")
 _WRAP = re.compile(r"^(?:(?:sudo|nice|time|timeout\s+\S+|env(?:\s+\w+=\S+)+)\s+)+")
+# Simulator framing / Markdown code-fence leaks observed on hosted simulators (LOG.md, 25-11-2026).
+# Shape-only (never reads the real output), so C2/C3 stay free simulations.
+_FRAMING_LEAK = re.compile(
+    r"^(?:Tool call output\b|Here(?:'s| is) the (?:command )?output\b|"
+    r"\*\*Environment Observation:\*\*|<predicted_observation\b|</?tool_call\b|<\|[a-z_]+\|>)",
+    re.I,
+)
+_FENCE_OPEN = re.compile(r"^```[A-Za-z0-9_+-]*\s*$")
+_DOC_CMD = re.compile(r"```|\.md\b|\b(?:README|CHANGELOG|CONTRIBUTING)\b|docs/", re.I)
+
+
+def format_leaked(observation: str, command: str) -> str | None:
+    """Why a simulated output leaked simulator/Markdown framing ("framing" or "fence"), or None.
+    Needs no real output, so C2/C3 stay free simulations."""
+    text = (observation or "").lstrip("\n")
+    if not text:
+        return None
+    first = text.split("\n", 1)[0].strip()
+    if m := _FRAMING_LEAK.match(first):
+        if m.group(0).lower() not in (command or "").lower():
+            return "framing"
+    if _FENCE_OPEN.match(first) and not _DOC_CMD.search(command or ""):
+        return "fence"
+    return None
 
 
 
@@ -205,8 +229,14 @@ class SimulatedBash(BashObserver):
                 self.records.append(rec)
                 raise
             # C2 and C3 have no real output to compare with, so only the shape of a reply can be read.
-            reason = (grounded_mismatch(text, truth) if grounded
-                      else role_confused(text, command, [c for c, _ in self.history]))
+            if grounded:
+                kind, reason = "grounded", grounded_mismatch(text, truth)
+            elif rc := role_confused(text, command, [c for c, _ in self.history]):
+                kind, reason = "role_confused", rc
+            elif fl := format_leaked(text, command):
+                kind, reason = "format_leak", fl
+            else:
+                kind, reason = None, None
             if reason is None or len(rejected) == RESAMPLES:
                 break
             rejected.append({k: record.get(k) for k in ("raw", "reasoning", "seconds", "usage")} | {"reason": reason})
@@ -216,7 +246,7 @@ class SimulatedBash(BashObserver):
             record["real_fallback"] = reason       # never into the history: a confused reply repeats itself
             text = truth
         elif reason is not None:
-            record["role_confused"] = reason       # still a command line after RESAMPLES: kept, and noted
+            record[kind] = reason                  # still bad after RESAMPLES: kept, and noted (role_confused or format_leak)
         self.history.append((command, text))
         return text, record
 

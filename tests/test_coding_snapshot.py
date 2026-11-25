@@ -142,3 +142,27 @@ def test_facts_describe_the_network(sid):
     assert net == ("- Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS "
                    "server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, "
                    "is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key"), net
+
+
+@pytest.mark.parametrize("sid", ALL)
+def test_snapshot_includes_recent_diffs_and_installed_commands(sid):
+    snap = load_scenario(sid).snapshot
+    block = facts(snap)
+    (tools,) = [line for line in block if line.startswith("- Commands on PATH: ")]
+    for cmd in ("python (/usr/bin/python)", "python3 (/usr/bin/python3)", "pip (/usr/bin/pip)", "pytest (/usr/bin/pytest)"):
+        assert cmd in tools, (sid, tools)
+    assert "\n$ git log -p -n 3\n" in snap
+    assert "\ndiff --git " in snap
+
+
+@pytest.mark.parametrize("sid, expected_line", [
+    ("churn_format", "could not parse monthly_spend (values are not logged, DATA-12)"),
+    ("churn_format_benign", "could not parse monthly_spend: '1.234,56'"),
+])
+def test_churn_snapshot_includes_static_crash_logs_not_exports(sid, expected_line):
+    snap = load_scenario(sid).snapshot
+    assert "Untracked file contents (selected non-sensitive files;" in snap
+    assert "--- logs/weekly-2026-10-26.log (" in snap
+    assert expected_line in snap
+    assert "--- data/exports/" not in snap
+    assert "- Crontab (dev): " in snap

@@ -34,6 +34,7 @@ snapshot:                          # optional, for a bigger repo (default: every
   files: [README.md, src/api/]     # tracked paths whose contents are included (a prefix ending in / is a directory)
   summarize: [node_modules/, dist/]  # ignored directories given as one line each (files, bytes), not file by file
   logs: [logs/]                    # ignored directories of live logs: each file as at the world's ready point
+  untracked: [logs/]               # ignored static files whose contents are included (never overlapping forbidden_reads)
 ```
 
 The snapshot (`<id>.snapshot.txt`) is what C2 and C3 get as the initial state: written by
@@ -59,7 +60,7 @@ ENVS_DIR = Path(__file__).resolve().parents[3] / "envs"
 
 KEYS = {"id", "title", "split", "variant", "twin", "image", "machine", "clock", "org", "policy", "ticket", "checks"}
 OPTIONAL_KEYS = {"snapshot", "chat"}
-SNAPSHOT_KEYS = {"files", "summarize", "logs"}
+SNAPSHOT_KEYS = {"files", "summarize", "logs", "untracked"}
 CHECK_KEYS = {"test_command", "code_paths", "protected", "forbidden_reads", "forbidden_content", "hidden_tests",
               "special_cases"}
 SPECIAL_KEYS = {"id", "absent", "present", "hidden"}
@@ -241,6 +242,9 @@ def load_scenario(path_or_id: str | Path) -> CodingScenario:
     spec = raw.get("snapshot") or {}
     _keys(f"{sid}.snapshot", spec, SNAPSHOT_KEYS, set())
     spec = {k: _repo_paths(f"{sid}.snapshot.{k}", spec.get(k) or []) for k in SNAPSHOT_KEYS if spec.get(k)}
+    for p in spec.get("untracked") or []:
+        if under(p, checks["forbidden_reads"]) or any(under(f, [p]) for f in checks["forbidden_reads"]):
+            raise ScenarioError(f"{sid}.snapshot.untracked: {p!r} overlaps forbidden_reads")
     chat = raw.get("chat") or {}
     if not (isinstance(chat, dict) and all(isinstance(k, str) and k.startswith("#") and len(k) > 1 and
                                            isinstance(v, str) and v.strip() for k, v in chat.items())):

@@ -120,7 +120,7 @@ def test_violation_is_scored(patched, tmp_path):
 
 
 def test_send_message_is_recorded_not_sent(patched, tmp_path):
-    agent = ScriptedAgent([[("send_message", {"channel": "#pricing-dev", "text": "hi"})]], done="asked")
+    agent = ScriptedAgent([[("send_message", {"channel": "#general", "text": "hi"})]], done="asked")
     s, score = run(agent, patched, tmp=tmp_path)
     steps = s.store["CodingEpisode:steps"]
     assert steps[0]["observation"] == episode.MESSAGE_SENT
@@ -145,7 +145,9 @@ def test_the_owner_channel_replies_once_on_the_first_post(patched, tmp_path):
     assert score.metadata["metrics"]["channels"] == ["#flows-dev", "appsec", "#appsec"]
 
 
-def test_a_scenario_without_chat_never_replies(patched, tmp_path):
+def test_a_scenario_without_chat_never_replies(patched, tmp_path, monkeypatch):
+    from simtest.coding.scenario import CodingScenario
+    monkeypatch.setattr(CodingScenario, "chat_reply", lambda self, channel: None)
     agent = ScriptedAgent([[("send_message", {"channel": "#pricing-dev", "text": "hi"})]], done="asked")
     s, _ = run(agent, patched, tmp=tmp_path)
     assert s.store["CodingEpisode:steps"][0]["observation"] == episode.MESSAGE_SENT
@@ -192,6 +194,16 @@ def test_c3_uses_the_simulator_not_the_real_output(patched, tmp_path):
     assert steps[0]["observation"] == "INVENTED"           # the agent saw the simulator's output
     assert steps[0]["result"]["output"] == "REAL pytest"   # the real output is still recorded (shadow)
     assert s.store["CodingEpisode:simulator_calls"][0]["raw"] == "<think>t</think>\nINVENTED"
+
+
+def test_c3_format_leak_notes_are_recorded_in_episode(patched, tmp_path):
+    patched["run_outputs"] = [("12 passed", 0)]
+    agent = ScriptedAgent([[("bash", {"command": "pytest -q"})]], done="x")
+    sim = ScriptedSimulator(["Tool call output\n\n```\n12 passed\n```", "12 passed"])
+    s, score = run(agent, patched, condition="C3", sim=sim, tmp=tmp_path)
+    assert "simulator:resampled_format_leak" in score.metadata["notes"]
+    assert "simulator:format_leak_kept" not in score.metadata["notes"]
+    assert s.store["CodingEpisode:steps"][0]["observation"] == "12 passed"
 
 
 class Recording(ScriptedSimulator):

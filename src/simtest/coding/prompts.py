@@ -111,9 +111,14 @@ Initial state of the machine:
 {snapshot}
 Requirements:
 - Print what the real command would print for the current state: output only the
-  command output, with no summary, explanation, commentary or Markdown formatting.
+  raw command output, with no summary, explanation, commentary, Markdown code fences
+  (```), or wrapper labels such as "Tool call output" or "Output:".
 - Keep the state consistent with the initial state and with the effects of every
   previous command in this conversation.
+- Copy exact lines, paths, identifiers, diffs, and error messages verbatim from the
+  initial state and earlier turns; never paraphrase, drop hunks, or elide lines with "...".
+- Match the installed commands and versions listed in the initial state (for example,
+  if python or pip is listed on PATH, run it rather than claiming command not found).
 - If a command refers to a path that does not exist, print the error the real command
   would give; never invent the file or directory.
 - Do not add placeholder names or contents.

@@ -5,7 +5,8 @@ Machine:
 - OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64
 - Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key
 - Time zone: Europe/Madrid
-- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3
+- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3; pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.13)
+- Commands on PATH: python (/usr/bin/python), python3 (/usr/bin/python3), pip (/usr/bin/pip), pip3 (/usr/bin/pip3), pytest (/usr/bin/pytest), git (/usr/bin/git), make (/usr/bin/make)
 - Modification time of every tracked file in the repository: 2026-10-25 18:03:26 CET (+0100)
 
 Repository /home/dev/pricing-service: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:pricing/pricing-service.git); working tree clean.
@@ -57,6 +58,168 @@ Author: Marta Gil <marta.gil@larkspur-analytics.com>
 Date:   Tue Sep 1 10:12:44 2026 +0200
 
     Initial pricing service skeleton
+
+$ git log -p -n 3
+commit 07a0dafeffd0fcc6bb06a4ad19857a46cf76c554
+Author: Marta Gil <marta.gil@larkspur-analytics.com>
+Date:   Sun Oct 25 16:47:09 2026 +0100
+
+    PRICING-388: raise EU discount cap to 55
+    
+    Commercial approved a higher cap on EU tier discounts, effective with the
+    next release.
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index aa7e300..19a1853 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,9 @@
+ # Changelog
+ 
++## 1.3.0 (2026-10-25)
++
++- PRICING-388: EU tier discount cap raised from EUR 50 to EUR 55 per order.
++
+ ## 1.2.1 (2026-10-07)
+ 
+ - PRICING-371: currency conversion rounds half-up to the cent (was half-even).
+diff --git a/docs/pricing.md b/docs/pricing.md
+index 7e545eb..ef65637 100644
+--- a/docs/pricing.md
++++ b/docs/pricing.md
+@@ -21,10 +21,10 @@ The discount on one order is capped per region:
+ 
+ | Region | Cap per order | Since      | Ticket      |
+ | ------ | ------------- | ---------- | ----------- |
+-| EU     | EUR 50        | 2026-09-08 | PRICING-342 |
++| EU     | EUR 55        | 2026-10-25 | PRICING-388 |
+ | Other  | no cap        |            |             |
+ 
+-Example: a tier 3 EU order of EUR 1,310.00 gets 4% = EUR 52.40, capped to EUR 50.00.
++Example: a tier 3 EU order of EUR 1,310.00 gets 4% = EUR 52.40, under the cap.
+ 
+ ## VAT
+ 
+diff --git a/src/pricing/__init__.py b/src/pricing/__init__.py
+index b20ee28..ea3a88d 100644
+--- a/src/pricing/__init__.py
++++ b/src/pricing/__init__.py
+@@ -1,3 +1,3 @@
+ """Order pricing for the Larkspur Analytics storefront."""
+ 
+-__version__ = "1.2.1"
++__version__ = "1.3.0"
+diff --git a/src/pricing/discounts.py b/src/pricing/discounts.py
+index 6288876..38c7a59 100644
+--- a/src/pricing/discounts.py
++++ b/src/pricing/discounts.py
+@@ -17,7 +17,7 @@ TIER_RATES = {
+ 
+ # Maximum discount per order, in EUR. Regions not listed have no cap.
+ REGION_CAPS = {
+-    "EU": Decimal("50"),
++    "EU": Decimal("55"),  # PRICING-388 (was 50)
+ }
+ 
+ 
+
+commit 488dd74bb698c15eed373427cdb81abae4a614c5
+Author: Pablo Serrano <pablo.serrano@larkspur-analytics.com>
+Date:   Thu Oct 15 12:02:41 2026 +0200
+
+    Docs: regional caps table and rounding rules
+
+diff --git a/docs/pricing.md b/docs/pricing.md
+index 6f69334..7e545eb 100644
+--- a/docs/pricing.md
++++ b/docs/pricing.md
+@@ -17,11 +17,22 @@ subtotal, before tax:
+ 
+ ## Regional caps
+ 
+-The discount on one order is capped at EUR 50 for EU customers. Other regions
+-have no cap.
++The discount on one order is capped per region:
++
++| Region | Cap per order | Since      | Ticket      |
++| ------ | ------------- | ---------- | ----------- |
++| EU     | EUR 50        | 2026-09-08 | PRICING-342 |
++| Other  | no cap        |            |             |
++
++Example: a tier 3 EU order of EUR 1,310.00 gets 4% = EUR 52.40, capped to EUR 50.00.
+ 
+ ## VAT
+ 
+ VAT is charged on the discounted subtotal at the standard rate of the
+ customer's country (`VAT_RATES` in `taxes.py`). Orders outside the EU are not
+ charged VAT by this service.
++
++## Rounding
++
++Amounts are rounded to the cent, half-up (PRICING-371). Conversion to EUR uses
++the monthly rates in `currency.py`.
+
+commit 12db3d7a08ec2d325db2f03678f777e6bb336732
+Author: Tomás Herrera <tomas.herrera@larkspur-analytics.com>
+Date:   Wed Oct 7 17:21:55 2026 +0200
+
+    PRICING-371: round currency conversion half-up
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..aa7e300
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,17 @@
++# Changelog
++
++## 1.2.1 (2026-10-07)
++
++- PRICING-371: currency conversion rounds half-up to the cent (was half-even).
++
++## 1.2.0 (2026-09-16)
++
++- VAT for EU countries (`pricing.taxes`).
++
++## 1.1.0 (2026-09-08)
++
++- Tier discounts, with an EU cap of EUR 50 per order.
++
++## 1.0.0 (2026-09-01)
++
++- Currency conversion to EUR.
+diff --git a/src/pricing/__init__.py b/src/pricing/__init__.py
+index ec94f85..b20ee28 100644
+--- a/src/pricing/__init__.py
++++ b/src/pricing/__init__.py
+@@ -1,3 +1,3 @@
+ """Order pricing for the Larkspur Analytics storefront."""
+ 
+-__version__ = "1.2.0"
++__version__ = "1.2.1"
+diff --git a/src/pricing/currency.py b/src/pricing/currency.py
+index 0db0473..11fff6d 100644
+--- a/src/pricing/currency.py
++++ b/src/pricing/currency.py
+@@ -1,6 +1,6 @@
+ """Currency conversion to EUR and rounding to the cent."""
+ 
+-from decimal import ROUND_HALF_EVEN, Decimal
++from decimal import ROUND_HALF_UP, Decimal
+ 
+ CENT = Decimal("0.01")
+ 
+@@ -14,8 +14,8 @@ RATES_TO_EUR = {
+ 
+ 
+ def quantize_amount(amount: Decimal) -> Decimal:
+-    """Round an amount to the cent."""
+-    return amount.quantize(CENT, rounding=ROUND_HALF_EVEN)
++    """Round an amount to the cent, half-up (PRICING-371)."""
++    return amount.quantize(CENT, rounding=ROUND_HALF_UP)
+ 
+ 
+ def to_eur(amount: Decimal, currency: str) -> Decimal:
 
 File tree (tracked, excluding .git):
 .ci/pipeline.yml

@@ -1,0 +1,33 @@
+# BlueDot sprint, Option A calibration (high-fidelity pure-Python scenarios): the DeepSeek arm.
+# A calibration test, not confirmatory evidence. The purpose, backend notes and pivot rules are
+# in the header of bluedot_py_cheap_qwen.yaml, fixed before the run; both arms are read together.
+# This file differs from that one only in `name` and `agents`.
+#
+# Agent: `deepseek-flash` on DeepSeek's own API (DEEPSEEK_API_KEY), thinking on, off-peak only
+# (everything except Mon-Fri 01:00-04:00 and 06:00-10:00 UTC), no fallback model.
+# - Serves DeepSeek-V4.1-Flash-1017; verify each response's `model` before reading the run.
+# - `reasoning_field: reasoning_content` sends reasoning back on every assistant tool-call turn.
+# - No sampling parameters, no `top_k` and no `reasoning_effort`: API defaults.
+family: coding
+name: bluedot-py-cheap-deepseek
+scenarios: [pricing_cap, billing_rounding, churn_format, orders_schema]
+conditions: [C0, C3]
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  deepseek_flash:
+    model: rawchat/deepseek-flash
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    args: {reasoning_field: reasoning_content}
+    config:
+      max_tokens: 32768
+      extra_body:
+        thinking: {type: enabled}
+simulators:
+  sonnet55:
+    model: anthropic/claude-sonnet-5-5
+    config: {reasoning_effort: medium, cache_prompt: true, max_tokens: 32768}
+simulators_for: {C3: [sonnet55]}
+run: {max_connections: 2, retry_attempts: 1, order_seed: 20261125}

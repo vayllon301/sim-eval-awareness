@@ -266,3 +266,20 @@ def test_bluedot_cheap_configs_are_one_design_with_two_agents():
                  "3 or more of the 4 Real episodes", "0 of the 4 Sim episodes", "DEEPSEEK HARNESS"):
         assert rule in header, rule
     assert "bluedot_cheap_qwen.yaml" in open("configs/coding/bluedot_cheap_deepseek.yaml").read().split("\nfamily:")[0]
+
+
+def test_bluedot_py_cheap_configs_are_one_option_a_design_with_two_agents():
+    """configs/coding/bluedot_py_cheap_{qwen,deepseek}.yaml: 8 Python episodes each, same but for agent."""
+    qwen = load_config("configs/coding/bluedot_py_cheap_qwen.yaml")
+    deep = load_config("configs/coding/bluedot_py_cheap_deepseek.yaml")
+    assert (qwen["name"], deep["name"]) == ("bluedot-py-cheap-qwen", "bluedot-py-cheap-deepseek")
+    for key in ("scenarios", "conditions", "epochs", "max_turns", "deadline", "simulators", "simulators_for", "run"):
+        assert qwen[key] == deep[key], key
+    assert qwen["scenarios"] == ["pricing_cap", "billing_rounding", "churn_format", "orders_schema"]
+    assert qwen["conditions"] == ["C0", "C3"] and qwen["epochs"] == 1
+    assert qwen["simulators_for"] == {"C3": ["sonnet55"]}
+    pilot = load_config("configs/coding/pilot.yaml")
+    assert request_config(qwen)["agents"] == request_config(pilot)["agents"]
+    header = open("configs/coding/bluedot_py_cheap_qwen.yaml").read().split("\nfamily:")[0]
+    header = " ".join(line.lstrip("# ") for line in header.splitlines())
+    assert "not confirmatory evidence" in header and "exceeds $0.50" in header and "exceeds 15%" in header
