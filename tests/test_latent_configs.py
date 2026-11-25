@@ -1,0 +1,57 @@
+"""Validation of the independent Option C (latent-interaction) same-family vs cross-family configs."""
+
+from __future__ import annotations
+
+import pytest
+
+from simtest.coding.run import load_config, request_config
+
+PYTHON_PAIRS = [
+    "pricing_cap", "pricing_cap_benign",
+    "billing_rounding", "billing_rounding_benign",
+    "churn_format", "churn_format_benign",
+    "orders_schema", "orders_schema_benign",
+]
+
+CONFIGS = (
+    ("configs/coding/latent_qwen_hopper_only.yaml", "latent-qwen-hopper-only", ["qwen27b_sim", "agentworld"]),
+    ("configs/coding/latent_qwen_same_family.yaml", "latent-qwen-same-family", ["qwen27b_sim", "sonnet55"]),
+    ("configs/coding/latent_deepseek_same_family.yaml", "latent-deepseek-same-family", ["deepseek_sim", "sonnet55"]),
+)
+
+
+@pytest.mark.parametrize("path, name, sims", CONFIGS)
+def test_latent_configs_load_and_share_the_four_python_pairs(path, name, sims):
+    cfg = load_config(path)
+    assert cfg["name"] == name
+    assert cfg["scenarios"] == PYTHON_PAIRS
+    assert cfg["conditions"] == ["C0", "C3"]
+    assert cfg["epochs"] == 1 and cfg["max_turns"] == 40 and cfg["deadline"] == 60
+    assert cfg["simulators_for"] == {"C3": sims}
+    assert set(cfg["simulators"]) == set(sims)
+    for sim_name in sims:
+        rc = request_config(cfg, sim_name)
+        assert "api_key_env" not in rc["simulator"]["args"]
+
+
+def test_latent_qwen_configs_match_hopper_agent_and_same_family_endpoint():
+    pilot = load_config("configs/coding/pilot.yaml")
+    for path in ("configs/coding/latent_qwen_hopper_only.yaml", "configs/coding/latent_qwen_same_family.yaml"):
+        cfg = load_config(path)
+        assert request_config(cfg)["agents"] == request_config(pilot)["agents"]
+        assert cfg["simulators"]["qwen27b_sim"]["model"] == cfg["agents"]["qwen27b"]["model"]
+        assert cfg["simulators"]["qwen27b_sim"]["args"]["base_url"] == cfg["agents"]["qwen27b"]["args"]["base_url"]
+
+
+def test_latent_deepseek_same_family_matches_direct_api_settings():
+    cfg = load_config("configs/coding/latent_deepseek_same_family.yaml")
+    assert cfg["agents"]["deepseek_flash"]["model"] == "rawchat/deepseek-flash"
+    assert cfg["simulators"]["deepseek_sim"]["model"] == "rawchat/deepseek-flash"
+    assert cfg["agents"]["deepseek_flash"]["args"]["api_key_env"] == "DEEPSEEK_API_KEY"
+    assert cfg["simulators"]["deepseek_sim"]["args"]["api_key_env"] == "DEEPSEEK_API_KEY"
+    assert cfg["simulators"]["deepseek_sim"]["args"]["reasoning_field"] == "reasoning_content"
+    assert request_config(cfg, "sonnet55")["simulator"] == {
+        "model": "anthropic/claude-sonnet-5-5",
+        "args": {},
+        "config": {"cache_prompt": True, "max_tokens": 32768, "reasoning_effort": "medium"},
+    }

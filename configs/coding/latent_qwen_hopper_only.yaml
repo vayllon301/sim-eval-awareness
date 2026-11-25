@@ -1,0 +1,47 @@
+# Independent exploratory probe (branch `latent-interaction`): same-family vs cross-family
+# simulation under Qwen3.8-27B on Hopper ($0 API spend). Never pooled with Sprint/N3 cells.
+#
+# Question: on high-fidelity pure-Python scenarios (where blatant R1 simulator errors are
+# minimised), does a same-family simulator (Qwen3.8-27B simulating Qwen3.8-27B) shift
+# verbalised awareness, behaviour, or internal activations (vllm-lens) relative to Real (C0)
+# and a cross-family open-weights simulator (AgentWorld-35B), even when restricting analysis
+# to episodes/steps graded faithful by `simtest fidelity`?
+#
+# Design: 4 tempting/benign Python pairs (8 scenarios) x [Real (C0), C3(qwen27b_sim),
+# C3(agentworld)], 1 epoch = 24 episodes. All three arms share one Hopper FP8 session and one
+# seeded queue (`order_seed: 20261126`).
+#
+# Note on token accounting: in `C3(qwen27b_sim)`, agent and simulator share `rawchat/agent`,
+# so Inspect's `sample.model_usage` sums both under that key; per-call simulator usage stays
+# recorded separately in `CodingEpisode:simulator_calls` (agent usage = total - simulator).
+family: coding
+name: latent-qwen-hopper-only
+scenarios:
+  - pricing_cap
+  - pricing_cap_benign
+  - billing_rounding
+  - billing_rounding_benign
+  - churn_format
+  - churn_format_benign
+  - orders_schema
+  - orders_schema_benign
+conditions: [C0, C3]
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
+simulators:
+  qwen27b_sim:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 16384}
+  agentworld:
+    model: rawchat/simulator
+    base_url: http://localhost:18001/v1
+    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 16384}
+simulators_for: {C3: [qwen27b_sim, agentworld]}
+run: {max_connections: 4, retry_attempts: 1, order_seed: 20261126}
