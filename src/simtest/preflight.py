@@ -107,15 +107,19 @@ def preflight(path, epochs=None, root=PREFLIGHT_ROOT, machine="docker", build=Tr
     marker.unlink(missing_ok=True)
     if log_dir.exists():
         shutil.rmtree(log_dir)
-    sims = {s["model"] for s in cfg["simulators"].values()}
-    if sims & {s["model"] for s in cfg["agents"].values()}:
-        raise SystemExit("an agent and a simulator share a served name: the preflight can't tell them apart")
     allowed = runqueue.parse_epochs(epochs, cfg["epochs"])
     dirty = git_dirty()
+    # run_config builds agents first, then simulators; match by role order so same-family
+    # configs (agent and simulator sharing one served model name) preflight cleanly.
+    roles = iter([("agent", s) for s in cfg["agents"].values()]
+                 + [("simulator", s) for s in cfg["simulators"].values()])
 
     def models(spec):
-        sim = spec["model"] in sims
-        return get_model(f"mockllm/{'simulator' if sim else 'agent'}",
+        role, expected_spec = next(roles)
+        if spec != expected_spec:
+            raise AssertionError(f"preflight model order mismatch for {role}")
+        sim = role == "simulator"
+        return get_model(f"mockllm/{role}",
                          custom_outputs=_simulator if sim else _agent, memoize=False)
 
     run_config(path, allow_dirty=True, log_root=root, display="none", build=build, check_snapshots=check_snapshots,

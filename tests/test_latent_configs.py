@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from simtest.coding.run import load_config, request_config
+from test_coding_queue_run import machines  # noqa: F401 (pytest fixture)
 
 PYTHON_PAIRS = [
     "pricing_cap", "pricing_cap_benign",
@@ -55,3 +56,17 @@ def test_latent_deepseek_same_family_matches_direct_api_settings():
         "args": {},
         "config": {"cache_prompt": True, "max_tokens": 32768, "reasoning_effort": "medium"},
     }
+
+
+
+def test_preflight_runs_same_family_config_with_shared_served_model(tmp_path, machines):
+    from simtest import preflight as P
+
+    ok, problems, _, _ = P.preflight(
+        "configs/coding/latent_qwen_hopper_only.yaml",
+        root=tmp_path / "pf",
+        machine="fake",
+        build=False,
+        check_snapshots=False,
+    )
+    assert ok and problems == []
