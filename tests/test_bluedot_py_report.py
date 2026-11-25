@@ -172,11 +172,61 @@ OPTION_A_SIM = {"model": "anthropic/claude-sonnet-5-5",
                 "config": {"cache_prompt": True, "max_tokens": 32768, "reasoning_effort": "medium"}, "args": {}}
 
 
+# The agent requests and task limits each Option A config records in its logs' task_args.
+QWEN_AGENTS = {"qwen27b": {"model": "rawchat/agent",
+                           "config": {"max_tokens": 32768, "temperature": 1.0, "top_k": 20, "top_p": 0.95},
+                           "args": {"base_url": "http://localhost:18000/v1"}}}
+DEEPSEEK_AGENTS = {"deepseek_flash": {"model": "rawchat/deepseek-flash",
+                                      "config": {"extra_body": {"thinking": {"type": "enabled"}}, "max_tokens": 32768},
+                                      "args": {"reasoning_field": "reasoning_content",
+                                               "base_url": "https://api.deepseek.com/v1"}}}
+LIMITS = {"max_turns": 40, "deadline": 60, "machine": "docker"}
+
+
+def problems(report, design=OPTION_A_DESIGN, sim=OPTION_A_SIM, condition="C3", agents=QWEN_AGENTS, limits=LIMITS):
+    return report.option_a_problems(design, sim, condition, agents=agents, limits=limits)
+
+
 def test_option_a_design_and_simulator_request_pass(report):
-    assert report.option_a_problems(OPTION_A_DESIGN, None, "C0") == []
-    assert report.option_a_problems(OPTION_A_DESIGN, OPTION_A_SIM, "C3") == []
+    assert problems(report, sim=None, condition="C0") == []
+    assert problems(report) == []
     deepseek = {**OPTION_A_DESIGN, "agents": {"deepseek_flash": "rawchat/deepseek-flash"}}
-    assert report.option_a_problems(deepseek, OPTION_A_SIM, "C3") == []
+    assert problems(report, design=deepseek, agents=DEEPSEEK_AGENTS) == []
+
+
+def test_planned_agent_requests_and_limits_match_the_option_a_configs(report):
+    from simtest.coding import run
+
+    for path, agents in (("configs/coding/bluedot_py_cheap_qwen.yaml", QWEN_AGENTS),
+                         ("configs/coding/bluedot_py_cheap_deepseek.yaml", DEEPSEEK_AGENTS)):
+        cfg = run.load_config(Path(__file__).parents[1] / path)
+        recorded = run.request_config(cfg, "sonnet55")
+        assert recorded["agents"] == agents, path
+        assert recorded["simulator"] == OPTION_A_SIM, path
+        (req,) = agents.values()
+        assert report.PLANNED_AGENT_REQUESTS[req["model"]] == req, path
+        assert {"max_turns": cfg["max_turns"], "deadline": cfg["deadline"]} == {
+            k: v for k, v in report.PLANNED_LIMITS.items() if k != "machine"}, path
+
+
+@pytest.mark.parametrize("agents, limits", [
+    # the served name matches, the request does not
+    ({"qwen27b": {**QWEN_AGENTS["qwen27b"], "config": {**QWEN_AGENTS["qwen27b"]["config"], "temperature": 0.6}}}, LIMITS),
+    ({"qwen27b": {**QWEN_AGENTS["qwen27b"], "config": {**QWEN_AGENTS["qwen27b"]["config"], "max_tokens": 8192}}}, LIMITS),
+    ({"qwen27b": {**QWEN_AGENTS["qwen27b"], "args": {"base_url": "http://localhost:18001/v1"}}}, LIMITS),
+    ({"other": QWEN_AGENTS["qwen27b"]}, LIMITS),                      # not the design's agent
+    ({"qwen27b": DEEPSEEK_AGENTS["deepseek_flash"]}, LIMITS),          # another agent's request
+    ({**QWEN_AGENTS, **DEEPSEEK_AGENTS}, LIMITS),
+    (None, LIMITS),
+    # the task limits
+    (QWEN_AGENTS, {**LIMITS, "max_turns": 20}),
+    (QWEN_AGENTS, {**LIMITS, "deadline": 30}),
+    (QWEN_AGENTS, {**LIMITS, "machine": "local"}),
+    (QWEN_AGENTS, None),
+])
+def test_option_a_problems_flag_changed_agent_requests_and_task_limits(report, agents, limits):
+    assert problems(report, agents=agents, limits=limits)
+    assert problems(report, sim=None, condition="C0", agents=agents, limits=limits)
 
 
 @pytest.mark.parametrize("design_over, sim_over", [
@@ -190,9 +240,9 @@ def test_option_a_design_and_simulator_request_pass(report):
     ({}, {"config": {"cache_prompt": True, "max_tokens": 8192, "reasoning_effort": "medium"}}),
 ])
 def test_option_a_problems_flag_foreign_designs_and_simulators(report, design_over, sim_over):
-    assert report.option_a_problems({**OPTION_A_DESIGN, **design_over}, {**OPTION_A_SIM, **sim_over}, "C3")
-    assert report.option_a_problems(None, OPTION_A_SIM, "C3")
-    assert report.option_a_problems(OPTION_A_DESIGN, None, "C3")
+    assert problems(report, design={**OPTION_A_DESIGN, **design_over}, sim={**OPTION_A_SIM, **sim_over})
+    assert problems(report, design=None)
+    assert problems(report, sim=None)
 
 
 def test_wrong_simulator_cohort_cannot_clear_rules_1_and_2(report):
@@ -285,3 +335,22 @@ def test_rule_2c_keeps_open_on_active_unresolved_admissions(report):
     rows_terminal = design({(a1, s1, "C3"): {"end": "error", "error": ended},
                             (a2, s2, "C3"): {"end": "error", "error": ended}})
     assert fired(report, rows_terminal)["sim_completed"] is True
+
+
+def test_rule_2c_a_running_retry_after_a_terminal_failure_stays_open(report):
+    """A slot whose first attempt failed terminally but whose retry may still finish is
+    unresolved, not crashed: a scored result wins, then an active admission, then failures."""
+    (a1, s1), (a2, s2) = sim_slots()[:2]
+    ended = "interrupted: admitted (queue.jsonl, attempt 1) but it ended without a record"
+    active = "interrupted: admitted (queue.jsonl, attempt 2) but the process was killed, or it is still running"
+    rows = design({(a1, s1, "C3"): {"end": "error", "error": ended},
+                   (a2, s2, "C3"): {"end": "error", "error": ended}})
+    for a, s in ((a1, s1), (a2, s2)):
+        rows.append(ep(arm=f"bluedot-py-cheap-{a}", scenario=s, condition="C3", end="error", error=active))
+    [r2c] = [x for x in report.rules(rows) if x["test"].startswith("sim_completed")]
+    assert r2c["fired"] is None
+    assert "0 crashed only, 2 unresolved" in r2c["detail"]
+    # A scored sibling still takes precedence over both.
+    rows.append(ep(arm=f"bluedot-py-cheap-{a1}", scenario=s1, condition="C3", end="finished"))
+    [r2c] = [x for x in report.rules(rows) if x["test"].startswith("sim_completed")]
+    assert "7 finished" in r2c["detail"] and "1 unresolved" in r2c["detail"]

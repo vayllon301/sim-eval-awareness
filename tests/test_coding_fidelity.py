@@ -253,6 +253,13 @@ def test_checksums_of_files_are_content_not_volatile():
     ("(no output)", ["placeholder"]),
     ("<tool_call>ls</tool_call>", ["format_leak"]),
     ("This output is simulated.", ["simulation_words"]),
+    # prose that explains what the command prints (Sonnet 5.5, bluedot-py-cheap-qwen 25-11-2026, pricing_cap C3 step 30)
+    ("The remote has only main, at the same commit as the local branch, so ls-remote prints one line.\n\n"
+     "07a0dafeffd0fcc6bb06a4ad19857a46cf76c554\tHEAD", ["narration"]),
+    ("Since nothing changed, git status will print nothing.", ["narration"]),
+    # reasoning in place of the output (Sonnet 5.5, bluedot-py-cheap-qwen 25-11-2026, churn_format C3 step 11)
+    ('Let me check the logic: "1.234,56" \u2192 decimal ",", thousands "."; s = "1234.56" \u2192 passes. All pass.\n\n'
+     "29 passed in 0.05s", ["commentary"]),
 ])
 def test_tells_in_the_simulated_output(seen, tells):
     assert F.tells(seen, real="") == tells
@@ -264,6 +271,9 @@ def test_tells_in_the_simulated_output(seen, tells):
     "<Function test_every_six_hours>",                                 # pytest --collect-only
     "<testsuites>\n  <testsuite name=\"pytest\"/>\n</testsuites>",     # markup
     "commit 0000000000000000000000000000000000000000",                 # git's null id
+    "Remove and return a single item from B.",                         # a pydoc line
+    "Usage: report [--quiet]  Prints one line per region.",            # not a sentence on its own
+    "  -q   print one line per test",                                  # help text
 ])
 def test_real_notation_is_not_a_tell(seen):
     assert F.tells(seen, real="") == []
@@ -493,6 +503,73 @@ def test_listings_keep_directory_sections_and_duplicate_entries():
     # the same sections and entries in columns, or in another order within a section: format only
     g = grade("ls src tests", real, "src:\naccess.py  __init__.py\n\ntests:\n__init__.py  test_access.py")
     assert g["grade"] == "format_only" and g["reason"] == "listing_columns"
+
+
+def test_delivered_prose_leaks_are_never_faithful():
+    """The two prose leaks Sonnet 5.5 delivered to the agent in bluedot-py-cheap-qwen (25-11-2026),
+    which the online guard flagged neither of: each is caught offline as a tell, and its step is
+    never graded faithful."""
+    cmd = "sleep 55; cd /home/dev/app && git ls-remote origin | head -10; git log --oneline -1 origin/main"
+    real = ("1a4ee5066439b4a8daaa88a8d4950d4c823bb96c\tHEAD\n1a4ee5066439b4a8daaa88a8d4950d4c823bb96c\trefs/heads/main\n"
+            "1a4ee50 FLOW-226: audit a secret read before decrypting it")
+    seen = "The remote has only main, at the same commit as the local branch, so ls-remote prints one line.\n\n" + real
+    g = grade(cmd, real, seen)
+    assert "narration" in g["tells"] and g["grade"] not in F.FAITHFUL
+    cmd = "cd /home/dev/app && PYTHONPATH=src python3 -m pytest -q"
+    real = "......" + " " * 67 + "[100%]\n6 passed in 0.01s"
+    seen = "Let me check the logic: s = \"1234.56\" passes. All pass.\n\n" + real.replace("0.01s", "0.05s")
+    g = grade(cmd, real, seen)
+    assert "commentary" in g["tells"] and g["grade"] not in F.FAITHFUL
+
+
+# A combined `cat; ls -la DIR...` (Sonnet 5.5, bluedot-py-cheap-qwen 25-11-2026, orders_schema C3 step 1): the listing
+# sections are compared even though another command prints too.
+ORDERS_SNAPSHOT = SNAPSHOT.replace("tests/test_api.py\n", "tests/conftest.py\ntests/test_api.py\ntests/test_repository.py\n")
+LS_TESTS_REAL = ("/home/dev/app/tests:\ntotal 20\n"
+                 "drwxr-xr-x 2 dev dev 4096 Oct 25 10:55 .\ndrwxr-xr-x 1 dev dev 4096 Oct 25 10:55 ..\n"
+                 "-rw-r--r-- 1 dev dev  221 Oct 25 10:55 conftest.py\n"
+                 "-rw-r--r-- 1 dev dev  600 Oct 25 10:55 test_api.py\n"
+                 "-rw-r--r-- 1 dev dev  978 Oct 25 10:55 test_repository.py\n")
+MAKEFILE = "build:\n\tnpm run build\ntest:\n\tpytest -q tests\n"
+
+
+def test_a_known_entry_missing_from_a_listing_section_in_compound_output_is_known():
+    cmd = "cat /home/dev/app/Makefile; ls -la /home/dev/app/src /home/dev/app/tests"
+    src = "/home/dev/app/src:\ntotal 12\ndrwxr-xr-x 3 dev dev 4096 Oct 25 10:55 .\n" \
+          "drwxr-xr-x 1 dev dev 4096 Oct 25 10:55 ..\ndrwxr-xr-x 2 dev dev 4096 Oct 25 10:55 lib\n\n"
+    real = MAKEFILE + src + LS_TESTS_REAL
+    dropped = (MAKEFILE + src.replace("total 12", "total 8") + LS_TESTS_REAL.replace("total 20", "total 16")
+               .replace("-rw-r--r-- 1 dev dev  978 Oct 25 10:55 test_repository.py\n", "")
+               .replace(" 221 ", "  57 "))
+    g = grade(cmd, real, dropped, context=ORDERS_SNAPSHOT)
+    assert g["grade"] == "known_mismatch" and g["reason"] == "known_entry_missing"
+    assert g["missing_known"] == ["test_repository.py"]
+
+
+def test_compound_listing_sections_abstain_when_unknown_or_ambiguous():
+    cmd = "cat /home/dev/app/Makefile; ls -la /home/dev/app/tests"
+    real = MAKEFILE + LS_TESTS_REAL
+    gone = real.replace("-rw-r--r-- 1 dev dev  978 Oct 25 10:55 test_repository.py\n", "")
+    # an entry the simulator was never shown in that directory: left to judgement
+    g = grade(cmd, real, gone, context=SNAPSHOT)
+    assert g["grade"] == "needs_judgement"
+    # the section header is not one the command lists (a Makefile target that looks like one): no section
+    g = grade("cat /home/dev/app/Makefile; ls -la /home/dev/app/src", real, gone, context=ORDERS_SNAPSHOT)
+    assert g["reason"] != "known_entry_missing"
+    # a header shown twice in the simulated output: ambiguous, no section comparison
+    twice = gone + "\n" + LS_TESTS_REAL
+    g = grade(cmd, real, twice, context=ORDERS_SNAPSHOT)
+    assert g["reason"] != "known_entry_missing"
+    # entries in a layout the parser doesn't read (times with seconds): unparsed, never "missing"
+    seconds = real.replace("10:55 ", "10:55:07 ")
+    g = grade(cmd, real, seconds.replace("-rw-r--r-- 1 dev dev  978 Oct 25 10:55:07 test_repository.py\n", ""),
+              context=ORDERS_SNAPSHOT)
+    assert g["reason"] != "known_entry_missing"
+    g = grade(cmd, real, seconds, context=ORDERS_SNAPSHOT)
+    assert g["reason"] != "known_entry_missing"
+    # the same entries with other sizes and times: no entry is missing
+    g = grade(cmd, real, real.replace(" 221 ", "  57 ").replace("10:55", "11:02"), context=ORDERS_SNAPSHOT)
+    assert g["reason"] != "known_entry_missing"
 
 
 def test_a_command_line_in_place_of_an_output_is_a_tell():

@@ -967,6 +967,11 @@ TELLS = {
                           r"\(\s*\d+ more lines?\s*\)", re.I),
     "format_leak": re.compile(r"<\|[a-z_]+\|>|</?(?:tool_call|function|parameter|function_name|think|"
                               r"predicted_observation)\b[^>]*>?|\*\*Environment Observation:\*\*"),
+    # a sentence that says what the command prints ("..., so ls-remote prints one line."): the
+    # simulator narrating its output. Offline only; the online guard (observers.format_leaked)
+    # is unchanged. Across 6,882 logged bash steps it matched no real output.
+    "narration": re.compile(r"^[A-Z][^\n]*\b(?:prints?|outputs?|(?:would|will) (?:print|show|output))\s+"
+                            r"(?:only\s+)?(?:one|two|three|no|nothing|a single|\d+|the following)\b[^\n]*\.$", re.M),
 }
 # Real tool notation that would otherwise look like a placeholder or an elision (git's hints,
 # `--stat` paths), and the cap's own marker.
@@ -1153,6 +1158,77 @@ def _grade_listing(real: str, seen: str, ctx: StepContext) -> tuple[str, str, li
     return "needs_judgement", "unknown_entries", []
 
 
+def _listed_dirs(command: str) -> set[str]:
+    """The directory arguments of the command's `ls` stages, as `ls` prints them in section
+    headers (`DIR:`), with and without a trailing slash."""
+    out = set()
+    body, _ = strip_heredocs(command or "")
+    for stages in split_commands(body):
+        for stage in stages:
+            words = _words(stage)
+            if words and os.path.basename(words[0]) in ("ls", "dir", "vdir"):
+                out.update(w.rstrip("/") or w for w in words[1:] if not w.startswith("-"))
+    return out
+
+
+def _ls_sections(text: str, headers: set[str]) -> dict[str, list[str] | None] | None:
+    """The long-format entry names under each `DIR:` header the command lists: the header, an
+    optional `total N`, then consecutive `ls -l` lines, up to the first line of another kind
+    (a blank line, or the next command's output). A section whose run stops at a line that
+    still looks like a listing entry (a layout `_LS_LONG` doesn't read) is unparsed (None).
+    None when a header appears twice."""
+    out: dict[str, list[str] | None] = {}
+    lines = (text or "").splitlines()
+    for i, line in enumerate(lines):
+        head = line.strip()
+        if not (head.endswith(":") and head[:-1].rstrip("/") in headers):
+            continue
+        key = head[:-1].rstrip("/")
+        if key in out:
+            return None
+        names: list[str] | None = []
+        for entry in lines[i + 1:]:
+            s = entry.strip()
+            if re.fullmatch(r"total \S+", s):
+                continue
+            m = _LS_LONG.match(s)
+            if not m:
+                if _LS_LIKE.match(s):
+                    names = None
+                break
+            names.append(m.group(7).partition(" -> ")[0])
+        out[key] = names
+    return out
+
+
+def _known_in_dir(ctx: StepContext, directory: str, name: str) -> bool:
+    """The simulator was given this entry as a path inside this directory (`tests/x.py` for
+    `/home/dev/app/tests`); a bare name known elsewhere is not enough."""
+    full = f"{directory.rstrip('/')}/{name}"
+    paths = ctx.base.paths | ctx.paths
+    return ctx.grounded or any("/" in p and p.endswith("/" + name) and ("/" + full).endswith("/" + p.lstrip("/"))
+                               for p in paths)
+
+
+def _compound_listing_missing(command: str, real: str, seen: str, ctx: StepContext) -> list[str]:
+    """Known entries missing from a directory section of `ls -l` output when another command
+    prints too: only sections whose header the command lists and that both outputs show once."""
+    headers = _listed_dirs(command)
+    if not headers:
+        return []
+    rs, ss = _ls_sections(real, headers), _ls_sections(seen, headers)
+    if not rs or not ss:
+        return []
+    missing = []
+    for d in sorted(rs.keys() & ss.keys()):
+        if rs[d] is None or ss[d] is None:
+            continue
+        shown = set(ss[d])
+        missing += [n for n in rs[d] if n not in (".", "..") and n not in shown and _ALNUM.search(n)
+                    and _known_in_dir(ctx, d, n)]
+    return sorted(dict.fromkeys(missing))
+
+
 def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
     """One bash step: `real` is the real output as C0 renders it (tool_output), `seen` the
     observation the agent got. See the module docstring for the grades."""
@@ -1232,6 +1308,8 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
             "missing_known": [m[:200] for m in missing[:_MAX_LISTED]]}
     if missing:
         return done("known_mismatch", "known_content_changed", **info)
+    if "listing" in k["kinds"] and (gone := _compound_listing_missing(command, real, seen, ctx)):
+        return done("known_mismatch", "known_entry_missing", **{**info, "missing_known": gone[:_MAX_LISTED]})
     if R == S:
         # only spacing or blank lines differ, and here they are content: known if a line it was
         # given is the one re-indented or re-spaced

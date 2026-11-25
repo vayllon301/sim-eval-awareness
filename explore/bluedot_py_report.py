@@ -45,13 +45,40 @@ PLANNED = len(PLANNED_SIM_SLOTS)   # 8 episodes per condition (4 scenarios x 2 p
 SIM_MODEL = "anthropic/claude-sonnet-5-5"
 SIM_CONFIG = {"cache_prompt": True, "max_tokens": 32768, "reasoning_effort": "medium"}
 PLANNED_CONDITIONS = [REAL, SIM]
+# The agent request each planned agent records (`request_config.agents`, simtest.coding.run's
+# request_config) and the task limits, as the two configs set them: a run served under the same
+# name with another endpoint, sampling setting, turn cap or deadline is not Option A.
+PLANNED_AGENT_REQUESTS = {
+    PLANNED_QWEN: {"model": PLANNED_QWEN,
+                   "config": {"max_tokens": 32768, "temperature": 1.0, "top_k": 20, "top_p": 0.95},
+                   "args": {"base_url": "http://localhost:18000/v1"}},
+    PLANNED_DEEPSEEK: {"model": PLANNED_DEEPSEEK,
+                       "config": {"extra_body": {"thinking": {"type": "enabled"}}, "max_tokens": 32768},
+                       "args": {"base_url": "https://api.deepseek.com/v1", "reasoning_field": "reasoning_content"}},
+}
+PLANNED_LIMITS = {"max_turns": 40, "deadline": 60, "machine": "docker"}
 
 
-def option_a_problems(design: dict | None, sim_request: dict | None, condition: str) -> list[str]:
-    """Why a run's recorded design or simulator request is not Option A's (empty if it is)."""
+def option_a_problems(design: dict | None, sim_request: dict | None, condition: str, *,
+                      agents: dict | None, limits: dict | None) -> list[str]:
+    """Why a run's recorded design, agent request, task limits or simulator request is not
+    Option A's (empty if it is). `agents` is the task's recorded `request_config.agents`,
+    `limits` its recorded max_turns, deadline and machine."""
     problems = []
     if not isinstance(design, dict):
         return ["no design recorded"]
+    if not isinstance(agents, dict) or len(agents) != 1:
+        problems.append(f"agent requests {agents!r}, not one planned agent")
+    else:
+        (name, req), = agents.items()
+        model = req.get("model") if isinstance(req, dict) else None
+        planned = PLANNED_AGENT_REQUESTS.get(model)
+        if (design.get("agents") or {}).get(name) != model or len(design.get("agents") or {}) != 1:
+            problems.append(f"agent request {name!r} is not the design's agent {design.get('agents')!r}")
+        if req != planned:
+            problems.append(f"agent request {req!r}, not {planned!r}")
+    if not isinstance(limits, dict) or limits != PLANNED_LIMITS:
+        problems.append(f"task limits {limits!r}, not {PLANNED_LIMITS!r}")
     if design.get("conditions") != PLANNED_CONDITIONS:
         problems.append(f"conditions {design.get('conditions')!r}, not {PLANNED_CONDITIONS!r}")
     if set(design.get("scenarios") or []) != PLANNED_SCENARIOS or len(design.get("scenarios") or []) != len(PLANNED_SCENARIOS):
@@ -77,8 +104,9 @@ def option_a_problems(design: dict | None, sim_request: dict | None, condition: 
     return problems
 
 
-def _sim_requests(log_dir: Path) -> dict:
-    """The simulator request each (condition, simulator name) task recorded in its logs."""
+def _task_requests(log_dir: Path) -> dict:
+    """What each (condition, simulator name) task recorded in its logs' task_args, one record
+    per log: its simulator request, its agent requests and its task limits."""
     from inspect_ai.log import list_eval_logs, read_eval_log
 
     from simtest.coding import analysis as A
@@ -90,8 +118,10 @@ def _sim_requests(log_dir: Path) -> dict:
             continue
         args = log.eval.task_args
         key = (args.get("condition"), A._simulator_name(log))
-        request = (args.get("request_config") or {}).get("simulator")
-        found.setdefault(key, []).append(request)
+        request_config = args.get("request_config") or {}
+        found.setdefault(key, []).append({"simulator": request_config.get("simulator"),
+                                          "agents": request_config.get("agents"),
+                                          "limits": {k: args.get(k) for k in PLANNED_LIMITS}})
     return found
 
 
@@ -160,7 +190,7 @@ def read(log_dirs: list[Path], judge: list[Path] = ()) -> list[dict]:
     log_cache: dict[str, object] = {}
     for log_dir in map(Path, log_dirs):
         episodes, run_design = A.load_run(log_dir)
-        requests = _sim_requests(log_dir)
+        requests = _task_requests(log_dir)
         for e in sorted(episodes, key=lambda e: (e["scenario"], e["condition"], e["epoch"], e["end_reason"])):
             sample = log = None
             if e["log_path"] is not None:
@@ -183,11 +213,13 @@ def read(log_dirs: list[Path], judge: list[Path] = ()) -> list[dict]:
             r["unresolved_admission"] = (e.get("log") == "queue.jsonl"
                                          and "still running" in (e.get("error") or ""))
             seen = requests.get((e["condition"], e["simulator"]), [])
-            problems = option_a_problems(run_design, seen[0] if seen else None, e["condition"])
+            first = seen[0] if seen else {}
+            problems = option_a_problems(run_design, first.get("simulator"), e["condition"],
+                                         agents=first.get("agents"), limits=first.get("limits"))
             if not seen:
                 problems.append(f"no log records the request of task {e['condition']}/{e['simulator']}")
             elif any(x != seen[0] for x in seen):
-                problems.append(f"task {e['condition']}/{e['simulator']} has differing simulator requests")
+                problems.append(f"task {e['condition']}/{e['simulator']} has differing requests or limits")
             r["design_mismatch"] = "; ".join(problems) or None
             rows.append(r)
     B._check_unique_scored_slots(rows)
@@ -266,10 +298,11 @@ def rules(rows: list[dict]) -> list[dict]:
                           + (f"; {missing_sm} missing fidelity" if missing_sm else ""),
                 "fired": True if mismatches > 0 else (False if sim_complete and not missing_sm else None)})
 
-    # Rule 2c: fewer than 7 of 8 planned Sim episodes complete (`no_tool_call`). A slot that
-    # ended without finishing is scored at max_turns, or has terminal crashes (error,
-    # agent_*, simulator_*, ...) and no scored sibling; an active/unreleased queue.jsonl
-    # admission ("still running") is unresolved and keeps the rule open instead of firing.
+    # Rule 2c: fewer than 7 of 8 planned Sim episodes complete (`no_tool_call`). Per slot, a
+    # scored result takes precedence, then an active/unreleased queue.jsonl admission ("still
+    # running": unresolved, it may still finish, so it keeps the rule open), then terminal
+    # crashes (error, agent_*, simulator_*, ...): a slot that ended without finishing is scored
+    # at max_turns, or has only terminal crashes.
     def _unresolved(r: dict) -> bool:
         return bool(r.get("unresolved_admission")) or (
             r.get("end") == "error" and "still running" in (r.get("error") or "")
@@ -277,9 +310,9 @@ def rules(rows: list[dict]) -> list[dict]:
 
     finished_slots = {B._slot_key(r) for r in sim if r["end"] == "finished"}
     scored_nonfinished_slots = sim_slots - finished_slots
+    unresolved_slots = {B._slot_key(r) for r in sim_all if _unresolved(r)} - sim_slots
     terminal_failed_slots = {B._slot_key(r) for r in sim_all
-                             if r["end"] not in ("finished", "max_turns") and not _unresolved(r)} - sim_slots
-    unresolved_slots = {B._slot_key(r) for r in sim_all if _unresolved(r)} - sim_slots - terminal_failed_slots
+                             if r["end"] not in ("finished", "max_turns") and not _unresolved(r)} - sim_slots - unresolved_slots
     resolved_sim_slots = sim_slots | terminal_failed_slots
     all_sim_slots = resolved_sim_slots | unresolved_slots
     unfinished = scored_nonfinished_slots | terminal_failed_slots
