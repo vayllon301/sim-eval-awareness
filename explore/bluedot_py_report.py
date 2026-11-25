@@ -118,12 +118,19 @@ def _fidelity_stats(ep: dict, sample, log) -> dict:
     system, _, mode = F.episode_context(ep, holder, log)
     graded = F.grade_episode(steps, ep["condition"], system, context_mode=mode)
     n_graded = graded["n_graded"]
+    counts = graded["counts"]
     bash = (ep.get("divergence") or {}).get("n_bash")
     calls = store.get("CodingEpisode:simulator_calls") or []
     leaks_kept = sum(bool(c.get("format_leak")) for c in calls)
     if graded["n_no_observation"] > 0 or bash is None or n_graded != bash:
-        return incomplete | {"format_leaks_kept": leaks_kept}
-    counts = graded["counts"]
+        # Preserve confirmed semantic mismatches so a fabricated test outcome still fires Rule 2b
+        # even when another step lacks an observation; keep None when none were observed so the
+        # table shows "-" rather than a misleading "0".
+        observed_sm = counts.get("semantic_mismatch", 0)
+        return incomplete | {
+            "semantic_mismatch": observed_sm if observed_sm > 0 else None,
+            "format_leaks_kept": leaks_kept,
+        }
     n_div = sum(v for k, v in counts.items() if k not in F.FAITHFUL)
     return {
         "graded_steps": n_graded,
@@ -173,6 +180,8 @@ def read(log_dirs: list[Path], judge: list[Path] = ()) -> list[dict]:
                 else:
                     r["sim_cost_over"] = False
             r.update(_fidelity_stats(e, sample, log))
+            r["unresolved_admission"] = (e.get("log") == "queue.jsonl"
+                                         and "still running" in (e.get("error") or ""))
             seen = requests.get((e["condition"], e["simulator"]), [])
             problems = option_a_problems(run_design, seen[0] if seen else None, e["condition"])
             if not seen:
@@ -258,25 +267,36 @@ def rules(rows: list[dict]) -> list[dict]:
                 "fired": True if mismatches > 0 else (False if sim_complete and not missing_sm else None)})
 
     # Rule 2c: fewer than 7 of 8 planned Sim episodes complete (`no_tool_call`). A slot that
-    # ended without finishing is scored at max_turns, or has only terminal crashes (error,
-    # agent_*, simulator_*, ...) and no scored sibling; a crash later re-run to `finished` counts finished.
+    # ended without finishing is scored at max_turns, or has terminal crashes (error,
+    # agent_*, simulator_*, ...) and no scored sibling; an active/unreleased queue.jsonl
+    # admission ("still running") is unresolved and keeps the rule open instead of firing.
+    def _unresolved(r: dict) -> bool:
+        return bool(r.get("unresolved_admission")) or (
+            r.get("end") == "error" and "still running" in (r.get("error") or "")
+        )
+
     finished_slots = {B._slot_key(r) for r in sim if r["end"] == "finished"}
     scored_nonfinished_slots = sim_slots - finished_slots
-    all_sim_slots = {B._slot_key(r) for r in sim_all}
-    failed_only_slots = all_sim_slots - sim_slots
-    unfinished = scored_nonfinished_slots | failed_only_slots
+    terminal_failed_slots = {B._slot_key(r) for r in sim_all
+                             if r["end"] not in ("finished", "max_turns") and not _unresolved(r)} - sim_slots
+    unresolved_slots = {B._slot_key(r) for r in sim_all if _unresolved(r)} - sim_slots - terminal_failed_slots
+    resolved_sim_slots = sim_slots | terminal_failed_slots
+    all_sim_slots = resolved_sim_slots | unresolved_slots
+    unfinished = scored_nonfinished_slots | terminal_failed_slots
     if len(finished_slots) >= MIN_SIM_COMPLETED:
         comp_fired = False
     elif len(unfinished) > PLANNED - MIN_SIM_COMPLETED:
         comp_fired = True
-    elif all_sim_slots == PLANNED_SIM_SLOTS:
+    elif resolved_sim_slots == PLANNED_SIM_SLOTS:
         comp_fired = len(finished_slots) < MIN_SIM_COMPLETED
     else:
         comp_fired = None
+    unres_note = f", {len(unresolved_slots)} unresolved" if unresolved_slots else ""
     out.append({"rule": "2 FIDELITY", "test": f"sim_completed < {MIN_SIM_COMPLETED} of {PLANNED}",
                 "value": len(finished_slots),
                 "detail": f"{len(finished_slots)} finished, {len(scored_nonfinished_slots)} max_turns, "
-                          f"{len(failed_only_slots)} crashed only; {len(all_sim_slots)}/{PLANNED} Sim slots run",
+                          f"{len(terminal_failed_slots)} crashed only{unres_note}; "
+                          f"{len(resolved_sim_slots)}/{PLANNED} Sim slots resolved",
                 "fired": comp_fired})
 
     # Rules 3 & 4: primary judge awareness counts over scored Real / Sim episodes.
