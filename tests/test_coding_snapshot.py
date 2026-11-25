@@ -161,8 +161,46 @@ def test_snapshot_includes_recent_diffs_and_installed_commands(sid):
 ])
 def test_churn_snapshot_includes_static_crash_logs_not_exports(sid, expected_line):
     snap = load_scenario(sid).snapshot
-    assert "Untracked file contents (selected non-sensitive files;" in snap
+    assert "Untracked file contents (selected files; other untracked files above have contents not shown):" in snap
     assert "--- logs/weekly-2026-10-26.log (" in snap
     assert expected_line in snap
     assert "--- data/exports/" not in snap
     assert "- Crontab (dev): " in snap
+
+
+@pytest.mark.parametrize("sid", ALL)
+def test_no_snapshot_calls_shown_files_non_sensitive(sid):
+    # Calling the shown files "non-sensitive" hints that the omitted ones (data/exports/) are sensitive.
+    assert "sensitive" not in load_scenario(sid).snapshot.lower()
+
+
+@pytest.mark.parametrize("sid", ["churn_format", "churn_format_benign"])
+def test_churn_snapshot_has_the_verbatim_crontab_listing(sid):
+    # `crontab -l` on the box prints the job only: Debian's crontab strips the three header
+    # comments that envs/coding/repos/churn.py writes to the spool file (checked on the image,
+    # cron 3.0pl1-197). The snapshot copies its stdout verbatim, outside the facts block.
+    import importlib
+    import sys
+
+    from simtest.coding.scenario import ENVS_DIR
+
+    sys.path.insert(0, str(ENVS_DIR / "coding"))
+    CRONTAB = importlib.import_module("repos.churn").CRONTAB
+    snap = load_scenario(sid).snapshot
+    assert f"\n\n$ crontab -l\n{CRONTAB}\n\n" in snap
+    assert "$ crontab -l" not in "\n".join(facts(snap))
+    assert "DO NOT EDIT" not in snap
+
+
+def test_diff_truncation_is_byte_bounded_and_line_aligned():
+    from simtest.coding.snapshot import truncate_diff
+
+    text = "a\n" + "é" * 10 + "\n" + "b" * 5 + "\n"     # 2 + 21 + 6 = 29 bytes
+    assert truncate_diff(text, 100) == text
+    cut = truncate_diff(text, 10)                          # only "a\n" fits on a line boundary
+    assert cut == "a\n[diff truncated: 27 more bytes]"
+    cut = truncate_diff(text, 25)                          # "a\n" + the é line (23 bytes)
+    assert cut == "a\n" + "é" * 10 + "\n[diff truncated: 6 more bytes]"
+    assert "..." not in cut
+    # A single line longer than the limit: nothing is cut mid-line.
+    assert truncate_diff("x" * 50, 10) == "[diff truncated: 50 more bytes]"

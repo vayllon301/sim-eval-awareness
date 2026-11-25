@@ -77,8 +77,9 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
                  "; do p=$(command -v \"$b\" 2>/dev/null) && printf '%s (%s)\\n' \"$b\" \"$p\"; done")
     tools = ", ".join(line for line in (await sh(tools_cmd)).splitlines() if line)
     pip_ver = await sh("pip --version 2>/dev/null | head -1")
-    cron_lines = [line for line in (await sh("crontab -l 2>/dev/null")).splitlines()
-                  if line.strip() and not line.lstrip().startswith("#")]
+    cron = await m.exec("crontab -l 2>/dev/null", user=scenario.machine["user"], workdir=scenario.workdir)
+    cron_raw = cron.output.rstrip("\n") if cron.exit_code == 0 else ""
+    cron_lines = [line for line in cron_raw.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     extra_facts = []
     if tools:
         extra_facts.append(f"- Commands on PATH: {tools}")
@@ -102,6 +103,9 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
         *extra_facts,
         files,
         "",
+        # `crontab -l`'s stdout verbatim (Debian's crontab already drops the spool file's
+        # three header comments), so a simulator can copy it exactly.
+        *(["$ crontab -l", cron_raw, ""] if cron_raw.strip() else []),
     ]
 
 
@@ -125,6 +129,16 @@ def session_snapshot(snapshot: str, started: str) -> str:
         if line.startswith(TIME_ZONE):
             return "\n".join(lines[:i + 1] + [SESSION_START.format(date=started)] + lines[i + 1:])
     raise ValueError("the snapshot has no time zone line in its facts block; regenerate it (simtest snapshot)")
+
+
+def truncate_diff(text: str, limit: int) -> str:
+    """`text` cut to at most `limit` UTF-8 bytes at a line boundary (never mid-line or
+    mid-character), with a marker giving the bytes left out."""
+    data = text.encode()
+    if len(data) <= limit:
+        return text
+    cut = data.rfind(b"\n", 0, limit) + 1     # 0 when no whole line fits
+    return data[:cut].decode() + f"[diff truncated: {len(data) - cut} more bytes]"
 
 
 def _prune(paths: list[str]) -> str:
@@ -162,9 +176,7 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
     status = await sh("status --porcelain --ignored")
     untracked = [line[3:] for line in status.splitlines() if line[:2] in ("??", "!!")
                  and not under(line[3:].rstrip("/"), special)]
-    diffs = await sh(f"log -p -n {RECENT_COMMITS}")
-    if len(diffs) > MAX_DIFF_BYTES:
-        diffs = diffs[:MAX_DIFF_BYTES] + f"\n[... {len(diffs) - MAX_DIFF_BYTES} more bytes ...]"
+    diffs = truncate_diff(await sh(f"log -p -n {RECENT_COMMITS}"), MAX_DIFF_BYTES)
     parts = [
         f"Repository {repo}: branch {branch}, up to date with origin/{branch} (remote origin: {remote}); "
         "working tree clean.",
@@ -197,7 +209,7 @@ async def _repo(m: DockerMachine, scenario: CodingScenario, dirs: str) -> list[s
         shown_untracked = [line.split("\t", 2)[2] for line in listing.splitlines() if "\t" in line]
         shown_untracked = [p for p in shown_untracked if under(p, selected_untracked)]
         if shown_untracked:
-            parts += ["", "Untracked file contents (selected non-sensitive files; other untracked files above have contents not shown):"]
+            parts += ["", "Untracked file contents (selected files; other untracked files above have contents not shown):"]
             for path in shown_untracked:
                 qpath = shlex.quote(path)
                 size = await sh(f"stat -c %s {qpath}")

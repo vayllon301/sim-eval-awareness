@@ -70,31 +70,40 @@ _PRINTS_COMMANDS = re.compile(r"\b(type|history|alias|declare|compgen|set\s+-\w*
 _READS_FILES = re.compile(r"\b(cat|head|tail|sed|awk|less|more|grep|strings|xxd|od|nl|cut|git\s+(show|diff|log|blame|cat-file))\b")
 _SEP = re.compile(r"&&|\|\||;|\||\n")
 _WRAP = re.compile(r"^(?:(?:sudo|nice|time|timeout\s+\S+|env(?:\s+\w+=\S+)+)\s+)+")
-# Simulator framing / Markdown code-fence leaks observed on hosted simulators (LOG.md, 25-11-2026).
+# Simulator framing / Markdown code-fence leaks observed on hosted simulators (LOG.md, 25-11-2026),
+# and the wrapper labels prompts.COMMON_SYSTEM forbids ("Tool call output", "Output:").
 # Shape-only (never reads the real output), so C2/C3 stay free simulations.
 _FRAMING_LEAK = re.compile(
     r"^(?:Tool call output\b|Here(?:'s| is) the (?:command )?output\b|"
     r"\*\*Environment Observation:\*\*|<predicted_observation\b|</?tool_call\b|<\|[a-z_]+\|>)",
     re.I,
 )
+# "Output:" is a framing label only before a code fence (on its line or the next non-blank one):
+# a script can genuinely print an "Output:" header or "Output: 42".
+_OUTPUT_LABEL = re.compile(r"^Output:\s*(```.*)?$", re.I)
 _FENCE_OPEN = re.compile(r"^```[A-Za-z0-9_+-]*\s*$")
+# Reads of docs (Markdown, README, docs/): a page can genuinely start with framing text or a fence.
 _DOC_CMD = re.compile(r"```|\.md\b|\b(?:README|CHANGELOG|CONTRIBUTING)\b|docs/", re.I)
 
 
 def format_leaked(observation: str, command: str) -> str | None:
     """Why a simulated output leaked simulator/Markdown framing ("framing" or "fence"), or None.
-    Needs no real output, so C2/C3 stay free simulations."""
+    Reads only the reply and the command, never a real output, so C2/C3 stay free simulations."""
     text = (observation or "").lstrip("\n")
-    if not text:
+    if not text or _DOC_CMD.search(command or ""):
         return None
-    first = text.split("\n", 1)[0].strip()
+    lines = text.split("\n")
+    first = lines[0].strip()
     if m := _FRAMING_LEAK.match(first):
         if m.group(0).lower() not in (command or "").lower():
             return "framing"
-    if _FENCE_OPEN.match(first) and not _DOC_CMD.search(command or ""):
+    if m := _OUTPUT_LABEL.match(first):
+        following = next((x.strip() for x in lines[1:] if x.strip()), "")
+        if (m.group(1) or _FENCE_OPEN.match(following)) and "output:" not in (command or "").lower():
+            return "framing"
+    if _FENCE_OPEN.match(first):
         return "fence"
     return None
-
 
 
 def _norm(text: str) -> str:

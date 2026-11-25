@@ -1106,3 +1106,45 @@ def test_line_numbers_skip_git_log_p_unified_diff_headers():
     assert nums["new_line()"] == {2}
     assert "+++ b/src/app.py" not in nums
     assert "-old_line()" not in nums
+
+
+def test_line_numbers_keep_counting_after_a_diff_inside_a_file():
+    """A `diff --git` line inside a shown file (a .patch, a doc) must not switch numbering off for
+    every later file: only `$ git log -p` starts the diff section."""
+    snap = (
+        "Tracked file contents:\n"
+        "--- docs/fix.patch (60 bytes)\n"
+        "diff --git a/x.py b/x.py\n"
+        "patch_body_line()\n"
+        "--- src/later.py (30 bytes)\n"
+        "later_first()\n"
+        "later_second()\n"
+    )
+    nums = F._line_numbers(snap)
+    assert nums["patch_body_line()"] == {2}
+    assert nums["later_first()"] == {1}
+    assert nums["later_second()"] == {2}
+
+
+def test_line_numbers_accept_a_sized_header_for_a_path_under_a():
+    """`--- a/foo.py (42 bytes)` is a snapshot file header (a tracked file under a/); only a bare
+    `--- a/...` or `--- /dev/null` is a diff header."""
+    snap = (
+        "Tracked file contents:\n"
+        "--- a/foo.py (42 bytes)\n"
+        "foo_first()\n"
+        "foo_second()\n"
+        "--- logs/run.log\n"
+        "log_first()\n"
+        "--- a/bare.py\n"
+        "after_bare()\n"
+        "--- /dev/null\n"
+        "after_null()\n"
+    )
+    nums = F._line_numbers(snap)
+    assert nums["foo_first()"] == {1}
+    assert nums["foo_second()"] == {2}
+    assert nums["log_first()"] == {1}
+    # bare diff-style headers are not file headers: the log's numbering continues
+    assert nums["after_bare()"] == {3}
+    assert nums["after_null()"] == {5}

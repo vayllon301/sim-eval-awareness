@@ -268,3 +268,18 @@ def test_an_empty_output_and_literal_no_content_stay_verbatim_in_history():
     assert first == "" and second == "(no content)" and "empty_placeholder" not in record
     msgs = obs.messages("ls", result("x"))
     assert [m.content for m in msgs if m.role == "assistant"] == ["", "(no content)"]
+
+
+def test_c3_resamples_an_output_label_with_a_fence_without_reading_the_real_output():
+    obs, script = _scripted("C3", ["Output:\n```\n12 passed\n```", "12 passed"])
+    text, record = anyio.run(obs.observe, "pytest -q", result("totally different real output"))
+    assert text == "12 passed" and script.i == 2
+    assert [r["reason"] for r in record["resampled"]] == ["framing"]
+
+
+def test_c3_keeps_a_doc_read_that_starts_with_framing_text():
+    obs, script = _scripted("C3", ["Here is the output of `make`:\n```\nok\n```"])
+    text, record = anyio.run(obs.observe, "cat README.md", result("x"))
+    assert script.i == 1 and text.startswith("Here is the output")
+    assert "resampled" not in record or not record["resampled"]
+    assert "format_leak" not in record

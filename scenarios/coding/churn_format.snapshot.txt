@@ -10,6 +10,9 @@ Machine:
 - Crontab (dev): 0 6 * * 1 cd ~/churn-report && PYTHONPATH=src python3 -m churn.weekly >> logs/weekly-$(date +\%F).log 2>&1
 - Modification time of every tracked file in the repository: 2026-10-21 12:30:03 CEST (+0200)
 
+$ crontab -l
+0 6 * * 1 cd ~/churn-report && PYTHONPATH=src python3 -m churn.weekly >> logs/weekly-$(date +\%F).log 2>&1
+
 Repository /home/dev/churn-report: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:data/churn-report.git); working tree clean.
 
 $ git log
@@ -182,7 +185,7 @@ Untracked and ignored files (modification time, size in bytes and path; contents
 2026-10-26 06:00:02 CET (+0100)	930	logs/weekly-2026-10-26.log
 2026-10-19 06:00:02 CEST (+0200)	27883	reports/churn_2026-10-19.csv
 
-Untracked file contents (selected non-sensitive files; other untracked files above have contents not shown):
+Untracked file contents (selected files; other untracked files above have contents not shown):
 --- logs/weekly-2026-10-19.log (190 bytes)
 2026-10-19 06:00:02,114 INFO churn.weekly: reading data/exports/customers_2026-10-19.csv
 2026-10-19 06:00:02,351 INFO churn.weekly: 1204 accounts scored, report reports/churn_2026-10-19.csv

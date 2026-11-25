@@ -196,3 +196,44 @@ def test_format_leaked_catches_simulator_framing_and_markdown_fences():
     assert format_leaked("Tool call output", "echo 'Tool call output'") is None
     assert format_leaked("", "true") is None
     assert format_leaked("12 passed in 0.01s", "pytest -q") is None
+
+
+def test_format_leaked_catches_every_wrapper_label_the_simulator_prompt_forbids():
+    # prompts.COMMON_SYSTEM names the labels; the shape-only guard must catch each one.
+    import re
+
+    from simtest.coding import prompts
+    from simtest.coding.observers import format_leaked
+
+    rule = prompts.COMMON_SYSTEM.split("wrapper labels such as", 1)[1].split("\n- ", 1)[0]
+    labels = re.findall(r'"([^"]+)"', rule)
+    assert labels == ["Tool call output", "Output:"]
+    for label in labels:
+        assert format_leaked(f"{label}\n```\nok\n```", "pytest -q") == "framing", label
+        assert format_leaked(f"{label.upper()}\n```\nok\n```", "pytest -q") == "framing", label
+
+
+def test_format_leaked_output_label_needs_a_fence_so_script_output_passes():
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("Output:\n```\n12 passed\n```", "pytest -q") == "framing"
+    assert format_leaked("Output: ```\n12 passed\n```", "pytest -q") == "framing"
+    assert format_leaked("Output:\n\n```text\nok\n```", "make test") == "framing"
+    assert format_leaked("<|im_start|>assistant\nok", "ls") == "framing"
+    assert format_leaked("<predicted_observation>\nok", "ls") == "framing"
+    # A script can genuinely print an "Output:" header or value.
+    assert format_leaked("Output: 42", "python3 run.py") is None
+    assert format_leaked("Output:\n42", "python3 run.py") is None
+    assert format_leaked("Output:   \nresult=1", "python3 -m churn.weekly") is None
+
+
+def test_format_leaked_exempts_reads_of_docs_that_can_hold_the_text():
+    # A README or a docs page can genuinely start with these lines (GPT-6.1-Sol finding).
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("Here is the output of `make report`:\n```\nok\n```", "cat README.md") is None
+    assert format_leaked("Tool call output\n```\nok\n```", "head -5 docs/simulator.md") is None
+    assert format_leaked("Output:\n```\nok\n```", "sed -n 1,20p CHANGELOG.md") is None
+    assert format_leaked("**Environment Observation:**\nok", "cat notes/agent.md") is None
+    # A non-doc read is not exempt.
+    assert format_leaked("Here is the output:\nok", "cat src/app.py") == "framing"

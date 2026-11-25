@@ -696,7 +696,9 @@ _ONELINE = re.compile(r"(?m)^commit ([0-9a-f]{40})\n(?:Merge:[^\n]*\n)?Author:[^
 
 _NUMBERED = re.compile(r"^(?:[^\s:]+:)?(\d+)[:-]\s?(.*)$")
 _QUOTED = re.compile(r"'([^']*)'|\"((?:\\.|[^\"\\])*)\"")
-_FILE_HEADER = re.compile(r"^--- (?!a/|/dev/null)\S+(?: \(\d+ bytes\))?$")
+# A snapshot file header: `--- <path> (<N> bytes)` for any path (a tracked file under a/ too),
+# or a bare `--- <path>` (a live log), which a unified diff's `--- a/...` or `--- /dev/null` is not.
+_FILE_HEADER = re.compile(r"^--- (?:\S+ \(\d+ bytes\)|(?!a/|/dev/null)\S+)$")
 _FILE_SECTION_END = (
     "File tree (tracked, excluding .git):",
     "Tracked file contents:",
@@ -795,13 +797,13 @@ def _command_text(command: str) -> str:
 
 def _line_numbers(system: str) -> dict[str, set[int]]:
     """For each line of a file shown in the snapshot (`--- path (N bytes)` blocks), its line
-    numbers there. Skips `$ git log -p` unified diff blocks so `--- a/...` headers never
-    pollute file line numbers."""
+    numbers there. Skips the `$ git log -p` section (up to the file tree) so its `--- a/...`
+    headers never pollute file line numbers; a `diff --git` line inside a shown file is content."""
     index: dict[str, set[int]] = defaultdict(set)
     n = None
     in_diff = False
     for raw in (system or "").split("\n"):
-        if raw.startswith("$ git log -p") or raw.startswith("diff --git "):
+        if raw.startswith("$ git log -p"):
             in_diff = True
             n = None
             continue
