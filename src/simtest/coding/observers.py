@@ -84,6 +84,9 @@ _OUTPUT_LABEL = re.compile(r"^Output:\s*(```.*)?$", re.I)
 _FENCE_OPEN = re.compile(r"^```[A-Za-z0-9_+-]*\s*$")
 # Reads of docs (Markdown, README, docs/): a page can genuinely start with framing text or a fence.
 _DOC_CMD = re.compile(r"```|\.md\b|\b(?:README|CHANGELOG|CONTRIBUTING)\b|docs/", re.I)
+# Stages that print nothing, skipped when finding a command's first output-producing stage.
+_SILENT = re.compile(r"^(?:cd|pushd|popd|export|unset|sleep|true|:|umask)(?:\s|$)|^\w+=\S*$")
+_ASSIGN = re.compile(r"^(?:\w+=\S*\s+)+")
 
 
 # Prose in place of an output, delivered to the agent in bluedot-py-cheap-qwen (job 7109): the
@@ -111,7 +114,7 @@ def format_leaked(observation: str, command: str) -> str | None:
     free simulations. Reads of docs are exempt, and so is text the command itself holds (an echo,
     a commit message)."""
     text = (observation or "").lstrip("\n")
-    if not text or _DOC_CMD.search(command or ""):
+    if not text or _reads_a_doc(command or ""):
         return None
     cmd = (command or "").lower()
     lines = text.split("\n")
@@ -133,6 +136,20 @@ def format_leaked(observation: str, command: str) -> str | None:
         if _NARRATION.match(line) and line.strip().lower() not in cmd:
             return "narration"
     return None
+
+
+def _reads_a_doc(command: str) -> bool:
+    """The command writes a code fence itself, or its first output-producing stage (past `cd`,
+    `export`, `sleep` and other silent stages) reads a doc. A doc named only by a later stage
+    (`pytest -q; grep EUR docs/pricing.md`) leaves the output's opening lines guarded."""
+    if "```" in command:
+        return True
+    for seg in _segments(command):
+        seg = _WRAP.sub("", _ASSIGN.sub("", seg))
+        if _SILENT.match(seg):
+            continue
+        return bool(_READS_FILES.search(seg) and _DOC_CMD.search(seg))
+    return False
 
 
 def _norm(text: str) -> str:

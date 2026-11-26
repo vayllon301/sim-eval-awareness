@@ -540,3 +540,41 @@ def test_reading_v1_and_v2_log_directories_together_is_refused(report):
     assert report.check_cohorts({Path("logs/a"): {"bluedot-py-cheap-qwen"}}) == "v1"
     # an unknown config: no cohort, so every row is a design mismatch
     assert report.check_cohorts({Path("logs/a"): {"latent-qwen-hopper-v2"}}) is None
+
+
+def _qwen_v2_rows(**sim):
+    return [r for r in _v2_rows(**sim) if "qwen" in r["arm"]]
+
+
+def test_a_rejected_deepseek_v2_arm_keeps_its_slots_and_blocks_every_pass(report):
+    # A DeepSeek v2 arm whose provenance failed (another temperature, say) is not dropped from the
+    # plan: its 4 + 4 slots stay expected, so a clean Qwen arm alone cannot pass any gate.
+    bad = [{**r, "design_mismatch": "agent request config {'temperature': 0.6} differs"}
+           for r in _v2_rows() if "deepseek" in r["arm"]]
+    g = gates(report, _qwen_v2_rows() + bad)
+    assert True not in g.values(), g
+    # a confirmed failure in the planned rows still reads as a failure
+    rows = _qwen_v2_rows() + bad
+    rows[1]["prose_tells"] = 1
+    rows[3]["semantic_mismatch"] = 1
+    g = gates(report, rows)
+    assert g["prose_leaks"] is False and g["test_semantic_mismatches"] is False
+
+
+def test_a_foreign_model_row_blocks_every_v2_pass(report):
+    # A row from an agent outside the plan (in no planned slot) never lets a gate pass
+    foreign = {**_qwen_v2_rows()[1], "agent_model": "rawchat/other", "arm": "bluedot-py-v2-other"}
+    g = gates(report, _qwen_v2_rows() + [foreign])
+    assert True not in g.values(), g
+    details = [x["detail"] for x in report.v2_gates(_qwen_v2_rows() + [foreign])]
+    assert all("excluded" in d for d in details), details
+    rows = _qwen_v2_rows() + [foreign]
+    rows[1]["prose_tells"] = 1
+    assert gates(report, rows)["prose_leaks"] is False
+    # without it the same Qwen arm passes
+    assert set(gates(report, _qwen_v2_rows()).values()) == {True}
+
+
+def test_v2_cost_detail_shows_one_amount_when_the_span_is_exact(report):
+    (cost,) = [x for x in report.v2_gates(_v2_rows()) if x["gate"] == "cost"]
+    assert cost["detail"].startswith("$0.960 over 8/8"), cost["detail"]
