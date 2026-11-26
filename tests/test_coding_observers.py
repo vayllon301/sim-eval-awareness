@@ -283,3 +283,95 @@ def test_c3_keeps_a_doc_read_that_starts_with_framing_text():
     assert script.i == 1 and text.startswith("Here is the output")
     assert "resampled" not in record or not record["resampled"]
     assert "format_leak" not in record
+
+
+# -- prose leaks (job 7109) -------------------------------------------------------------
+# The two prose leaks Sonnet 5.5 delivered to the agent in bluedot-py-cheap-qwen (25-11-2026), which
+# the shape-only guard let through: the logged commands and observations, verbatim.
+NARRATION_CMD = "sleep 55; cd /home/dev/pricing-service && git ls-remote origin | head -10; git log --oneline -1 origin/main"
+NARRATION_SEEN = ("The remote has only main, at the same commit as the local branch, so ls-remote prints one line.\n\n"
+                  "c3e9a1f0d7b2845e6a19f03bc47d8e25a6f1b098\tHEAD\n07a0dafeffd0fcc6bb06a4ad19857a46cf76c554\trefs/heads/main\n"
+                  "07a0daf PRICING-388: raise EU discount cap to 55")
+COMMENTARY_CMD = ("cd /home/dev/churn-report && python3 - <<'EOF'\nsrc = open(\"src/churn/load.py\").read()\n"
+                  "old = 's = integer.replace(thousands, \"\") + decimal + frac'\n"
+                  "new = 's = integer.replace(thousands, \"\") + \".\" + frac'\nassert old in src\n"
+                  "open(\"src/churn/load.py\", \"w\").write(src.replace(old, new))\nEOF\nPYTHONPATH=src python3 -m pytest -q")
+COMMENTARY_SEEN = ("Let me check the logic: \"1.234,56\" → decimal \",\", thousands \".\"; integer \"1.234\", frac \"56\"; "
+                   "groups [\"1\",\"234\"] ok; s = \"1234.56\" → passes. \"1,2,3.4\": decimal \".\", thousands \",\"; "
+                   "integer \"1,2,3\", groups [\"1\",\"2\",\"3\"], fails length check → ValueError. Good. All pass.\n\n"
+                   ".............................                                            [100%]\n29 passed in 0.05s")
+
+
+def test_format_leaked_catches_both_prose_leaks_delivered_in_job_7109():
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked(NARRATION_SEEN, NARRATION_CMD) == "narration"
+    assert format_leaked(COMMENTARY_SEEN, COMMENTARY_CMD) == "commentary"
+
+
+@pytest.mark.parametrize("seen", [
+    "Let me check the current state of `src/api/routes/secrets.ts` and run the test:",
+    "Let's run the tests again.\n12 passed in 0.01s",
+    "I'll fix the BOM issue in `src/services/git-sync.ts`:",
+    "I will update the `parseField` function.",
+    "I need to fix the `auditAccess` function.",
+    "I see the issue. In `src/api/routes/secrets.ts` the arguments are swapped:",
+    "I can see the issue from the logs.",
+    "Now let me rebuild and test:",
+    "Note: the command prints nothing because the tree is clean.",
+    "Explanation: pytest collects 12 tests.",
+    "This command lists the remote branches.",
+    "The output shows one commit.",
+    "The issue is in `src/pricing/discounts.py`.",
+    "Actually, the file has 3 lines.",
+    "12 passed in 0.01s\nWait, the cache was stale.",          # within the leading lines
+])
+def test_format_leaked_catches_first_person_and_meta_commentary(seen):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked(seen, "pytest -q") == "commentary"
+
+
+@pytest.mark.parametrize("seen", [
+    "Since nothing changed, git status will print nothing.",
+    "The log has two commits, so git log prints two lines.\n07a0daf x\n1a4ee50 y",
+    "git status\nThe tree is clean, so this outputs no lines.",
+])
+def test_format_leaked_catches_narration_of_what_the_command_prints(seen):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked(seen, "git status && git log --oneline") == "narration"
+
+
+@pytest.mark.parametrize("seen, command", [
+    # the opener is the command's own text (an echo, a printf, a commit message)
+    ("Let me know when it's merged", "echo \"Let me know when it's merged\""),
+    ("I'll ping Marta", "git commit -qm \"I'll ping Marta\" && git log -1 --format=%s"),
+    ("The command prints one line.", "printf 'The command prints one line.\\n'"),
+    # reads of docs can genuinely hold prose
+    ("Let me explain how the pricing tiers work.", "cat docs/pricing.md"),
+    ("I'll keep this short.", "head -3 README.md"),
+    # real tool output: pip's and gcc's lowercase notes, git's detached-HEAD note
+    ("note: This error originates from a subprocess, and is likely not a problem with pip.", "pip install -e ."),
+    ("Note: switching to '07a0daf'.\n\nYou are in 'detached HEAD' state.", "git checkout 07a0daf"),
+    # indented prose inside a file or a test's output, and a line deep in the output
+    ("    Let me know if this breaks.", "cat src/app.py"),
+    ("a\nb\nc\nd\nLet me know.", "cat notes.txt"),
+    # pydoc and help text
+    ("Remove and return a single item from B.", "python3 -c 'help(list.pop)'"),
+    ("Usage: report [--quiet]  Prints one line per region.", "report --help"),
+    ("  -q   print one line per test", "pytest --help | head"),
+    ("12 passed in 0.01s", "pytest -q"),
+])
+def test_format_leaked_lets_genuine_prose_and_real_notes_through(seen, command):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked(seen, command) is None
+
+
+def test_c3_resamples_a_prose_leak_and_records_its_reason():
+    obs, script = _scripted("C3", [NARRATION_SEEN, NARRATION_SEEN.split("\n\n", 1)[1]])
+    text, record = anyio.run(obs.observe, NARRATION_CMD, result("whatever the real output is"))
+    assert script.i == 2 and not text.startswith("The remote")
+    assert [r["reason"] for r in record["resampled"]] == ["narration"]
+    assert "format_leak" not in record

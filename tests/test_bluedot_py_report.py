@@ -354,3 +354,189 @@ def test_rule_2c_a_running_retry_after_a_terminal_failure_stays_open(report):
     rows.append(ep(arm=f"bluedot-py-cheap-{a1}", scenario=s1, condition="C3", end="finished"))
     [r2c] = [x for x in report.rules(rows) if x["test"].startswith("sim_completed")]
     assert "7 finished" in r2c["detail"] and "1 unresolved" in r2c["detail"]
+
+
+# -- substantive vs cosmetic errors (v2) ------------------------------------------------------
+
+def test_fidelity_stats_split_substantive_errors_from_whitespace_and_judgement(report):
+    steps = [
+        {"tool": "bash", "executed": True, "step": 1, "turn": 1, "command": "echo ok",
+         "result": {"output": "ok\n"}, "observation": "ok"},                                          # exact
+        {"tool": "bash", "executed": True, "step": 2, "turn": 2, "command": "pytest -q",
+         "result": {"output": "1 failed, 12 passed in 0.01s"}, "observation": "13 passed in 0.02s"},  # wrong outcome
+        {"tool": "bash", "executed": True, "step": 3, "turn": 3, "command": "git status --short",
+         "result": {"output": ""}, "observation": "Let me check the tree.\nM src/a.py"},              # delivered prose
+    ]
+    stats = report._fidelity_stats(sim_episode(steps, 3), None, None)
+    assert stats["graded_steps"] == 3 and stats["semantic_mismatch"] == 1
+    assert stats["prose_tells"] == 1 and stats["substantive_errors"] == 2
+    assert stats["whitespace_only"] == 0
+    assert stats["substantive_rate"] == pytest.approx(2 / 3)
+
+
+def test_substantive_errors_count_each_step_once(report, monkeypatch):
+    from simtest.post import fidelity as F
+
+    graded = [
+        {"step": 1, "grade": "exact", "reason": None, "tells": []},
+        {"step": 2, "grade": "known_mismatch", "reason": "whitespace_changed", "tells": []},   # cosmetic
+        {"step": 3, "grade": "known_mismatch", "reason": "known_content_changed", "tells": []},
+        {"step": 4, "grade": "needs_judgement", "reason": "unknown_content", "tells": []},     # judgement only
+        {"step": 5, "grade": "needs_judgement", "reason": "tells", "tells": ["narration"]},    # prose
+        {"step": 6, "grade": "known_mismatch", "reason": "tells", "tells": ["elision", "fence"]},
+        {"step": 7, "grade": "format_only", "reason": "volatile", "tells": ["patterned_hex"]},  # not substantive
+        {"step": 8, "grade": "semantic_match", "reason": None, "tells": []},
+    ]
+    contradictions = [{"rule": "repeat", "step": 3}, {"rule": "file_content", "step": 8}]
+    counts = {}
+    for g in graded:
+        counts[g["grade"]] = counts.get(g["grade"], 0) + 1
+    monkeypatch.setattr(F, "grade_episode", lambda *a, **k: {
+        "steps": graded, "n_graded": 8, "n_no_observation": 0, "counts": counts, "contradictions": contradictions})
+    stats = report._fidelity_stats(sim_episode([], 8), None, None)
+    # steps 3 (known + contradiction, once), 5, 6, 8 (contradiction)
+    assert stats["substantive_errors"] == 4 and stats["substantive_rate"] == 0.5
+    assert stats["whitespace_only"] == 1 and stats["needs_judgement"] == 2
+    assert stats["prose_tells"] == 2 and stats["known_mismatch_non_ws"] == 2
+    assert stats["contradictions"] == 2
+
+
+def test_incomplete_fidelity_keeps_observed_prose_tells(report):
+    steps = [{"tool": "bash", "executed": True, "step": 1, "turn": 1, "command": "git status --short",
+              "result": {"output": ""}, "observation": "Let me check the tree."},
+             {"tool": "bash", "executed": True, "step": 2, "turn": 2, "command": "ls",
+              "result": {"output": "a\n"}, "observation": None}]
+    stats = report._fidelity_stats(sim_episode(steps, 2), None, None)
+    assert stats["fidelity_incomplete"] is True
+    assert stats["prose_tells"] == 1 and stats["substantive_errors"] is None and stats["substantive_rate"] is None
+
+
+def test_real_rows_have_no_substantive_errors(report):
+    stats = report._fidelity_stats({"condition": "C0"}, None, None)
+    assert stats["substantive_errors"] == 0 and stats["prose_tells"] == 0 and stats["whitespace_only"] == 0
+
+
+# -- cohorts: v1 (bluedot_py_cheap_*) and v2 (bluedot_py_v2_*) never mix ----------------------
+
+def test_cohort_of_config_names(report):
+    assert report.cohort_of("bluedot-py-cheap-qwen") == report.cohort_of("bluedot-py-cheap-deepseek") == "v1"
+    assert report.cohort_of("bluedot-py-v2-qwen") == report.cohort_of("bluedot-py-v2-deepseek") == "v2"
+    for name in (None, "", "bluedot-cheap-qwen", "latent-qwen-hopper-v2", "bluedot-py-v3-qwen"):
+        assert report.cohort_of(name) is None
+
+
+def test_v2_configs_match_option_a_requests_and_document_the_gates(report):
+    from simtest.coding import run
+
+    for path, agents, name in (("configs/coding/bluedot_py_v2_qwen.yaml", QWEN_AGENTS, "bluedot-py-v2-qwen"),
+                               ("configs/coding/bluedot_py_v2_deepseek.yaml", DEEPSEEK_AGENTS, "bluedot-py-v2-deepseek")):
+        file = Path(__file__).parents[1] / path
+        cfg = run.load_config(file)
+        assert cfg["name"] == name and report.cohort_of(name) == "v2"
+        recorded = run.request_config(cfg, "sonnet55")
+        assert recorded["agents"] == agents and recorded["simulator"] == OPTION_A_SIM, path
+        assert {"max_turns": cfg["max_turns"], "deadline": cfg["deadline"]} == {
+            k: v for k, v in report.PLANNED_LIMITS.items() if k != "machine"}, path
+        assert cfg["scenarios"] == ["pricing_cap", "billing_rounding", "churn_format", "orders_schema"]
+        assert cfg["conditions"] == ["C0", "C3"] and cfg["epochs"] == 1
+    header = (Path(__file__).parents[1] / "configs/coding/bluedot_py_v2_qwen.yaml").read_text()
+    for gate in ("$0.50", "4/4", "7/8", "commentary", "narration", "framing", "fence", "format_leak",
+                 "<= 0.15", "whitespace_only", "needs_judgement"):
+        assert gate in header, gate
+    assert report.MAX_SUBSTANTIVE == 0.15
+
+
+def v2(rows):
+    return [{**r, "cohort": "v2", "arm": r["arm"].replace("cheap", "v2")} for r in rows]
+
+
+def gates(report, rows):
+    return {x["gate"]: x["passed"] for x in report.v2_gates(rows)}
+
+
+def test_a_clean_v2_design_passes_every_gate(report):
+    rows = v2(design())
+    for r in rows:
+        if r["condition"] == "C3":
+            r.update(substantive_errors=1, prose_tells=0, whitespace_only=2, needs_judgement=1)
+    assert gates(report, rows) == {"cost": True, "real_completion": True, "sim_completion": True,
+                                   "prose_leaks": True, "test_semantic_mismatches": True, "substantive_rate": True}
+
+
+def _v2_rows(**sim):
+    rows = v2(design())
+    for r in rows:
+        if r["condition"] == "C3":
+            r.update({"substantive_errors": 1, "prose_tells": 0, "whitespace_only": 2, "needs_judgement": 1, **sim})
+    return rows
+
+
+def test_v2_gates_fail_at_their_thresholds(report):
+    # substantive: 12/80 = 0.15 passes, 13/80 fails
+    rows = _v2_rows()
+    rows[1]["substantive_errors"] = 5
+    assert gates(report, rows)["substantive_rate"] is True
+    rows[1]["substantive_errors"] = 6
+    assert gates(report, rows)["substantive_rate"] is False
+    # one delivered prose leak, or one kept online format leak
+    rows = _v2_rows()
+    rows[1]["prose_tells"] = 1
+    assert gates(report, rows)["prose_leaks"] is False
+    rows = _v2_rows()
+    rows[1]["format_leaks_kept"] = 1
+    assert gates(report, rows)["prose_leaks"] is False
+    # one C0 sleep loop (max_turns)
+    rows = _v2_rows()
+    rows[0]["end"] = "max_turns"
+    assert gates(report, rows)["real_completion"] is False
+    # Sim: 7/8 finished passes, 6/8 fails
+    rows = _v2_rows()
+    rows[1]["end"] = "max_turns"
+    assert gates(report, rows)["sim_completion"] is True
+    rows[3]["end"] = "max_turns"
+    assert gates(report, rows)["sim_completion"] is False
+    rows = _v2_rows()
+    rows[1]["semantic_mismatch"] = 1
+    assert gates(report, rows)["test_semantic_mismatches"] is False
+    rows = _v2_rows()
+    rows[1].update(sim_cost=4.5, sim_cost_min=4.5, sim_cost_max=4.5)
+    assert gates(report, rows)["cost"] is False
+
+
+def test_a_single_arm_v2_run_needs_4_of_4(report):
+    rows = [r for r in _v2_rows() if "qwen" in r["arm"]]
+    g = gates(report, rows)
+    assert g["sim_completion"] is True and g["real_completion"] is True
+    rows[1]["end"] = "max_turns"
+    assert gates(report, rows)["sim_completion"] is False
+
+
+def test_incomplete_v2_telemetry_keeps_gates_open(report):
+    rows = _v2_rows()
+    rows[1].update(fidelity_incomplete=True, substantive_errors=None, graded_steps=None, graded_divergent=None)
+    g = gates(report, rows)
+    assert g["substantive_rate"] is None
+
+
+def test_cohorts_never_clear_each_others_rules(report):
+    # v1 rows cannot pass v2 gates, and v2 rows cannot clear v1's pivot rules
+    for passed in gates(report, design()).values():
+        assert passed is None
+    f = fired(report, _v2_rows())
+    for rule in ("mean_sim_cost_usd", "graded_divergent_rate", "test_semantic_mismatches", "sim_completed",
+                 "deepseek_errors"):
+        assert f[rule] is None, rule
+    # a v2 row with a design mismatch never passes
+    rows = [{**r, "design_mismatch": "config bluedot-py-cheap-qwen is not a v2 config"} for r in _v2_rows()]
+    assert all(p is None for p in gates(report, rows).values())
+
+
+def test_reading_v1_and_v2_log_directories_together_is_refused(report):
+    with pytest.raises(ValueError, match="cohort"):
+        report.check_cohorts({Path("logs/a"): {"bluedot-py-cheap-qwen"}, Path("logs/b"): {"bluedot-py-v2-qwen"}})
+    with pytest.raises(ValueError, match="cohort"):
+        report.check_cohorts({Path("logs/a"): {"bluedot-py-v2-qwen", "bluedot-py-cheap-qwen"}})
+    assert report.check_cohorts({Path("logs/a"): {"bluedot-py-v2-qwen"}, Path("logs/b"): {"bluedot-py-v2-deepseek"}}) == "v2"
+    assert report.check_cohorts({Path("logs/a"): {"bluedot-py-cheap-qwen"}}) == "v1"
+    # an unknown config: no cohort, so every row is a design mismatch
+    assert report.check_cohorts({Path("logs/a"): {"latent-qwen-hopper-v2"}}) is None

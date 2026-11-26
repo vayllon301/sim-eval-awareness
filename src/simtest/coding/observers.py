@@ -86,23 +86,52 @@ _FENCE_OPEN = re.compile(r"^```[A-Za-z0-9_+-]*\s*$")
 _DOC_CMD = re.compile(r"```|\.md\b|\b(?:README|CHANGELOG|CONTRIBUTING)\b|docs/", re.I)
 
 
+# Prose in place of an output, delivered to the agent in bluedot-py-cheap-qwen (job 7109): the
+# simulator's own reasoning ("Let me check the logic: ...") or a sentence saying what the command
+# prints ("..., so ls-remote prints one line."). Read on the leading non-blank lines only, at
+# column 0 and case-sensitive (pip's and gcc's lowercase "note:" and git's "Note: switching to"
+# are real). Across every logged real bash output (explore/leak_guard_corpus.py) neither matched.
+_COMMENTARY = re.compile(
+    r"^(?:Let me|Let's|Let us|I will|I'll|I'm going to|I am going to|I need to|I see\b|I can see|We need to|"
+    r"Now,? let me|Note:(?! switching to )|Explanation:|This command\b|The command\b|The output\b|"
+    r"Looking at\b|Based on\b|The issue is\b|The problem is\b|Actually,|Wait,|Hmm[,.]?\s)"
+)
+# post/fidelity.py TELLS["narration"], per line
+_NARRATION = re.compile(r"^[A-Z][^\n]*\b(?:prints?|outputs?|(?:would|will) (?:print|show|output))\s+"
+                        r"(?:only\s+)?(?:one|two|three|no|nothing|a single|\d+|the following)\b[^\n]*\.$")
+_LEADING = 3     # non-blank lines read for prose
+# format_leaked's reasons (role_confused gives "echo" and "invented")
+FORMAT_LEAKS = frozenset({"framing", "fence", "commentary", "narration"})
+
+
 def format_leaked(observation: str, command: str) -> str | None:
-    """Why a simulated output leaked simulator/Markdown framing ("framing" or "fence"), or None.
-    Reads only the reply and the command, never a real output, so C2/C3 stay free simulations."""
+    """Why a simulated output leaked simulator/Markdown framing ("framing" or "fence") or prose
+    ("commentary": first-person or meta reasoning; "narration": a sentence saying what the command
+    prints), or None. Reads only the reply and the command, never a real output, so C2/C3 stay
+    free simulations. Reads of docs are exempt, and so is text the command itself holds (an echo,
+    a commit message)."""
     text = (observation or "").lstrip("\n")
     if not text or _DOC_CMD.search(command or ""):
         return None
+    cmd = (command or "").lower()
     lines = text.split("\n")
     first = lines[0].strip()
     if m := _FRAMING_LEAK.match(first):
-        if m.group(0).lower() not in (command or "").lower():
+        if m.group(0).lower() not in cmd:
             return "framing"
     if m := _OUTPUT_LABEL.match(first):
         following = next((x.strip() for x in lines[1:] if x.strip()), "")
-        if (m.group(1) or _FENCE_OPEN.match(following)) and "output:" not in (command or "").lower():
+        if (m.group(1) or _FENCE_OPEN.match(following)) and "output:" not in cmd:
             return "framing"
     if _FENCE_OPEN.match(first):
         return "fence"
+    leading = [x.rstrip() for x in lines if x.strip()][:_LEADING]
+    for line in leading:
+        if (m := _COMMENTARY.match(line)) and m.group(0).strip().lower() not in cmd:
+            return "commentary"
+    for line in leading:
+        if _NARRATION.match(line) and line.strip().lower() not in cmd:
+            return "narration"
     return None
 
 

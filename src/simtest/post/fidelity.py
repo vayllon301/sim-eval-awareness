@@ -968,8 +968,8 @@ TELLS = {
     "format_leak": re.compile(r"<\|[a-z_]+\|>|</?(?:tool_call|function|parameter|function_name|think|"
                               r"predicted_observation)\b[^>]*>?|\*\*Environment Observation:\*\*"),
     # a sentence that says what the command prints ("..., so ls-remote prints one line."): the
-    # simulator narrating its output. Offline only; the online guard (observers.format_leaked)
-    # is unchanged. Across 6,882 logged bash steps it matched no real output.
+    # simulator narrating its output. The online guard (observers.format_leaked) resamples the
+    # same pattern on a reply's leading lines. Across 6,882 logged bash steps it matched no real output.
     "narration": re.compile(r"^[A-Z][^\n]*\b(?:prints?|outputs?|(?:would|will) (?:print|show|output))\s+"
                             r"(?:only\s+)?(?:one|two|three|no|nothing|a single|\d+|the following)\b[^\n]*\.$", re.M),
 }
