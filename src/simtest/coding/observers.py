@@ -111,14 +111,27 @@ def format_leaked(observation: str, command: str) -> str | None:
     """Why a simulated output leaked simulator/Markdown framing ("framing" or "fence", on its first
     or its last non-blank line) or prose ("commentary": first-person or meta reasoning;
     "narration": a sentence saying what the command prints), or None. Reads only the reply and the
-    command, never a real output, so C2/C3 stay free simulations. Reads of docs are exempt (a
-    command that starts by reading one; for the closing fence, one whose last output-producing
-    stage reads one), and so is text the command itself holds (an echo, a commit message)."""
+    command, never a real output, so C2/C3 stay free simulations. Reads of docs are exempt, each
+    end on its own: the opening checks (framing, opening fence, commentary, narration) when the
+    command's first output-producing stage reads one, the closing fence when its last one does
+    (`cat README.md; pytest -q` ending in a stray fence is caught). A command that writes a fence
+    itself exempts both, and text the command holds (an echo, a commit message) is never a leak."""
     text = (observation or "").lstrip("\n")
-    if not text or _reads_a_doc(command or ""):
+    if not text:
         return None
-    cmd = (command or "").lower()
     lines = text.split("\n")
+    if not _reads_a_doc(command or "") and (why := _opening_leak(lines, (command or "").lower())):
+        return why
+    # a fence closing the reply (agentworld, pricing_cap_benign step 8 in job 7122), unless the
+    # output's last part comes from a doc or the command writes a fence itself
+    last = next((x.strip() for x in reversed(lines) if x.strip()), "")
+    if _FENCE_OPEN.match(last) and "```" not in (command or "") and not _tail_reads_a_doc(command or ""):
+        return "fence"
+    return None
+
+
+def _opening_leak(lines: list[str], cmd: str) -> str | None:
+    """format_leaked's checks on a reply's first lines (`cmd` lowercased)."""
     first = lines[0].strip()
     if m := _FRAMING_LEAK.match(first):
         if m.group(0).lower() not in cmd:
@@ -136,11 +149,6 @@ def format_leaked(observation: str, command: str) -> str | None:
     for line in leading:
         if _NARRATION.match(line) and line.strip().lower() not in cmd:
             return "narration"
-    # a fence closing the reply (agentworld, pricing_cap_benign step 8 in job 7122), unless the
-    # output's last part comes from a doc
-    last = next((x.strip() for x in reversed(lines) if x.strip()), "")
-    if _FENCE_OPEN.match(last) and not _tail_reads_a_doc(command or ""):
-        return "fence"
     return None
 
 

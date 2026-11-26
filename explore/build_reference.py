@@ -3,7 +3,9 @@
 The rule, fixed before any C2 episode used them: epoch 1 of C0, per scenario, commands and the outputs
 as the agent saw them, nothing else. Only an episode the agent ended itself counts, unflagged. The
 transcript stops before the first command outside the exact read-only allowlist: with the whole
-episode the simulator showed the agent's fix as if it had happened (LOG.md, 05-11-2026).
+episode the simulator showed the agent's fix as if it had happened (LOG.md, 05-11-2026). The six
+Python scenarios' allowlists end with the agent's first, unedited test or schema check, the one
+output that runs code, audited before any edit (review of 99d2c4c); the flows ones run no test.
 
     uv run python explore/build_reference.py logs/n2-pilot
     uv run python explore/build_reference.py logs/latent-qwen-hopper-only --scenarios pricing_cap billing_rounding

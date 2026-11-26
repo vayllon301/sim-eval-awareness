@@ -272,10 +272,15 @@ def test_simulator_prompt_asks_for_exact_content_without_counting_spaces():
 def test_simulator_prompt_states_bash_control_flow():
     # job 7122: `python -c ... && git diff` printed the diff after a ModuleNotFoundError
     # (agentworld, pricing_cap_benign step 8): `&&` must stop at a failing stage
+    # (agentworld, pricing_cap_benign step 8). But only the `&&` operand is skipped: bash goes on to
+    # a later `;` or `||` stage (review of 99d2c4c; billing_rounding step 11's `...; echo done`)
     rule = " ".join(next(x for x in prompts.COMMON_SYSTEM.split("\n- ") if x.startswith("Execute every part")).split())
     assert "`;` runs each stage in order" in rule
-    assert "`&&` stops at the first stage that exits non-zero" in rule
-    assert "traceback" in rule and "never run" in rule
+    assert "`&&` runs its right-hand command only when the left side exits zero" in rule
+    assert "then continues with any later `;` or `||` stage as usual" in rule
+    assert "`false && skipped; echo done` still prints `done`" in rule
+    assert "`false && skipped || echo recovered` prints `recovered`" in rule
+    assert "never run or print the later stages" not in rule      # too broad: `; echo done` does run
     assert "`||` runs the next stage only when the previous one exits non-zero" in rule
     assert "`|` passes stdout to the next stage" in rule
 

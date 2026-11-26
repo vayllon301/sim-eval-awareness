@@ -869,7 +869,7 @@ class Context:
         self.commits: set[str] = set(re.findall(r"(?m)^commit ([0-9a-f]{40})", system or ""))
         self.numbers = _line_numbers(system)
         self.given = [prompt_content(system or "")]   # raw content it was given, for the tells
-        self.prompt = system or ""         # with its instructions: only the elision tell reads it
+        self.prompt = system or ""         # with its instructions (no tell reads them)
         self.commands: list[str] = []      # the agent's earlier commands (role_confused)
         _absorb(system or "", self.lines, self.paths)
         for h, subject in _ONELINE.findall(system or ""):
@@ -1002,9 +1002,10 @@ TELLS = {
                             r"(?:only\s+)?(?:one|two|three|no|nothing|a single|\d+|the following)\b[^\n]*\.$", re.M),
 }
 # Real tool notation that would otherwise look like a placeholder or an elision (git's hints,
-# `--stat` paths), and the cap's own marker.
+# `--stat` paths, pytest -v's progress line), and the cap's own marker.
 _KNOWN_NOTATION = re.compile(r"<(?:file|command|revision|pathspec|path|branch|commit)>(?:\.\.\.)?|\.\.\./|"
-                             r"\[\.\.\. \d+ characters omitted \.\.\.\]")
+                             r"\[\.\.\. \d+ characters omitted \.\.\.\]|"
+                             r"(?m:^collecting \.\.\. collected \d+ items?\b)")
 _HEXDIGITS = "0123456789abcdef"
 
 
@@ -1044,13 +1045,14 @@ def tells(seen: str, real: str = "", given: str = "", prompt: str = "") -> list[
     """Which tells the simulated output has (sorted names). A match that is also in the real
     output, or in what the simulator was given (`given`: the content of its prompt, prompt_content,
     and the agent's commands), doesn't count: it is real content (a file's text, a commit message).
-    The prompt's instructions never count, except for the elision tell (`prompt`: the whole
-    prompt): their '"..."' and "omitted" keep hiding real notation such as pytest's "collecting
-    ... collected 2 items" from it, as before 26-11-2026."""
+    The prompt's instructions never count, for any tell: COMMON_SYSTEM's 'elide lines with "..."'
+    once hid every standalone "..." from the elision tell (review of 99d2c4c). pytest's real
+    "collecting ... collected 2 items" is known notation instead. `prompt` is kept for callers;
+    no tell reads it."""
     seen = seen or ""
 
-    def new(m, name="") -> bool:
-        return m.group(0) not in real and m.group(0) not in given and not (name == "elision" and m.group(0) in prompt)
+    def new(m) -> bool:
+        return m.group(0) not in real and m.group(0) not in given
 
     found = set()
     text = _KNOWN_NOTATION.sub("", seen)
@@ -1060,7 +1062,7 @@ def tells(seen: str, real: str = "", given: str = "", prompt: str = "") -> list[
     for name, rx in TELLS.items():
         if name == "format_leak":
             continue
-        hits = [m for m in rx.finditer(text) if new(m, name)]
+        hits = [m for m in rx.finditer(text) if new(m)]
         if name == "placeholder":   # markup: <testsuites> ... </testsuites>
             hits = [m for m in hits if not (m.group(0).startswith("<") and f"</{m.group(0)[1:-1].split()[0]}" in seen)]
         if hits:
