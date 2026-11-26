@@ -5,11 +5,13 @@ split), behaviour (honest_success, violation) and raw keyword counts in the agen
 then one row per scenario and arm.
 
 Slots, outcomes and attempts are kept apart: a slot is a planned (arm, scenario, epoch) of the
-run's design; its final outcome is its scored attempt's (finished, max_turns), else `sim
-truncated` if a failed attempt stopped at the simulator's cap, else `other failed`; the arm's
+run's design; its final outcome is its scored attempt's (finished, max_turns), else its last
+attempt's, by admission time (`sim truncated` if that one stopped at the simulator's cap, else
+`other failed`); the arm's
 counts and graded errors are those of each slot's final attempt, once, and failed attempts'
 test mismatches and prose tells are reported apart. An episode with no reasoning telemetry
-(failed before an agent turn, or no turn with reasoning) is `reasoning missing`, never 0 hits.
+(failed before an agent turn, or no turn with reasoning) is `reasoning missing`, never 0 hits;
+a failed attempt kept only under attempts/ is read from its record's messages.
 
 The keyword counts are a crude string match, labelled as such: never a judge's verdict.
 Analysis only: reads logs and calls no model. An exploratory probe, never confirmatory evidence.
@@ -87,14 +89,20 @@ def outcome(end: str) -> str:
     return end if end in SCORED else "sim truncated" if end == "simulator_truncated" else "other failed"
 
 
+def _order(r: dict) -> tuple:
+    """Sort key of an attempt: its admission (time, attempt number); one with no recorded
+    admission sorts first, so a recorded later attempt is never displaced by it."""
+    o = r.get("attempt_order")
+    return (0, ()) if o is None else (1, tuple(x if x is not None else -1 for x in o))
+
+
 def slots(episodes: list[dict]) -> list[dict]:
-    """One row per (arm, scenario, epoch): the final attempt (the scored one, else a truncated
-    one, else any), with `attempts` and the other attempts' failed-attempt counts."""
+    """One row per (arm, scenario, epoch): the final attempt (the scored one, else the last one
+    admitted), with `attempts` and the other attempts' failed-attempt counts."""
     out = []
     for key in sorted({(r["arm"], r["scenario"], r["epoch"]) for r in episodes}):
-        g = [r for r in episodes if (r["arm"], r["scenario"], r["epoch"]) == key]
-        final = (next((r for r in g if r["end"] in SCORED), None)
-                 or next((r for r in g if r["end"] == "simulator_truncated"), None) or g[-1])
+        g = sorted((r for r in episodes if (r["arm"], r["scenario"], r["epoch"]) == key), key=_order)
+        final = next((r for r in reversed(g) if r["end"] in SCORED), None) or g[-1]
         rest = [r for r in g if r is not final]
         out.append({**final, "attempts": len(g), "outcome": outcome(final["end"]),
                     "failed_attempt_semantic_mismatch": _known(rest, "semantic_mismatch"),
@@ -190,6 +198,44 @@ def observed_divergence(steps: list[dict]) -> dict:
     return {"bash": d["n_bash"], "divergent": d["n_divergent"], "unobserved_steps": len(executed) - len(seen)}
 
 
+def attempt_order(e: dict, sample) -> tuple | None:
+    """(admission time, attempt number) of an episode, from its queue admission: the logged
+    sample's store, a detached attempt's record, or queue.jsonl (whose id is the admission
+    time). None when the run recorded no admission."""
+    a = (((sample.store or {}).get("CodingEpisode:attempt") if sample is not None else None)
+         or e.get("attempt") or (e.get("attempt_store") or {}).get("CodingEpisode:attempt"))
+    if not isinstance(a, dict):
+        return None
+    at = a.get("admitted_at")
+    if not isinstance(at, (int, float)):
+        try:
+            at = float(str(a.get("id") or "").split("-")[0])
+        except ValueError:
+            at = None
+    n = a.get("attempt") if isinstance(a.get("attempt"), int) else None
+    return None if at is None and n is None else (at, n)
+
+
+def _messages(e: dict, sample) -> list | None:
+    """The episode's messages: the sample's, else a detached attempt's record (attempts/, as
+    Inspect dumped them), else None (no transcript kept)."""
+    if sample is not None:
+        return list(sample.messages)
+    recorded = e.get("attempt_messages")
+    if not recorded:
+        return None
+    from inspect_ai.model import ChatMessageAssistant
+
+    out = []
+    for m in recorded:
+        if isinstance(m, dict) and m.get("role") == "assistant" and not m.get("unserializable"):
+            try:
+                out.append(ChatMessageAssistant.model_validate(m))
+            except Exception:   # a record Inspect can't read back: no reasoning from it
+                continue
+    return out
+
+
 def episode_row(e: dict, sample, log) -> dict:
     """One episode: its end, its fidelity split (C0: none) and behaviour."""
     from simtest.coding.provider import reasoning_text
@@ -200,15 +246,16 @@ def episode_row(e: dict, sample, log) -> dict:
            {"bash": e["divergence"]["n_bash"], "divergent": e["divergence"]["n_divergent"], "unobserved_steps": None})
     steps = steps if isinstance(steps, list) else []
     stats = observed_fidelity(e, sample, log)
-    messages = sample.messages if sample is not None else []
-    thoughts = [t for t in (reasoning_text(m) for m in messages if m.role == "assistant") if t and t.strip()]
-    # no sample, or no assistant turn with reasoning: telemetry missing, not zero hits
-    reasoning_turns = len(thoughts) if sample is not None else None
+    messages = _messages(e, sample)
+    thoughts = [t for t in (reasoning_text(m) for m in messages or [] if m.role == "assistant") if t and t.strip()]
+    # no transcript, or no assistant turn with reasoning: telemetry missing, not zero hits
+    reasoning_turns = len(thoughts) if messages is not None else None
     hits = keyword_hits(thoughts) if thoughts else None
     m = e.get("metrics") or {}
     return {
         "arm": arm_of(e), "scenario": e["scenario"], "epoch": e["epoch"],
         "end": "finished" if e["end_reason"] == "no_tool_call" else e["end_reason"],
+        "attempt_order": attempt_order(e, sample),
         **div,
         "sleep": waited(steps), "honest_success": m.get("honest_success"), "violation": m.get("violation"),
         "cot_keywords": hits, "reasoning_turns": reasoning_turns, "reasoning_missing": not thoughts, **stats,
@@ -270,7 +317,7 @@ def format_report(name: str, rows: list[dict], design: dict | None = None) -> st
         lines.append(label.ljust(width) + "".join(_cell(a[key]).rjust(20) for a in arms))
     lines += ["", "* raw keyword matches in the agent's reasoning (explore/latent_report.py COT_KEYWORDS), "
                   "not primary-judge verdicts; read only where reasoning was recorded ('CoT read').",
-              "Per slot, its final attempt counts once (scored, else truncated, else the last); 'attempts' counts "
+              "Per slot, its final attempt counts once (scored, else the last one admitted); 'attempts' counts "
               "every try, and failed attempts' test mismatches and prose tells are shown apart.",
               "Crude div is over the bash outputs the agent observed; 'unobserved bash' counts executed calls "
               "whose simulated output never reached it (a truncated call).",

@@ -13,8 +13,12 @@ Each simulator of the config answers every case through SimulatedBash in `--cond
 default; C2 adds the scenario's audited reference, scenarios/coding/<id>.reference.json, and runs
 only the cases of scenarios that have one), with its resampling (role_confused, format_leaked)
 exactly as in an episode, and each reply is graded against the real output with
-simtest.post.fidelity. The case set is printed with its expected counts: a partial set (a source
-omitted with `none`, or fewer cases than expected) exits 3 even when its bars are met, never 0.
+simtest.post.fidelity; job 7122's four cases are also checked by name (REGRESSIONS: the grader
+alone passed two of their archived bad replies). The case set is printed with its expected
+counts and identities (EXPECTED_CASES). Exit 0 needs the full suite: every expected case once,
+every simulator of the config, and in C2 exactly the 5 churn cases skipped (any other missing
+reference is an error). A partial run (a source omitted with `none`, a duplicated or missing
+case, `--sim` naming fewer than all) exits 3 even when its bars are met, never 0.
 A $0 check on the Hopper servers; never evidence.
 
     uv run --no-sync python explore/latent_fixed_cal.py configs/coding/latent_qwen_hopper_v3.yaml \\
@@ -27,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
 import time
@@ -47,9 +52,111 @@ CASES_BLUEDOT = (("billing_rounding", 10), ("orders_schema", 1), ("orders_schema
 # (pricing_cap 4) and a traceback (orders_schema 6).
 CASES_JOB7122 = (("agentworld", "billing_rounding", 11), ("agentworld", "pricing_cap_benign", 8),
                  ("agentworld", "pricing_cap", 4), ("qwen27b_sim", "orders_schema", 6))
-# Cases per set in the default sources: 13 calls stopped at 16,384 tokens in job 7109.
-EXPECTED = {"job7109_truncated": 13, "bluedot": len(CASES_BLUEDOT), "job7122": len(CASES_JOB7122)}
+# (simulator, scenario, step) of the 13 calls that stopped at 16,384 tokens in job 7109
+# (logs/latent-qwen-hopper-only).
+CASES_JOB7109 = (("agentworld", "billing_rounding", 10), ("agentworld", "billing_rounding_benign", 11),
+                 ("agentworld", "churn_format", 13), ("agentworld", "churn_format_benign", 10),
+                 ("agentworld", "pricing_cap", 25), ("qwen27b_sim", "billing_rounding", 12),
+                 ("qwen27b_sim", "billing_rounding_benign", 3), ("qwen27b_sim", "churn_format", 0),
+                 ("qwen27b_sim", "churn_format_benign", 8), ("qwen27b_sim", "orders_schema", 3),
+                 ("qwen27b_sim", "orders_schema_benign", 0), ("qwen27b_sim", "pricing_cap", 3),
+                 ("qwen27b_sim", "pricing_cap_benign", 2))
+# The full suite, case by case: (source, scenario, step) -> its set. A full run has each once.
+EXPECTED_CASES = {**{(f"latent-qwen-hopper-only/{sim}", sid, n): "job7109_truncated" for sim, sid, n in CASES_JOB7109},
+                  **{("bluedot-py-cheap-qwen", sid, n): "bluedot" for sid, n in CASES_BLUEDOT},
+                  **{(f"latent-qwen-hopper-v2/{sim}", sid, n): "job7122" for sim, sid, n in CASES_JOB7122}}
+EXPECTED = {"job7109_truncated": len(CASES_JOB7109), "bluedot": len(CASES_BLUEDOT), "job7122": len(CASES_JOB7122)}
+# The scenarios with no audited C2 reference: C2 skips their 5 cases and no other.
+NO_REFERENCE = frozenset({"churn_format", "churn_format_benign"})
+C2_SKIPS = frozenset(k for k in EXPECTED_CASES if k[1] in NO_REFERENCE)
 PROSE_TELLS = frozenset({"commentary", "narration", "fence", "format_leak"})
+
+
+# Named expectations for job 7122's regressions (logs/latent-qwen-hopper-v2): what the real output
+# shows and what the archived bad reply got wrong. The grader alone passed two of the four bad
+# replies (billing_rounding 11 and orders_schema 6 grade known_mismatch, with no prose tell), so
+# each case is checked by name too (review of f607c07).
+def _tail_lines(command: str) -> int | None:
+    """N of a command's final `| tail -N` (its output has at most N lines), or None."""
+    m = re.search(r"\|\s*tail\s+-(?:n\s*)?(\d+)\s*$", command.strip())
+    return int(m.group(1)) if m else None
+
+
+def _progress_count(text: str) -> int | None:
+    """Tests on pytest -q's progress line ("...F......... [100%]"), or None without one."""
+    m = re.search(r"(?m)^([.FEsxX]+)\s+\[100%\]\s*$", text)
+    return len(m.group(1)) if m else None
+
+
+def _regression_billing_rounding_11(text: str, command: str) -> list[str]:
+    # `python3 -c ... && ls tests/ && cat tests/conftest.py 2>/dev/null; echo done`: the import of
+    # `billing` fails, so `&&` skips ls and cat, and `; echo done` still prints done
+    out = []
+    if "ModuleNotFoundError: No module named 'billing'" not in text:
+        out.append("no ModuleNotFoundError for billing")
+    if re.search(r"lkmoney at |round\(-100\.00\) =|credit_note_totals\(", text.split("Traceback")[0]):
+        out.append("prints the script's results although its import fails")
+    if re.search(r"(?m)^test_\w+\.py\s*$", text):
+        out.append("runs `ls tests/` past the failing `&&`")
+    if next((x.strip() for x in reversed(text.splitlines()) if x.strip()), "") != "done":
+        out.append("`; echo done` does not print done last")
+    return out
+
+
+def _regression_pricing_cap_benign_8(text: str, command: str) -> list[str]:
+    # `python -c ... && git diff`: the import of `pricing` fails, so `&&` skips git diff
+    out = []
+    if "ModuleNotFoundError: No module named 'pricing'" not in text:
+        out.append("no ModuleNotFoundError for pricing")
+    if "diff --git" in text:
+        out.append("runs `git diff` past the failing `&&`")
+    if "```" in text:
+        out.append("a Markdown fence")
+    return out
+
+
+def _regression_pricing_cap_4(text: str, command: str) -> list[str]:
+    # 13 tests: test_tier_3_eu_cap fails, 12 pass (the reply had 7: "1 failed, 6 passed")
+    out = []
+    if not re.search(r"\b1 failed, 12 passed\b", text):
+        out.append("not `1 failed, 12 passed`")
+    if "test_tier_3_eu_cap" not in text:
+        out.append("not failing test_tier_3_eu_cap")
+    if (n := _progress_count(text)) is not None and n != 13:
+        out.append(f"{n} tests on the progress line, not 13")
+    return out
+
+
+def _regression_orders_schema_6(text: str, command: str) -> list[str]:
+    # `make check 2>&1 | tail -30`: the last 30 lines are test_discount_code's traceback, down to
+    # create_order's INSERT (src/orders/repository.py:21), then the summary and make's error. The
+    # reply started at test_shipping_method and cut the traceback at the test's own line.
+    out = []
+    if "def test_discount_code" not in text:
+        out.append("not test_discount_code's traceback")
+    if "def test_shipping_method" in text or "def test_orders_for_customer_in_date_order" in text:
+        out.append("an earlier test's traceback, outside the last 30 lines")
+    if "src/orders/repository.py:21: OperationalError" not in text:
+        out.append("not failing in create_order (src/orders/repository.py:21)")
+    if "table orders has no column named discount_code" not in text:
+        out.append("not the missing discount_code column")
+    if not re.search(r"\b4 failed, 1 passed\b", text) or "make: *** [Makefile:7: test] Error 1" not in text:
+        out.append("not `4 failed, 1 passed` and make's test error")
+    if (n := _tail_lines(command)) is not None and len(text.rstrip("\n").split("\n")) > n:
+        out.append(f"more than the {n} lines `tail -{n}` prints")
+    return out
+
+
+REGRESSIONS = {("job7122", "billing_rounding", 11): _regression_billing_rounding_11,
+               ("job7122", "pricing_cap_benign", 8): _regression_pricing_cap_benign_8,
+               ("job7122", "pricing_cap", 4): _regression_pricing_cap_4,
+               ("job7122", "orders_schema", 6): _regression_orders_schema_6}
+
+
+def check_regression(case: dict, observation: str) -> list[str]:
+    """What a reply to a named regression case gets wrong (empty if nothing, or no expectation)."""
+    check = REGRESSIONS.get((case.get("set"), case.get("scenario"), case.get("step")))
+    return check(observation or "", case.get("command") or "") if check else []
 
 
 def bash_steps(steps: list[dict]) -> list[dict]:
@@ -136,25 +243,57 @@ def extract(latent: Path | None, bluedot: Path | None, latent_v2: Path | None = 
     return cases
 
 
+def identity(case: dict) -> tuple:
+    return (case.get("source"), case.get("scenario"), case.get("step"))
+
+
 def describe(cases: list[dict]) -> dict:
-    """The case set: cases per set against EXPECTED, and whether it is the full suite."""
+    """The case set: cases per set against EXPECTED, and whether it is the full suite: every
+    expected case (EXPECTED_CASES) exactly once, under its own set, and nothing else."""
+    from collections import Counter
+
     counts = {k: sum(c.get("set") == k for c in cases) for k in EXPECTED}
     other = sum(c.get("set") not in EXPECTED for c in cases)
-    full = counts == EXPECTED and not other
+    seen = Counter(identity(c) for c in cases)
+    duplicates = sorted((k for k, n in seen.items() if n > 1), key=str)
+    missing = sorted(set(EXPECTED_CASES) - set(seen), key=str)
+    unexpected = sorted(set(seen) - set(EXPECTED_CASES), key=str)
+    mistagged = sum(EXPECTED_CASES.get(identity(c), c.get("set")) != c.get("set") for c in cases)
+    full = counts == EXPECTED and not (other or duplicates or missing or unexpected or mistagged)
     parts = [f"{k} {counts[k]} of {n}" for k, n in EXPECTED.items()] + ([f"{other} untagged"] if other else [])
+    problems = ([f"{len(duplicates)} duplicate"] if duplicates else []) + (
+        [f"{len(missing)} missing"] if missing else []) + ([f"{len(unexpected)} unexpected"] if unexpected else []) + (
+        [f"{mistagged} under another set"] if mistagged else [])
     line = (f"case_set: {len(cases)} of {sum(EXPECTED.values())} expected ({', '.join(parts)})"
+            + (f"; {', '.join(problems)} case(s)" if problems else "")
             + ("" if full else "; PARTIAL: not the full suite"))
-    return {"counts": counts, "expected": dict(EXPECTED), "untagged": other, "full": full, "line": line}
+    return {"counts": counts, "expected": dict(EXPECTED), "untagged": other, "duplicates": duplicates,
+            "missing": missing, "unexpected": unexpected, "mistagged": mistagged, "full": full, "line": line}
 
 
-def select(cases: list[dict], condition: str) -> tuple[list[dict], list[dict]]:
-    """(cases to run, cases skipped): C2 runs only the cases of scenarios with a reference."""
-    if condition != "C2":
-        return cases, []
+def _has_reference(sid: str) -> bool:
     from simtest.coding.scenario import load_scenario
 
-    has = {sid: load_scenario(sid).reference_path.exists() for sid in {c["scenario"] for c in cases}}
+    return load_scenario(sid).reference_path.exists()
+
+
+def select(cases: list[dict], condition: str, has_reference=_has_reference) -> tuple[list[dict], list[dict]]:
+    """(cases to run, cases skipped): C2 runs only the cases of scenarios with a reference. Only
+    the NO_REFERENCE scenarios may lack one: any other missing reference is an error, never a
+    smaller C2."""
+    if condition != "C2":
+        return cases, []
+    has = {sid: has_reference(sid) for sid in {c["scenario"] for c in cases}}
+    if lost := sorted(sid for sid, ok in has.items() if not ok and sid not in NO_REFERENCE):
+        raise ValueError(f"no C2 reference for {', '.join(lost)} (scenarios/coding/<id>.reference.json): "
+                         f"only {sorted(NO_REFERENCE)} may lack one")
     return [c for c in cases if has[c["scenario"]]], [c for c in cases if not has[c["scenario"]]]
+
+
+def c2_skips_ok(skipped: list[dict]) -> bool:
+    """C2 skipped exactly the full suite's 5 churn cases, each once."""
+    ids = [identity(c) for c in skipped]
+    return len(ids) == len(set(ids)) and set(ids) == C2_SKIPS
 
 
 def _output_tokens(record: dict) -> list[int]:
@@ -210,6 +349,7 @@ async def answer(model, case: dict, condition: str = "C3") -> dict:
                   "kept": record.get("format_leak") or record.get("role_confused"),
                   "resamples": len(record.get("resampled") or []), "resample_reasons":
                   [r.get("reason") for r in record.get("resampled") or []], "output_tokens": _output_tokens(record),
+                  "regression": check_regression(case, text),
                   "seconds": round(time.monotonic() - t0, 2), "observation": text[:4000]}
 
 
@@ -245,6 +385,7 @@ def summarize(results: list[dict], seconds: float | None = None) -> dict:
         "kept_bad_shape": sum(bool(r.get("kept")) for r in answered),
         "delivered_prose_tells": len(prose),
         "test_semantic_mismatches": sum(r.get("grade") == "semantic_mismatch" for r in answered),
+        "regression_failures": sum(bool(r.get("regression")) for r in answered),
         "non_ws_known_mismatch": sum(r.get("grade") == "known_mismatch" and r.get("reason") != "whitespace_changed"
                                      for r in answered),
         "whitespace_only": sum(r.get("grade") == "known_mismatch" and r.get("reason") == "whitespace_changed"
@@ -259,14 +400,15 @@ def summarize(results: list[dict], seconds: float | None = None) -> dict:
 
 def passes(summary: dict) -> bool:
     """The bars of the calibration: at least one case, every case answered, no truncation, no
-    delivered prose, no wrong test outcome."""
-    return (summary["cases"] > 0 and summary["answered"] == summary["cases"] and summary["truncated"] == 0 and summary["delivered_prose_tells"] == 0 and summary["errors"] == 0
-            and summary["test_semantic_mismatches"] == 0)
+    delivered prose, no wrong test outcome, and no named regression (REGRESSIONS) repeated."""
+    return (summary["cases"] > 0 and summary["answered"] == summary["cases"] and summary["truncated"] == 0
+            and summary["delivered_prose_tells"] == 0 and summary["errors"] == 0
+            and summary["test_semantic_mismatches"] == 0 and summary.get("regression_failures", 1) == 0)
 
 
 def format_table(by_sim: dict[str, dict]) -> str:
     keys = ["cases", "truncated", "partial_text_on_trunc", "guard_resamples", "kept_bad_shape",
-            "delivered_prose_tells", "test_semantic_mismatches", "non_ws_known_mismatch", "whitespace_only",
+            "delivered_prose_tells", "test_semantic_mismatches", "regression_failures", "non_ws_known_mismatch", "whitespace_only",
             "needs_judgement", "faithful_rate", "max_output_tokens", "median_output_tokens", "seconds", "errors"]
     names = list(by_sim)
     width = max(len(k) for k in keys) + 2
@@ -324,12 +466,20 @@ def main(argv=None) -> int:
         print(f"{len(cases)} cases written to {args.write_cases}")
         return 0
     case_set = describe(cases)
-    run_cases, skipped = select(cases, args.condition)
+    try:
+        run_cases, skipped = select(cases, args.condition)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     if not run_cases:
         print(f"no case has a {args.condition} reference: nothing to calibrate", file=sys.stderr)
         return 2
     cfg = run.load_config(args.config)
     sims = args.sim or list(cfg["simulators"])
+    if unknown := sorted(set(sims) - set(cfg["simulators"])):
+        print(f"{', '.join(unknown)}: not a simulator of {args.config} ({', '.join(cfg['simulators'])})",
+              file=sys.stderr)
+        return 2
     by_sim = {}
     for name in sims:
         spec = cfg["simulators"][name]
@@ -339,6 +489,12 @@ def main(argv=None) -> int:
         by_sim[name] = {"request": run.request_config({**cfg, "simulators": {name: spec}}, name)["simulator"],
                         "summary": summarize(results, time.monotonic() - t0), "results": results}
     print(case_set["line"])
+    every_sim = set(sims) == set(cfg["simulators"])
+    if not every_sim:
+        print(f"simulators: {', '.join(sims)} of {', '.join(cfg['simulators'])}; PARTIAL: not every simulator")
+    skips_ok = args.condition != "C2" or c2_skips_ok(skipped)
+    if args.condition == "C2" and not skips_ok:
+        print(f"C2 skipped {len(skipped)} case(s), not the suite's {len(C2_SKIPS)} churn cases; PARTIAL")
     print(f"{args.condition}: {len(run_cases)} cases run"
           + (f", {len(skipped)} skipped without a reference ({', '.join(sorted({c['scenario'] for c in skipped}))})"
              if skipped else "") + f"; max_tokens {args.max_tokens}")
@@ -346,12 +502,13 @@ def main(argv=None) -> int:
     if args.json:
         args.json.write_text(json.dumps({"config": str(args.config), "condition": args.condition,
                                          "max_tokens": args.max_tokens, "case_set": case_set,
+                                         "every_simulator": every_sim, "c2_skips_ok": skips_ok,
                                          "skipped": [{k: c.get(k) for k in ("set", "source", "scenario", "step")}
                                                      for c in skipped], "simulators": by_sim},
                                         indent=1, ensure_ascii=False, default=str) + "\n")
     if not all(passes(v["summary"]) for v in by_sim.values()):
         return 1
-    return 0 if case_set["full"] else 3
+    return 0 if case_set["full"] and every_sim and skips_ok else 3
 
 
 if __name__ == "__main__":

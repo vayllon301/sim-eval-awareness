@@ -175,17 +175,97 @@ def _tagged(set_name, n):
     return [{**case(), "set": set_name} for _ in range(n)]
 
 
+def _suite(cal):
+    """The full case set: one case per expected identity, tagged with its set."""
+    return [{**case(), "set": set_name, "source": source, "scenario": scenario, "step": step}
+            for (source, scenario, step), set_name in sorted(cal.EXPECTED_CASES.items())]
+
+
 def test_the_case_set_says_what_is_in_it_and_what_is_missing(cal):
-    full = _tagged("job7109_truncated", 13) + _tagged("bluedot", 6) + _tagged("job7122", 4)
+    full = _suite(cal)
     d = cal.describe(full)
     assert d["full"] and d["counts"] == {"job7109_truncated": 13, "bluedot": 6, "job7122": 4}
     assert d["expected"] == {"job7109_truncated": 13, "bluedot": 6, "job7122": 4}
     assert "23 of 23 expected" in d["line"]
-    partial = _tagged("job7109_truncated", 13) + _tagged("bluedot", 6)
+    partial = [c for c in full if c["set"] != "job7122"]
     d = cal.describe(partial)
     assert not d["full"] and "job7122 0 of 4" in d["line"] and "PARTIAL" in d["line"]
-    d = cal.describe(_tagged("bluedot", 5))
+    d = cal.describe([c for c in full if c["set"] == "bluedot"][:5])
     assert not d["full"] and "bluedot 5 of 6" in d["line"]
+
+
+def test_the_expected_identities_are_job_7109s_truncations_and_the_named_cases(cal):
+    ids = cal.EXPECTED_CASES
+    assert len(ids) == 23 and sum(v == "job7109_truncated" for v in ids.values()) == 13
+    assert {(s, n) for (src, s, n), v in ids.items() if v == "bluedot"} == set(cal.CASES_BLUEDOT)
+    assert {(src.split("/")[1], s, n) for (src, s, n), v in ids.items() if v == "job7122"} == set(cal.CASES_JOB7122)
+
+
+def test_duplicated_or_swapped_cases_are_never_the_full_suite(cal):
+    full = _suite(cal)
+    # right counts per set, but one case twice and another missing
+    dup = full[:-1] + [next(c for c in full[:-1] if c["set"] == full[-1]["set"])]
+    d = cal.describe(dup)
+    assert d["counts"] == d["expected"] and not d["full"]
+    assert "duplicate" in d["line"] and "missing" in d["line"] and "PARTIAL" in d["line"]
+    # a case of another step in place of an expected one
+    other = full[:-1] + [{**full[-1], "step": 999}]
+    d = cal.describe(other)
+    assert not d["full"] and "unexpected" in d["line"]
+    # a case under another set's tag
+    swapped = [{**full[0], "set": "bluedot" if full[0]["set"] != "bluedot" else "job7122"}] + full[1:]
+    assert not cal.describe(swapped)["full"]
+
+
+@pytest.mark.skipif(not (Path("logs/latent-qwen-hopper-only").exists() and Path("logs/bluedot-py-cheap-qwen").exists()
+                         and Path("logs/latent-qwen-hopper-v2").exists()), reason="the default sources are not here")
+def test_the_default_sources_are_exactly_the_expected_cases(cal):
+    cases = cal.extract(Path("logs/latent-qwen-hopper-only"), Path("logs/bluedot-py-cheap-qwen"),
+                        Path("logs/latent-qwen-hopper-v2"))
+    assert cal.describe(cases)["full"]
+
+
+def test_c2_skips_exactly_the_five_churn_cases(cal):
+    full = _suite(cal)
+    kept, skipped = cal.select(full, "C2")
+    assert len(skipped) == 5 and {c["scenario"] for c in skipped} == {"churn_format", "churn_format_benign"}
+    assert cal.c2_skips_ok(skipped)
+    assert len(kept) == 18
+    assert not cal.c2_skips_ok(skipped[:4])          # one churn case kept out of the skips, or missing
+
+
+def test_c2_fails_loudly_when_an_expected_reference_is_missing(cal):
+    full = _suite(cal)
+    with pytest.raises(ValueError, match="pricing_cap"):
+        cal.select(full, "C2", has_reference=lambda sid: not sid.startswith(("churn", "pricing_cap")))
+
+
+def test_a_subset_of_the_simulators_never_exits_as_the_full_suite(cal, tmp_path, monkeypatch, capsys):
+    import json
+
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps(_suite(cal)))
+    monkeypatch.setattr(cal, "_build", lambda spec: mock(ScriptedSimulator(["3 passed in 0.01s"]), "mockllm/sim"))
+    monkeypatch.setattr(cal, "passes", lambda summary: True)        # the bars met: only coverage decides
+    code = cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases), "--sim", "agentworld"])
+    out = capsys.readouterr().out
+    assert code == 3 and "PARTIAL" in out and "qwen27b_sim" in out
+    code = cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases)])
+    assert code == 0, capsys.readouterr().out
+    code = cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases), "--condition", "C2"])
+    assert code == 0, capsys.readouterr().out
+    # a partial case list with every simulator: partial too
+    cases.write_text(json.dumps(_suite(cal)[:-1]))
+    assert cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases)]) == 3
+
+
+def test_a_simulator_the_config_lacks_is_refused(cal, tmp_path, capsys):
+    import json
+
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps(_suite(cal)))
+    assert cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases), "--sim", "nope"]) == 2
+    assert "nope" in capsys.readouterr().err
 
 
 def test_a_partial_case_set_never_exits_as_the_full_suite(cal, tmp_path, monkeypatch, capsys):
@@ -229,3 +309,73 @@ def test_the_job_7122_cases_from_the_real_logs(cal):
     assert "ModuleNotFoundError" in cases[("pricing_cap_benign", 8)]["real"]
     assert cases[("pricing_cap_benign", 8)]["recorded"].rstrip().endswith("```")
     assert "&&" in cases[("pricing_cap_benign", 8)]["command"]
+
+
+# -- review of f607c07: job 7122's four regressions checked by name; the release check -----------
+# The four cases, verbatim from logs/latent-qwen-hopper-v2 (the logs are not in the repository):
+# command, history, the real shadow output and the reply the agent saw ("recorded").
+JOB7122 = Path(__file__).parent / "latent_fixtures/job7122_cases.json"
+
+
+def _job7122():
+    import json
+
+    return {(c["scenario"], c["step"]): c for c in json.loads(JOB7122.read_text())}
+
+
+def test_the_fixture_holds_job_7122s_four_cases(cal):
+    cases = _job7122()
+    assert {(c["source"].split("/")[-1], s, n) for (s, n), c in cases.items()} == set(cal.CASES_JOB7122)
+    assert {c["set"] for c in cases.values()} == {"job7122"}
+
+
+@pytest.mark.skipif(not Path("logs/latent-qwen-hopper-v2").exists(), reason="job 7122's logs are not in this checkout")
+def test_the_fixture_is_what_the_logs_hold(cal):
+    fixture = _job7122()
+    for c in cal.extract(None, None, Path("logs/latent-qwen-hopper-v2")):
+        f = fixture[(c["scenario"], c["step"])]
+        assert {k: c[k] for k in f} == f, c["scenario"]
+
+
+def test_each_regression_names_what_the_archived_reply_got_wrong(cal):
+    cases = _job7122()
+    for key, c in cases.items():
+        assert cal.check_regression(c, c["real"]) == [], key
+        assert cal.check_regression(c, c["recorded"]), key
+    br = cases[("billing_rounding", 11)]
+    assert any("ls tests/" in x for x in cal.check_regression(br, br["recorded"]))
+    assert cal.check_regression(br, br["real"].replace("done\n", "")) != []      # `; echo done` still runs
+    pcb = cases[("pricing_cap_benign", 8)]
+    assert cal.check_regression(pcb, pcb["real"] + "diff --git a/x b/x\n")
+    assert cal.check_regression(pcb, pcb["real"] + "```\n")
+    pc = cases[("pricing_cap", 4)]
+    assert cal.check_regression(pc, pc["real"].replace("12 passed", "6 passed"))
+    os_ = cases[("orders_schema", 6)]
+    assert any("test_shipping_method" in x or "earlier test" in x for x in cal.check_regression(os_, os_["recorded"]))
+    # a case with no named expectation has nothing to fail
+    assert cal.check_regression({**br, "set": "bluedot"}, "anything") == []
+
+
+def _release(cal, c, reply):
+    """One case through SimulatedBash (its guards and resampling), the grader, summarize, passes."""
+    results = anyio.run(cal.calibrate, mock(ScriptedSimulator([reply] * 4), "mockllm/sim"), [c])
+    s = cal.summarize(results)
+    return s, cal.passes(s)
+
+
+@pytest.mark.parametrize("key", [("billing_rounding", 11), ("pricing_cap_benign", 8), ("pricing_cap", 4),
+                                 ("orders_schema", 6)])
+def test_release_check_every_archived_bad_reply_fails_and_every_real_output_passes(cal, key):
+    c = _job7122()[key]
+    bad, ok = _release(cal, c, c["recorded"]), _release(cal, c, c["real"])
+    assert bad[1] is False, (key, bad[0])
+    assert ok[1] is True, (key, ok[0])
+    assert ok[0]["regression_failures"] == 0 and bad[0]["cases"] == 1
+
+
+def test_regression_failures_are_counted_and_block_the_bars(cal):
+    c = _job7122()[("billing_rounding", 11)]
+    s, passed = _release(cal, c, c["recorded"])
+    assert s["regression_failures"] == 1 and not passed
+    # the grader alone would have passed it: known_mismatch, no prose tell
+    assert s["delivered_prose_tells"] == 0 and s["test_semantic_mismatches"] == 0 and s["errors"] == 0
