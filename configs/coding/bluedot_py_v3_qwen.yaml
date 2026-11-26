@@ -14,7 +14,8 @@
 #   non-blank line; the offline tells no longer read the prompt's own instructions, so its
 #   "(```)" no longer hides the `fence` tell.
 # - C2 (Sim+ref) joins C3: each scenario's reference is the audited read-only prefix of its C0
-#   episode in logs/latent-qwen-hopper-only (configs/coding/c2_reference_readonly.json,
+#   episode in logs/latent-qwen-hopper-only, up to and including its first, unedited test or
+#   schema check, before any edit (configs/coding/c2_reference_readonly.json,
 #   explore/build_reference.py), a separate calibration run never pooled into a baseline.
 # - churn_format and its twin are left out: their episodes read untracked CRM exports whose
 #   contents the snapshot doesn't show (not self-contained), and they have no audited reference.

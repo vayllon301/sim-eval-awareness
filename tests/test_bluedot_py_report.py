@@ -745,3 +745,66 @@ def test_v3_report_has_per_arm_gates_and_a_per_scenario_table(report):
     line = next(x for x in text.splitlines() if x.startswith("| orders_schema ") or x.startswith("orders_schema "))
     assert line
     assert "Pivot rules" not in text and "Acceptance gates, v2" not in text
+
+
+# -- review of 99d2c4c: zero-event gates read every attempt's fidelity coverage; v3 records args --
+
+def _unreadable_attempt(row):
+    """A failed attempt whose fidelity can't be read: what _fidelity_stats returns for missing
+    steps or an ungraded delivered step with no confirmed event."""
+    return _failed_attempt(row, fidelity_incomplete=True, prose_tells=None, semantic_mismatch=None,
+                           format_leaks_kept=0, substantive_errors=None, graded_steps=None)
+
+
+@pytest.mark.parametrize("arm", ["C2", "C3"])
+def test_a_clean_retry_after_an_unreadable_failed_attempt_leaves_the_zero_event_gates_open(report, arm):
+    rows = _v3_rows()
+    sim = next(r for r in rows if r["condition"] == arm)
+    g = v3_gates(report, rows + [_unreadable_attempt(sim)])
+    assert g[f"prose_leaks[{arm}]"] is None and g[f"test_semantic_mismatches[{arm}]"] is None
+    other = "C3" if arm == "C2" else "C2"
+    assert g[f"prose_leaks[{other}]"] is True and g[f"test_semantic_mismatches[{other}]"] is True
+    (detail,) = [x["detail"] for x in report.v3_gates(rows + [_unreadable_attempt(sim)])
+                 if x["gate"] == f"prose_leaks[{arm}]"]
+    assert "1 missing fidelity" in detail, detail
+    # v2 reads its one arm the same way
+    v2 = _qwen_v2_rows()
+    c3 = next(r for r in v2 if r["condition"] == "C3")
+    g2 = gates(report, v2 + [_unreadable_attempt(c3)])
+    assert g2["prose_leaks"] is None and g2["test_semantic_mismatches"] is None
+
+
+def test_a_confirmed_event_in_an_unreadable_failed_attempt_still_fails(report):
+    rows = _v3_rows()
+    c2 = next(r for r in rows if r["condition"] == "C2")
+    g = v3_gates(report, rows + [{**_unreadable_attempt(c2), "semantic_mismatch": 1}])
+    assert g["test_semantic_mismatches[C2]"] is False and g["prose_leaks[C2]"] is None
+
+
+def test_a_verified_failed_attempt_with_no_delivered_output_counts_as_zero(report):
+    rows = _v3_rows()
+    c2 = next(r for r in rows if r["condition"] == "C2")
+    # crashed before any bash output: steps verified empty, so every count is a real 0
+    empty = _failed_attempt(c2, fidelity_incomplete=False, prose_tells=0, semantic_mismatch=0, format_leaks_kept=0,
+                            substantive_errors=0, graded_steps=0, graded_divergent=0)
+    g = v3_gates(report, rows + [empty])
+    assert g["prose_leaks[C2]"] is True and g["test_semantic_mismatches[C2]"] is True
+
+
+def test_fidelity_stats_of_an_attempt_that_crashed_before_any_output_are_complete_zeros(report):
+    stats = report._fidelity_stats(sim_episode([], 0), None, None)
+    assert stats["fidelity_incomplete"] is False
+    assert (stats["prose_tells"], stats["semantic_mismatch"], stats["format_leaks_kept"]) == (0, 0, 0)
+
+
+def test_v3_needs_the_simulator_request_to_record_its_empty_args(report):
+    no_args = {k: v for k, v in OPTION_A_SIM.items() if k != "args"}
+    for cond in ("C2", "C3"):
+        found = report.option_a_problems(V3_DESIGN, no_args, cond, agents=QWEN_AGENTS, limits=LIMITS, cohort="v3")
+        assert any("args" in p for p in found), found
+        assert report.option_a_problems(V3_DESIGN, OPTION_A_SIM, cond, agents=QWEN_AGENTS, limits=LIMITS,
+                                        cohort="v3") == []
+    # v1 and v2 logs predate the recorded args: still read as none set
+    assert problems(report, sim=no_args) == []
+    assert report.option_a_problems(OPTION_A_DESIGN, no_args, "C3", agents=QWEN_AGENTS, limits=LIMITS,
+                                    cohort="v2") == []

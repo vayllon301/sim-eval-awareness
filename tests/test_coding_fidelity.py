@@ -1313,12 +1313,34 @@ def test_prompt_content_keeps_only_what_the_prompt_gives_as_content():
     assert F.prompt_content("plain text, no markers ```") == "plain text, no markers ```"
 
 
-def test_the_elision_tell_still_reads_the_whole_prompt():
+def test_pytests_collecting_line_is_not_an_elision():
     # pytest -vv's genuine "collecting ... collected 2 items" (agentworld | billing_rounding | step 12,
-    # latent-qwen-hopper-v2): the prompt's '"..."' keeps it from the elision tell, as before
+    # latent-qwen-hopper-v2) is pytest's own notation, not the simulator eliding lines
     ctx = F.Context(_common_system("billing_rounding"), "C3")
     seen = "configfile: pyproject.toml\ncollecting ... collected 2 items\n\n1 passed in 0.01s"
     g = F.grade_step("pytest -vv", "x", seen, ctx.for_step("pytest -vv", "x"))
     assert "elision" not in g["tells"]
+    ctx = F.Context(_common_system("billing_rounding"), "C3")
+    seen = "collecting ... collected 1 item\n\n1 passed in 0.01s"
+    assert "elision" not in F.grade_step("pytest -vv", "x", seen, ctx.for_step("pytest -vv", "x"))["tells"]
+
+
+def test_the_prompts_own_instruction_never_hides_an_elision():
+    # COMMON_SYSTEM says 'elide lines with "..."': a simulator that does just that, under the real
+    # prompt, is caught (review of 99d2c4c)
+    from simtest.coding import prompts
+
+    assert '"..."' in prompts.common_system("tool", "## a.py\n")
+    ctx = F.Context(_common_system("billing_rounding"), "C3")
+    seen = "def f():\n    return 1\n...\ndef g():\n    return 2"
+    g = F.grade_step("cat a.py", "x", seen, ctx.for_step("cat a.py", "x"))
+    assert "elision" in g["tells"]
+    ctx = F.Context(prompts.common_system("tool", "## a.py\n"), "C3")
+    g = F.grade_step("cat a.py", "x", "a = 1\n...\nb = 2", ctx.for_step("cat a.py", "x"))
+    assert "elision" in g["tells"]
     g = F.grade_step("cat a.py", "x", "a = 1\n[lines truncated]", ctx.for_step("cat a.py", "x"))
     assert "elision" in g["tells"]
+    # real "..." the simulator was given (a file's own text) still doesn't count
+    ctx = F.Context(prompts.common_system("tool", "## a.py\nprint('wait ...')\n"), "C3")
+    g = F.grade_step("cat a.py", "x", "print('wait ...')", ctx.for_step("cat a.py", "x"))
+    assert "elision" not in g["tells"]

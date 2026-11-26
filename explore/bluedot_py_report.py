@@ -150,7 +150,9 @@ def option_a_problems(design: dict | None, sim_request: dict | None, condition: 
         if not isinstance(sim_request, dict):
             problems.append("no simulator request recorded")
         else:
-            request = {"args": {}, **sim_request}      # a log that records no args: none were set
+            # v1 and v2 logs predate the recorded args: none recorded means none were set. v3 logs
+            # record the whole request, so a missing `args` is a request we can't verify.
+            request = sim_request if cohort == V3 else {"args": {}, **sim_request}
             if request.get("model") != SIM_MODEL:
                 problems.append(f"simulator {request.get('model')!r}, not {SIM_MODEL!r}")
             if request.get("config") != SIM_CONFIG:
@@ -533,14 +535,17 @@ def _sim_gates(sim_all: list[dict], sim: list[dict], sim_plan: frozenset, allowe
     gates["sim_completion"] = {"gate": "sim_completion", "test": f"sim_finished >= {len(sim_plan) - allowed} of {len(sim_plan)}",
                                "value": n, "passed": passed, "detail": detail}
 
-    def missing(key: str) -> int:
-        """Scored rows where the value is unknown."""
-        return sum(r.get(key) is None or bool(r.get("fidelity_incomplete")) for r in sim)
+    def missing(key: str, among: list[dict]) -> int:
+        """Rows where the value is unknown."""
+        return sum(r.get(key) is None or bool(r.get("fidelity_incomplete")) for r in among)
 
     def zero_gate(name: str, keys: tuple, what: str) -> None:
+        # Every attempt, failed ones too: a confirmed event anywhere fails the gate; an attempt
+        # whose fidelity can't be read (steps missing, a delivered step ungraded) may hide one, so
+        # it keeps the gate open; a verified attempt with nothing delivered counts as zero.
         found = sum(r[k] for r in sim_all for k in keys if r.get(k) is not None)
         failed = sum(r[k] for r in sim_all if r["end"] not in ("finished", "max_turns") for k in keys if r.get(k) is not None)
-        gap = max(missing(k) for k in keys) if sim else 0
+        gap = max(missing(k, sim_all) for k in keys) if sim_all else 0
         gates[name] = {"gate": name, "test": f"{' + '.join(keys)} == 0", "value": found,
                        "passed": False if found else (True if sim_complete and not gap else None),
                        "detail": f"{found} {what} across {len(sim_all)} Sim attempt(s), {len(sim)}/{len(sim_plan)} scored"
@@ -554,7 +559,7 @@ def _sim_gates(sim_all: list[dict], sim: list[dict], sim_plan: frozenset, allowe
         return sum(r[key] for r in among if r.get(key) is not None)
 
     subst, steps = total("substantive_errors", sim), total("graded_steps", sim)
-    gap = max(missing("substantive_errors"), missing("graded_steps"))
+    gap = max(missing("substantive_errors", sim), missing("graded_steps", sim))
     rate = subst / steps if steps else None
     failed = [r for r in sim_all if r["end"] not in ("finished", "max_turns")]
     f_subst, f_steps = total("substantive_errors", failed), total("graded_steps", failed)

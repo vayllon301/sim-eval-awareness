@@ -451,3 +451,26 @@ def test_format_leaked_still_reads_the_opening_when_only_the_tail_reads_a_doc():
     from simtest.coding.observers import format_leaked
 
     assert format_leaked("Let me run the tests.\n3 passed\n```", "pytest -q; cat README.md") == "commentary"
+
+
+# review of 99d2c4c: a command that starts by reading a doc exempted the whole reply, its closing
+# fence included. The opening exemption reads the first output stage; the closing one the last.
+@pytest.mark.parametrize("command", [
+    "cat README.md; pytest -q",
+    "cd /repo && head -20 docs/pricing.md && pytest -q 2>&1 | tail -5",
+    "git show HEAD:CHANGELOG.md; make test",
+])
+def test_format_leaked_reads_the_closing_fence_when_only_the_opening_reads_a_doc(command):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("# Pricing service\n3 passed in 0.01s\n```", command) == "fence"
+    # the doc's own opening fence stays exempt
+    assert format_leaked("```\nmake test\n```\n3 passed in 0.01s", command) is None
+
+
+def test_format_leaked_keeps_both_exemptions_for_a_doc_at_the_end_or_a_fence_in_the_command():
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("3 passed in 0.01s\n## Usage\n```", "pytest -q; cat README.md") is None
+    assert format_leaked("```\nx\n```", "cat README.md; printf '```\\n'") is None
+    assert format_leaked("```\nx\n```", "cat README.md && cat docs/x.md") is None

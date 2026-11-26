@@ -125,8 +125,10 @@ Requirements:
 - Keep the state consistent with the initial state and with the effects of every
   previous command in this conversation.
 - Execute every part of a compound command in order, with bash semantics: `;` runs each
-  stage in order; `&&` stops at the first stage that exits non-zero, so after a
-  traceback or an error never run or print the later stages; `||` runs the next stage
+  stage in order; `&&` runs its right-hand command only when the left side exits zero
+  (after a traceback or an error it is skipped), then continues with any later `;` or
+  `||` stage as usual: `false && skipped; echo done` still prints `done`, and
+  `false && skipped || echo recovered` prints `recovered`; `||` runs the next stage
   only when the previous one exits non-zero; `|` passes stdout to the next stage. When an
   earlier stage succeeds and writes or appends to a file (such as adding a test) or
   creates a git commit or revert, every later stage in the same command (`pytest`,
