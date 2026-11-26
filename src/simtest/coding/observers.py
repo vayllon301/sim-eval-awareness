@@ -82,9 +82,13 @@ _FRAMING_LEAK = re.compile(
 # a script can genuinely print an "Output:" header or "Output: 42".
 _OUTPUT_LABEL = re.compile(r"^Output:\s*(```.*)?$", re.I)
 _FENCE_OPEN = re.compile(r"^```[A-Za-z0-9_+-]*\s*$")
-# Reads of docs (Markdown, README, docs/): a page can genuinely start with framing text or a fence.
-_DOC_CMD = re.compile(r"```|\.md\b|\b(?:README|CHANGELOG|CONTRIBUTING)\b|docs/", re.I)
-# Stages that print nothing, skipped when finding a command's first output-producing stage.
+# Reads of docs (Markdown, README, docs/): a page can genuinely start or end with framing text or a fence.
+_DOC_CMD = re.compile(r"\.md\b|\b(?:README|CHANGELOG|CONTRIBUTING)\b|docs/", re.I)
+# Search invocations that print only counts or filenames, never matched content lines or fences.
+_COUNT_OR_NAMES = re.compile(
+    r"\b(?:rg|grep|egrep|fgrep)\b[^\n|]*\s-(?:[A-Za-z]*[clL]|-(?:count|files-with-matches|files-without-match))\b"
+)
+# Stages that print nothing, skipped when finding a command's first/last output-producing stage.
 _SILENT = re.compile(r"^(?:cd|pushd|popd|export|unset|sleep|true|:|umask)(?:\s|$)|^\w+=\S*$")
 _ASSIGN = re.compile(r"^(?:\w+=\S*\s+)+")
 
@@ -123,9 +127,9 @@ def format_leaked(observation: str, command: str) -> str | None:
     if not _reads_a_doc(command or "") and (why := _opening_leak(lines, (command or "").lower())):
         return why
     # a fence closing the reply (agentworld, pricing_cap_benign step 8 in job 7122), unless the
-    # output's last part comes from a doc or the command writes a fence itself
+    # output's last part comes from a doc or a stage that can emit a fence at the tail
     last = next((x.strip() for x in reversed(lines) if x.strip()), "")
-    if _FENCE_OPEN.match(last) and "```" not in (command or "") and not _tail_reads_a_doc(command or ""):
+    if _FENCE_OPEN.match(last) and not _tail_reads_a_doc(command or ""):
         return "fence"
     return None
 
@@ -152,18 +156,29 @@ def _opening_leak(lines: list[str], cmd: str) -> str | None:
     return None
 
 
+def _stage_exempts_fence(stage: str) -> bool:
+    """True when a pipeline stage can legitimately emit doc/markdown text or a fence line."""
+    if _COUNT_OR_NAMES.search(stage):
+        return False
+    return "```" in stage or bool(_READS_FILES.search(stage) and _DOC_CMD.search(stage))
+
+
+def _non_silent_pipelines(command: str) -> list[list[str]]:
+    """Each output-producing pipeline in `command`, as normalized stage strings."""
+    out = []
+    for pipeline in [x for x in _LIST.split(command) if x.strip()]:
+        stages = [_WRAP.sub("", _ASSIGN.sub("", _WRAP.sub("", x.strip()))) for x in pipeline.split("|") if x.strip()]
+        if stages and not all(_SILENT.match(x) for x in stages):
+            out.append(stages)
+    return out
+
+
 def _reads_a_doc(command: str) -> bool:
-    """The command writes a code fence itself, or its first output-producing stage (past `cd`,
-    `export`, `sleep` and other silent stages) reads a doc. A doc named only by a later stage
-    (`pytest -q; grep EUR docs/pricing.md`) leaves the output's opening lines guarded."""
-    if "```" in command:
-        return True
-    for seg in _segments(command):
-        seg = _WRAP.sub("", _ASSIGN.sub("", seg))
-        if _SILENT.match(seg):
-            continue
-        return bool(_READS_FILES.search(seg) and _DOC_CMD.search(seg))
-    return False
+    """The command's first output-producing pipeline (past `cd`, `export`, `sleep` and other
+    silent stages) reads a doc or can emit a fence itself. A doc or fence named only by a later
+    stage (`pytest -q; grep EUR docs/pricing.md`) leaves the output's opening lines guarded."""
+    pipelines = _non_silent_pipelines(command)
+    return bool(pipelines) and any(_stage_exempts_fence(x) for x in pipelines[0])
 
 
 _LIST = re.compile(r"&&|\|\||;|\n")
@@ -171,13 +186,11 @@ _LIST = re.compile(r"&&|\|\||;|\n")
 
 def _tail_reads_a_doc(command: str) -> bool:
     """The command's last output-producing pipeline (past trailing `cd`, `export` and other
-    silent stages) reads a doc at any of its stages (`pytest -q; cat README.md | head`)."""
-    for pipeline in reversed([x for x in _LIST.split(command) if x.strip()]):
-        stages = [_WRAP.sub("", _ASSIGN.sub("", _WRAP.sub("", x.strip()))) for x in pipeline.split("|") if x.strip()]
-        if all(_SILENT.match(x) for x in stages):
-            continue
-        return any(_READS_FILES.search(x) and _DOC_CMD.search(x) for x in stages)
-    return False
+    silent stages) reads a doc or can emit a fence itself (`pytest -q; cat README.md | head`,
+    `pytest -q && printf '```\\n'`). An earlier fence search (`rg -c '```' README.md; pytest -q`)
+    leaves the closing fence guarded."""
+    pipelines = _non_silent_pipelines(command)
+    return bool(pipelines) and any(_stage_exempts_fence(x) for x in pipelines[-1])
 
 
 def _norm(text: str) -> str:
