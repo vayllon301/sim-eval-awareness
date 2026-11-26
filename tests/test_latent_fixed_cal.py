@@ -268,6 +268,21 @@ def test_a_simulator_the_config_lacks_is_refused(cal, tmp_path, capsys):
     assert "nope" in capsys.readouterr().err
 
 
+def test_duplicate_simulators_are_refused_before_any_call(cal, tmp_path, monkeypatch, capsys):
+    import json
+
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps(_suite(cal)))
+    built = []
+    monkeypatch.setattr(cal, "_build", lambda spec: built.append(spec))
+    code = cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases),
+                     "--sim", "agentworld", "--sim", "qwen27b_sim", "--sim", "agentworld"])
+    assert code == 2 and built == []
+    err = capsys.readouterr().err
+    assert "duplicate" in err.lower() and "agentworld" in err
+
+
+
 def test_a_partial_case_set_never_exits_as_the_full_suite(cal, tmp_path, monkeypatch, capsys):
     cases = tmp_path / "cases.json"
     import json

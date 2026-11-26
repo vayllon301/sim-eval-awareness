@@ -476,6 +476,9 @@ def main(argv=None) -> int:
         return 2
     cfg = run.load_config(args.config)
     sims = args.sim or list(cfg["simulators"])
+    if dups := sorted({s for s in sims if sims.count(s) > 1}):
+        print(f"duplicate --sim name(s): {', '.join(dups)}", file=sys.stderr)
+        return 2
     if unknown := sorted(set(sims) - set(cfg["simulators"])):
         print(f"{', '.join(unknown)}: not a simulator of {args.config} ({', '.join(cfg['simulators'])})",
               file=sys.stderr)
