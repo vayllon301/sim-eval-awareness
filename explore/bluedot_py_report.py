@@ -472,11 +472,15 @@ def _completion(sim_all: list[dict], scored: list[dict], plan: frozenset, allowe
 
 def v2_gates(rows: list[dict]) -> list[dict]:
     """The acceptance gates of configs/coding/bluedot_py_v2_qwen.yaml, over the planned slots
-    of the v2 arms present (a Qwen-only run is planned as its 4 + 4 slots). `passed` is None
-    while a gate can't be read yet (slots missing, telemetry incomplete, foreign rows only)."""
+    of the planned agents present (a Qwen-only run is planned as its 4 + 4 slots). An agent's
+    slots stay expected even when its rows fail `_is_planned` (another request, cohort or
+    simulator), so a rejected arm leaves its slots missing rather than shrinking the plan.
+    `passed` is None while a gate can't be read yet (slots missing, telemetry incomplete), and
+    never True while any row is excluded; a confirmed failure in the planned rows stays False."""
     B._check_unique_scored_slots(rows)
     planned = [r for r in rows if _is_planned(r, V2)]
-    arms = {r["agent_model"] for r in planned}
+    excluded = [r for r in rows if not _is_planned(r, V2)]
+    arms = {r.get("agent_model") for r in rows} & PLANNED_MODELS
     sim_plan = frozenset(x for x in PLANNED_SIM_SLOTS if x[0] in arms)
     real_plan = frozenset(x for x in PLANNED_REAL_SLOTS if x[0] in arms)
     scored = [r for r in planned if r["end"] in ("finished", "max_turns")]
@@ -500,7 +504,7 @@ def v2_gates(rows: list[dict]) -> list[dict]:
     else:
         cost = False if mean_lo > MAX_SIM_COST else (None if mean_hi > MAX_SIM_COST else True)
     out.append({"gate": "cost", "test": f"mean_sim_cost_usd <= {MAX_SIM_COST:.2f}", "value": mean_lo, "passed": cost,
-                "detail": f"{B._usd(lo)}..{B._usd(hi)} over {len(sim)}/{len(sim_plan)} scored Sim episodes"
+                "detail": f"{B._usd_span(lo, hi)} over {len(sim)}/{len(sim_plan)} scored Sim episodes"
                           + (f"; {unknown} unknown-spend row(s)" if unknown else "")})
 
     # completion: every C0 finishes (no max_turns wait loops); Sim at most one unfinished of 8, none of 4
@@ -540,11 +544,25 @@ def v2_gates(rows: list[dict]) -> list[dict]:
                 "passed": None if not sim_complete or missing or rate is None else rate <= MAX_SUBSTANTIVE,
                 "detail": f"{subst} of {steps} graded steps; reported apart: {ws} whitespace_only, {nj} needs_judgement"
                           + (f"; {missing} missing fidelity" if missing else "")})
-    if foreign := _foreign(rows, V2):
-        why = sorted({r.get("design_mismatch") or f"simulator {r.get('sim_model')!r}" for r in foreign})
+    if excluded:
+        why = sorted({_excluded_why(r) for r in excluded})
         for x in out:
-            x["detail"] += f"; {len(foreign)} row(s) not Option A v2, excluded ({'; '.join(why)})"
+            if x["passed"] is True:
+                x["passed"] = None
+            x["detail"] += f"; {len(excluded)} row(s) not Option A v2, excluded ({'; '.join(why)})"
     return out
+
+
+def _excluded_why(r: dict) -> str:
+    if r.get("agent_model") not in PLANNED_MODELS:
+        return f"agent {r.get('agent_model')!r} not planned"
+    if B._slot_key(r) not in PLANNED_SLOTS:
+        return f"slot {B._slot_key(r)!r} not planned"
+    if r.get("design_mismatch"):
+        return r["design_mismatch"]
+    if r.get("cohort", V1) != V2:
+        return f"cohort {r.get('cohort', V1)!r}"
+    return f"simulator {r.get('sim_model')!r}"
 
 
 def _cohort(rows: list[dict]) -> str:

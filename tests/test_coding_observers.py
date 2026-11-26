@@ -369,6 +369,40 @@ def test_format_leaked_lets_genuine_prose_and_real_notes_through(seen, command):
     assert format_leaked(seen, command) is None
 
 
+# A compound command is a doc read only when its first output-producing stage reads a doc
+# (pricing_cap step 27 in job 7109: `pytest -q ...; grep -rn "EUR 5" docs/pricing.md ...`
+# was left unguarded because a later stage named a .md file).
+COMPOUND_DOC = "pytest -q; grep -rn \"EUR 5\" docs/pricing.md CHANGELOG.md; md5sum src/pricing/rules.py"
+
+
+@pytest.mark.parametrize("seen, why", [
+    ("Let me run the tests first.\n1 failed, 11 passed", "commentary"),
+    ("The suite prints one line.", "narration"),
+    ("Tool call output:\n1 failed", "framing"),
+    ("```\n1 failed, 11 passed\n```", "fence"),
+])
+def test_format_leaked_guards_a_compound_command_that_reads_a_doc_later(seen, why):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked(seen, COMPOUND_DOC) == why
+    assert format_leaked(seen, 'pytest -q; grep "EUR 5" docs/pricing.md') == why
+
+
+@pytest.mark.parametrize("command", [
+    "cat docs/pricing.md",
+    "cd /repo && head -3 README.md",
+    "cd /home/dev/pricing-service && export PAGER=cat && sleep 1; grep -n EUR docs/pricing.md | head",
+    "env LC_ALL=C sed -n 1,20p CHANGELOG.md",
+    "git show HEAD:docs/pricing.md",
+    "printf '```\\nx\\n```\\n'",                     # the command writes a fence itself
+])
+def test_format_leaked_exempts_commands_that_start_by_reading_a_doc(command):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("Let me explain how the pricing tiers work.", command) is None
+    assert format_leaked("```\nx\n```", command) is None
+
+
 def test_c3_resamples_a_prose_leak_and_records_its_reason():
     obs, script = _scripted("C3", [NARRATION_SEEN, NARRATION_SEEN.split("\n\n", 1)[1]])
     text, record = anyio.run(obs.observe, NARRATION_CMD, result("whatever the real output is"))
