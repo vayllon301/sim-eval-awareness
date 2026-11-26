@@ -78,6 +78,7 @@ def arm_rows(episodes: list[dict]) -> list[dict]:
             "fidelity_incomplete": sum(bool(r.get("fidelity_incomplete")) for r in rows),
             "sleep_episodes": sum(bool(r["sleep"]) for r in rows),
             "crude_div": div, "bash": bash, "crude_div_rate": div / bash if bash else None,
+            "unobserved_steps": _sum(rows, "unobserved_steps"),
             "graded_steps": graded, "graded_divergent": gdiv, "graded_div_rate": gdiv / graded if graded else None,
             "substantive_errors": subst, "substantive_rate": subst / graded if subst is not None and graded else None,
             **{k: _sum(rows, k) for k in ("semantic_mismatch", "known_mismatch_non_ws", "contradictions",
@@ -113,12 +114,28 @@ def observed_fidelity(e: dict, sample, log) -> dict:
         "substantive_rate": split["substantive_errors"] / n if n else None, "fidelity_incomplete": True}
 
 
+def observed_divergence(steps: list[dict]) -> dict:
+    """Crude divergence over the bash steps the agent observed: an executed call whose
+    observation is None (the simulator call stopped at its cap, so the agent saw nothing) is
+    counted apart as unobserved, never as a divergent output."""
+    from simtest.coding import analysis as A
+
+    executed = [s for s in steps if s.get("tool") == "bash" and s.get("executed")
+                and "output" in (s.get("result") or {})]
+    seen = [s for s in executed if s.get("observation") is not None]
+    d = A.step_divergence(seen)
+    return {"bash": d["n_bash"], "divergent": d["n_divergent"], "unobserved_steps": len(executed) - len(seen)}
+
+
 def episode_row(e: dict, sample, log) -> dict:
     """One episode: its end, its fidelity split (C0: none) and behaviour."""
     from simtest.coding.provider import reasoning_text
 
     store = (sample.store if sample is not None else e.get("attempt_store")) or {}
-    steps = store.get("CodingEpisode:steps") or []
+    steps = store.get("CodingEpisode:steps")
+    div = (observed_divergence(steps) if isinstance(steps, list) and steps else
+           {"bash": e["divergence"]["n_bash"], "divergent": e["divergence"]["n_divergent"], "unobserved_steps": None})
+    steps = steps if isinstance(steps, list) else []
     stats = observed_fidelity(e, sample, log)
     messages = sample.messages if sample is not None else []
     hits = keyword_hits([reasoning_text(m) for m in messages if m.role == "assistant"]) if sample is not None else None
@@ -126,7 +143,7 @@ def episode_row(e: dict, sample, log) -> dict:
     return {
         "arm": arm_of(e), "scenario": e["scenario"], "epoch": e["epoch"],
         "end": "finished" if e["end_reason"] == "no_tool_call" else e["end_reason"],
-        "bash": e["divergence"]["n_bash"], "divergent": e["divergence"]["n_divergent"],
+        **div,
         "sleep": waited(steps), "honest_success": m.get("honest_success"), "violation": m.get("violation"),
         "cot_keywords": hits, **stats,
     }
@@ -164,7 +181,7 @@ def format_report(name: str, rows: list[dict]) -> str:
     arms = arm_rows(rows)
     cols = [("episodes", "episodes"), ("finished", "finished"), ("max_turns", "max_turns"),
             ("truncated", "sim truncated"), ("other_end", "other end"), ("sleep_episodes", "sleep eps"),
-            ("crude_div_rate", "crude div"), ("fidelity_incomplete", "graded partly"), ("graded_div_rate", "graded div"),
+            ("crude_div_rate", "crude div"), ("unobserved_steps", "unobserved bash"), ("fidelity_incomplete", "graded partly"), ("graded_div_rate", "graded div"),
             ("substantive_errors", "substantive"), ("substantive_rate", "subst rate"),
             ("semantic_mismatch", "  test mismatch"), ("known_mismatch_non_ws", "  known (non-ws)"),
             ("contradictions", "  contradictions"), ("prose_tells", "  prose tells"),
@@ -178,6 +195,8 @@ def format_report(name: str, rows: list[dict]) -> str:
         lines.append(label.ljust(width) + "".join(_cell(a[key]).rjust(20) for a in arms))
     lines += ["", "* raw keyword matches in the agent's reasoning (explore/latent_report.py COT_KEYWORDS), "
                   "not primary-judge verdicts.",
+              "Crude div is over the bash outputs the agent observed; 'unobserved bash' counts executed calls "
+              "whose simulated output never reached it (a truncated call).",
               "Graded on the steps each episode observed; 'graded partly' counts episodes with an unobserved step "
               "(a truncated call). Substantive: semantic_mismatch, known_mismatch other than re-spacing, "
               "contradictions, delivered tells; each step once."]

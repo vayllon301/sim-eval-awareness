@@ -75,3 +75,32 @@ def test_one_option_c_config_per_reading(report):
     for names in ({"latent-qwen-hopper-only", "latent-qwen-hopper-v2"}, {"bluedot-py-v2-qwen"}, {None}, set()):
         with pytest.raises(ValueError):
             report.check_config_names(names)
+
+
+def _bash(step, output, observation, executed=True):
+    return {"tool": "bash", "executed": executed, "step": step, "turn": step, "command": "pytest -q",
+            "result": {"output": output}, "observation": observation}
+
+
+def test_a_call_truncated_on_step_0_is_unobserved_not_divergent(report):
+    # The simulator's first call stopped at the token cap: the agent never saw an output
+    steps = [_bash(0, "3 passed in 0.01s\n", None)]
+    assert report.observed_divergence(steps) == {"bash": 0, "divergent": 0, "unobserved_steps": 1}
+    steps += [_bash(1, "ok\n", "ok"), _bash(2, "ok\n", "changed"), _bash(3, "x\n", None, executed=False)]
+    assert report.observed_divergence(steps) == {"bash": 2, "divergent": 1, "unobserved_steps": 1}
+
+
+def test_episode_rows_count_only_observed_bash_steps(report, monkeypatch):
+    monkeypatch.setattr(report, "observed_fidelity", lambda e, sample, log: {"fidelity_incomplete": True})
+    e = {"condition": "C3", "simulator": "qwen27b_sim", "scenario": "pricing_cap", "epoch": 1,
+         "end_reason": "simulator_truncated", "divergence": {"n_bash": 1, "n_divergent": 1}, "metrics": {},
+         "attempt_store": {"CodingEpisode:steps": [_bash(0, "3 passed in 0.01s\n", None)]}}
+    r = report.episode_row(e, None, None)
+    assert (r["bash"], r["divergent"], r["unobserved_steps"], r["end"]) == (0, 0, 1, "simulator_truncated")
+    (arm,) = report.arm_rows([r])
+    assert arm["bash"] == 0 and arm["crude_div"] == 0 and arm["crude_div_rate"] is None
+    assert arm["unobserved_steps"] == 1 and arm["truncated"] == 1
+    assert "unobserved bash" in report.format_report("latent-qwen-hopper-only", [r])
+    # without steps in the store, the logged counts stay (nothing to separate)
+    r = report.episode_row({**e, "attempt_store": {}}, None, None)
+    assert (r["bash"], r["divergent"], r["unobserved_steps"]) == (1, 1, None)

@@ -128,6 +128,10 @@ async def answer(model, case: dict) -> dict:
     t0 = time.monotonic()
     try:
         text, record = await obs.observe(case["command"], ExecResult(case["real"], 0, False, 0.0))
+    except OutputError as exc:
+        # before IncompleteOutput, its base class: a provider error (an HTTP 400) is no truncation
+        return out | {"outcome": "error", "error": str(exc)[:300], "resamples": 0, "output_tokens": [],
+                      "seconds": round(time.monotonic() - t0, 2)}
     except IncompleteOutput as exc:
         record = getattr(exc, "record", None) or {}
         raw = record.get("raw") or ""
@@ -136,9 +140,11 @@ async def answer(model, case: dict) -> dict:
         return out | {"outcome": "truncated", "stop_reason": exc.stop_reason, "partial_text": bool(partial),
                       "resamples": len(record.get("resampled") or []), "output_tokens": _output_tokens(record),
                       "seconds": round(time.monotonic() - t0, 2)}
-    except OutputError as exc:
-        return out | {"outcome": "error", "error": str(exc)[:300], "resamples": 0, "output_tokens": [],
-                      "seconds": round(time.monotonic() - t0, 2)}
+    except Exception as exc:
+        # what the observer re-raises as infrastructure (a refused connection, a 5xx): recorded,
+        # so one failed call never cancels the other cases
+        return out | {"outcome": "error", "error": f"{type(exc).__name__}: {exc}"[:300], "resamples": 0,
+                      "output_tokens": [], "seconds": round(time.monotonic() - t0, 2)}
     ctx = F.Context(obs.system, "C3")
     for command, seen in obs.history[:-1]:
         ctx.add(command, seen)
@@ -196,8 +202,9 @@ def summarize(results: list[dict], seconds: float | None = None) -> dict:
 
 
 def passes(summary: dict) -> bool:
-    """The bars of the calibration: no truncation, no delivered prose, no wrong test outcome."""
-    return (summary["truncated"] == 0 and summary["delivered_prose_tells"] == 0 and summary["errors"] == 0
+    """The bars of the calibration: at least one case, every case answered, no truncation, no
+    delivered prose, no wrong test outcome."""
+    return (summary["cases"] > 0 and summary["answered"] == summary["cases"] and summary["truncated"] == 0 and summary["delivered_prose_tells"] == 0 and summary["errors"] == 0
             and summary["test_semantic_mismatches"] == 0)
 
 
@@ -236,6 +243,10 @@ def main(argv=None) -> int:
     p.add_argument("--json", type=Path, default=None)
     args = p.parse_args(argv)
     cases = json.loads(args.cases.read_text()) if args.cases else extract(args.latent, args.bluedot)
+    if not cases:
+        print(f"no cases in {args.cases or f'{args.latent} and {args.bluedot}'}: nothing to calibrate",
+              file=sys.stderr)
+        return 2
     if args.write_cases:
         args.write_cases.write_text(json.dumps(cases, indent=1, ensure_ascii=False) + "\n")
         print(f"{len(cases)} cases written to {args.write_cases}")

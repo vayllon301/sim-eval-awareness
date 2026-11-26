@@ -96,3 +96,47 @@ def test_a_case_without_a_session_start_is_refused(cal):
 def test_the_bluedot_cases_are_the_named_compound_and_leak_steps(cal):
     assert set(cal.CASES_BLUEDOT) == {("billing_rounding", 10), ("orders_schema", 1), ("orders_schema", 8),
                                       ("pricing_cap", 27), ("pricing_cap", 30), ("churn_format", 11)}
+
+
+def test_an_empty_case_list_never_passes(cal, tmp_path, capsys):
+    assert cal.passes(cal.summarize([])) is False
+    empty = tmp_path / "cases.json"
+    empty.write_text("[]\n")
+    assert cal.main(["configs/coding/latent_qwen_hopper_v2.yaml", "--cases", str(empty)]) != 0
+    assert "no cases" in capsys.readouterr().err
+    assert cal.main(["configs/coding/latent_qwen_hopper_v2.yaml", "--cases", str(empty),
+                     "--write-cases", str(tmp_path / "out.json")]) != 0
+
+
+def test_an_unanswered_case_fails_the_bars(cal):
+    s = cal.summarize([{"outcome": "answered", "grade": "exact", "tells": [], "output_tokens": []},
+                       {"outcome": "skipped", "output_tokens": []}])
+    assert s["cases"] == 2 and s["answered"] == 1 and not cal.passes(s)
+
+
+def test_an_unexpected_simulator_error_is_recorded_not_raised(cal):
+    def failing(input, tools, tool_choice, config):
+        raise RuntimeError("HTTP 400: context length exceeded")
+
+    ok = ScriptedSimulator(["3 passed in 0.01s"])
+    results = anyio.run(cal.calibrate, mock(failing, "mockllm/sim"), [case(), case()])
+    assert [r["outcome"] for r in results] == ["error", "error"]
+    assert "HTTP 400" in results[0]["error"]
+    s = cal.summarize(results + anyio.run(cal.calibrate, mock(ok, "mockllm/sim"), [case()]))
+    assert s["errors"] == 2 and s["answered"] == 1 and not cal.passes(s)
+
+
+def test_a_connection_error_is_recorded_and_the_other_cases_still_run(cal):
+    import httpx
+
+    calls = []
+
+    def flaky(input, tools, tool_choice, config):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ConnectError("connection refused")
+        return ModelOutput.from_content("mockllm/sim", "3 passed in 0.01s")
+
+    results = anyio.run(cal.calibrate, mock(flaky, "mockllm/sim"), [case(), case()], 1)
+    assert [r["outcome"] for r in results] == ["error", "answered"]
+    assert "ConnectError" in results[0]["error"]
