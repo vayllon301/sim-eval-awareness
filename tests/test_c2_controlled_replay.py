@@ -141,3 +141,68 @@ def test_c0_requires_executed_matching_ground_truth():
     sample["store"]["CodingEpisode:steps"][0]["executed"] = False
     with pytest.raises(ValueError, match="ground truth"):
         replay.bash_steps(sample)
+
+
+def _c0_log(path, samples, condition="C0"):
+    import json
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("_journal/start.json", json.dumps({"eval": {"task_args": {"condition": condition}}}))
+        for sid, commands in samples.items():
+            z.writestr(f"samples/{sid}_epoch_1.json", json.dumps({
+                "id": sid, "scores": {"coding_scorer": {"metadata": {"end_reason": "no_tool_call", "flagged": False}}},
+                "store": {"CodingEpisode:steps": [{"tool": "bash", "executed": True, "command": c, "observation": f"out {c}"}
+                                                  for c in commands]}}))
+
+
+def test_build_reference_writes_only_the_named_scenarios(tmp_path, monkeypatch):
+    import json
+
+    builder = script("build_reference")
+    allow = tmp_path / "allow.json"
+    allow.write_text(json.dumps({"a": ["ls", "cat x"], "b": ["ls"]}))
+    monkeypatch.setattr(builder, "ALLOWLIST", allow)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    # "c" has no audited allowlist and "a" a mutating step: only "a" is asked for
+    _c0_log(logs / "c0.eval", {"a": ["ls", "cat x", "sed -i s/1/2/ x", "cat x"], "b": ["ls"], "c": ["ls"]})
+    _c0_log(logs / "c3.eval", {"a": ["ls"]}, condition="C3")
+    out = tmp_path / "out"
+    out.mkdir()
+    builder.main([str(logs), "--scenarios", "a", "--out", str(out)])
+    assert sorted(p.name for p in out.iterdir()) == ["a.reference.json"]
+    assert json.loads((out / "a.reference.json").read_text()) == [{"command": "ls", "output": "out ls"},
+                                                                  {"command": "cat x", "output": "out cat x"}]
+    with pytest.raises(SystemExit, match="d"):              # a named scenario missing from the log
+        builder.main([str(logs), "--scenarios", "a", "d", "--out", str(out)])
+
+
+def test_build_reference_keeps_its_one_argument_form(tmp_path, monkeypatch):
+    import json
+
+    builder = script("build_reference")
+    allow = tmp_path / "allow.json"
+    allow.write_text(json.dumps({"a": ["ls"], "b": ["ls"]}))
+    monkeypatch.setattr(builder, "ALLOWLIST", allow)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    _c0_log(logs / "c0.eval", {"a": ["ls"], "b": ["ls", "make test"]})
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "scenarios/coding").mkdir(parents=True)
+    builder.main([str(logs)])
+    assert sorted(p.name for p in (tmp_path / "scenarios/coding").iterdir()) == ["a.reference.json", "b.reference.json"]
+
+
+def test_the_python_references_are_audited_read_only_prefixes():
+    import json
+    import re
+
+    allow = json.loads((Path(__file__).parents[1] / "configs/coding/c2_reference_readonly.json").read_text())
+    for sid in ("pricing_cap", "pricing_cap_benign", "billing_rounding", "billing_rounding_benign",
+                "orders_schema", "orders_schema_benign"):
+        ref = json.loads((Path(__file__).parents[1] / f"scenarios/coding/{sid}.reference.json").read_text())
+        assert ref and [x["command"] for x in ref] == allow[sid], sid
+        for x in ref:   # no test run, write, or code execution
+            assert not re.search(r"\b(?:pytest|make|python3?|pip3?|node|npm|tee|commit|revert|checkout)(?:\s|$)|"
+                                 r"sed -i| > |>>", x["command"]), x["command"]

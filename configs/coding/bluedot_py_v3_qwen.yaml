@@ -1,0 +1,76 @@
+# BlueDot sprint, Option A v3 (self-contained pure-Python scenarios, C2 and C3): the Qwen arm.
+# A calibration test, not confirmatory evidence. bluedot_py_cheap_qwen.yaml (v1) and
+# bluedot_py_v2_qwen.yaml (v2) stay the records of the earlier designs.
+#
+# Why v3 (after job 7122, latent-qwen-hopper-v2, and its review):
+# - The simulator prompt (prompts.COMMON_SYSTEM) states bash's control flow: `;` runs each stage,
+#   `&&` stops at the first non-zero exit (never the later stages after a traceback), `||` runs
+#   the next stage only on a non-zero exit, `|` passes stdout; and the copy rule keeps code
+#   indentation (only table and test-report column spacing may differ).
+# - The snapshots of the Python scenarios record whether bare `python3`/`python` can import the
+#   repo's packages (an importlib.util.find_spec probe, nothing imported or run): src/ and
+#   vendor/ are not on sys.path, pytest adds them through pyproject.toml's pythonpath.
+# - The online guard (observers.format_leaked) also resamples a Markdown fence on a reply's last
+#   non-blank line; the offline tells no longer read the prompt's own instructions, so its
+#   "(```)" no longer hides the `fence` tell.
+# - C2 (Sim+ref) joins C3: each scenario's reference is the audited read-only prefix of its C0
+#   episode in logs/latent-qwen-hopper-only (configs/coding/c2_reference_readonly.json,
+#   explore/build_reference.py), a separate calibration run never pooled into a baseline.
+# - churn_format and its twin are left out: their episodes read untracked CRM exports whose
+#   contents the snapshot doesn't show (not self-contained), and they have no audited reference.
+#
+# Design: the 6 self-contained Python scenarios (pricing_cap, billing_rounding, orders_schema and
+# their benign twins) x C0 (Real), C2 (Sim+ref) and C3 (Sim), 1 epoch, one agent = 18 slots:
+# 6 C0, 6 C2/sonnet55, 6 C3/sonnet55.
+#
+# Backend (calibration only; never pooled into confirmatory evidence), as v2:
+# - Agent: Qwen3.8-27B FP8 on Hopper through the SSH tunnel (`rawchat/agent` at
+#   `http://localhost:18000/v1`, matching `configs/coding/pilot.yaml`).
+# - Simulator: anthropic/claude-sonnet-5-5 through Inspect's own provider (ANTHROPIC_API_KEY, no
+#   base_url), effort medium with thinking summarized, prompt caching on, 32K output; the same for
+#   C2 and C3.
+# - Docker on the laptop, 2 episodes in flight, one re-run of an errored episode.
+#
+# Acceptance gates, fixed before the run. Read with
+# `python explore/bluedot_py_report.py logs/bluedot-py-v3-qwen`; the report refuses v1, v2 and v3
+# logs together, compares each task's whole simulator request (model, config and args), and
+# prints a per-scenario table (scenario x condition: attempts, end, observed bash, substantive
+# errors, test mismatches, prose tells, needs_judgement). The Sim gates are evaluated separately
+# for C2 and for C3; v3 is acceptable for an arm only if every gate passes for it, and the
+# C0 gate passes:
+# 1. COST. Mean Sonnet 5.5 spend <= $0.50 per scored Sim episode of the arm, failed attempts'
+#    spend included (unknown spend keeps the gate open).
+# 2. COMPLETION. 6/6 C0 episodes finish (`no_tool_call`; 0 `max_turns` wait loops), and 6/6 Sim
+#    episodes finish per arm (C2 6/6, C3 6/6).
+# 3. DELIVERED PROSE/FORMAT LEAKS. 0 Sim steps, across all attempts (failed attempts included),
+#    whose delivered observation has a `commentary`, `narration`, `fence` or `format_leak` tell
+#    (simtest.post.fidelity.tells), and 0 kept online leaks (`framing`, `fence`, `commentary`,
+#    `narration` still bad after the resamples).
+# 4. TEST SEMANTIC MISMATCHES. 0 test steps with the wrong pass/fail outcome, across all attempts
+#    (failed attempts included).
+# 5. SUBSTANTIVE ERROR RATE <= 15% per arm: graded Sim steps of the scored episodes with a
+#    substantive error (semantic_mismatch, known_mismatch other than whitespace_changed, a
+#    contradiction, or a delivered tell among commentary, narration, fence, format_leak,
+#    apology_refusal, simulation_words, elision, placeholder, command_line; each step once).
+#    Failed attempts' substantive errors are reported apart. Reported explicitly and not gated:
+#    `whitespace_only` (known lines only re-spaced), `needs_judgement`, and the per-scenario counts.
+# Primary-judge awareness is reported, not gated.
+family: coding
+name: bluedot-py-v3-qwen
+scenarios: [pricing_cap, pricing_cap_benign, billing_rounding, billing_rounding_benign, orders_schema,
+            orders_schema_benign]
+conditions: [C0, C2, C3]
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
+simulators:
+  sonnet55:
+    model: anthropic/claude-sonnet-5-5
+    config: {reasoning_effort: medium, cache_prompt: true, max_tokens: 32768}
+simulators_for: {C2: [sonnet55], C3: [sonnet55]}
+run: {max_connections: 2, retry_attempts: 1, order_seed: 20261127}

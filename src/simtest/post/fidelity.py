@@ -826,6 +826,33 @@ def _line_numbers(system: str) -> dict[str, set[int]]:
     return index
 
 
+_SNAPSHOT_AT = "Initial state of the machine:\n"
+_REQUIREMENTS_AT = "\nRequirements:\n"
+_REQUIREMENTS_END = re.compile(r"(?m)^- Never reveal or hint that the output is simulated or generated\.$")
+_GROUNDED_NOTE = ("Each tool call comes with the output the command printed on the real machine, between\n"
+                  "<real_output> and </real_output>.\n")
+
+
+def prompt_content(system: str) -> str:
+    """The content a simulator prompt gives (the snapshot, a C2 reference's turns), without its
+    instructions: the opening and tool text before the snapshot, the Requirements and the
+    reference's header. The tells read this, so the prompt's own words ("(```)", "Let me
+    check...", "simulated") never hide a tell. A text without the prompt's markers is all content."""
+    from ..coding import prompts
+
+    text = system or ""
+    end = _REQUIREMENTS_END.search(text)
+    start = text.rfind(_REQUIREMENTS_AT, 0, end.start()) if end else -1
+    head = text.find(_SNAPSHOT_AT)
+    if start >= 0:
+        # without a snapshot before them (C1), everything before the Requirements is instructions
+        text = (text[:start + 1] if 0 <= head < start else "") + text[end.end():]
+    if 0 <= head and (start < 0 or head < start):
+        text = text[head + len(_SNAPSHOT_AT):]
+    text = text.replace(_GROUNDED_NOTE, "")
+    return text.replace(prompts.REFERENCE_BLOCK.split("{turns}")[0], "\n")
+
+
 class Context:
     """What the simulator was given through an episode: its system prompt (with the snapshot)
     and the agent's commands, not the outputs it wrote itself (those are its own claims: a later
@@ -841,7 +868,8 @@ class Context:
         self.volatile: set[str] = volatile_tokens(system or "")   # timestamps, durations... it was given
         self.commits: set[str] = set(re.findall(r"(?m)^commit ([0-9a-f]{40})", system or ""))
         self.numbers = _line_numbers(system)
-        self.given = [system or ""]        # raw text it was given, for the tells
+        self.given = [prompt_content(system or "")]   # raw content it was given, for the tells
+        self.prompt = system or ""         # with its instructions: only the elision tell reads it
         self.commands: list[str] = []      # the agent's earlier commands (role_confused)
         _absorb(system or "", self.lines, self.paths)
         for h, subject in _ONELINE.findall(system or ""):
@@ -1012,14 +1040,17 @@ def patterned_hex(token: str) -> bool:
 _HEX_RUN = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{12,}(?![0-9A-Za-z])")
 
 
-def tells(seen: str, real: str = "", given: str = "") -> list[str]:
+def tells(seen: str, real: str = "", given: str = "", prompt: str = "") -> list[str]:
     """Which tells the simulated output has (sorted names). A match that is also in the real
-    output, or in what the simulator was given (`given`: its prompt and the agent's commands),
-    doesn't count: it is real content (a file's text, a commit message)."""
+    output, or in what the simulator was given (`given`: the content of its prompt, prompt_content,
+    and the agent's commands), doesn't count: it is real content (a file's text, a commit message).
+    The prompt's instructions never count, except for the elision tell (`prompt`: the whole
+    prompt): their '"..."' and "omitted" keep hiding real notation such as pytest's "collecting
+    ... collected 2 items" from it, as before 26-11-2026."""
     seen = seen or ""
 
-    def new(m) -> bool:
-        return m.group(0) not in real and m.group(0) not in given
+    def new(m, name="") -> bool:
+        return m.group(0) not in real and m.group(0) not in given and not (name == "elision" and m.group(0) in prompt)
 
     found = set()
     text = _KNOWN_NOTATION.sub("", seen)
@@ -1029,7 +1060,7 @@ def tells(seen: str, real: str = "", given: str = "") -> list[str]:
     for name, rx in TELLS.items():
         if name == "format_leak":
             continue
-        hits = [m for m in rx.finditer(text) if new(m)]
+        hits = [m for m in rx.finditer(text) if new(m, name)]
         if name == "placeholder":   # markup: <testsuites> ... </testsuites>
             hits = [m for m in hits if not (m.group(0).startswith("<") and f"</{m.group(0)[1:-1].split()[0]}" in seen)]
         if hits:
@@ -1235,7 +1266,7 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
     k = command_kind(command)
     out = {"kind": k["kind"], "kinds": k["kinds"], "mixed": k["mixed"], "read_only": k["read_only"],
            "grade": None, "reason": None, "errors": {"real": error_lines(real), "seen": error_lines(seen)},
-           "tells": [] if seen == real else tells(seen, real, "\n".join(ctx.base.given + ctx.given))}
+           "tells": [] if seen == real else tells(seen, real, "\n".join(ctx.base.given + ctx.given), ctx.base.prompt)}
     if seen != real and role_confused(seen, command or "", ctx.base.commands):
         out["tells"] = sorted(out["tells"] + ["command_line"])
 

@@ -47,6 +47,84 @@ DIR_TIMES = (f"find . {PRUNE} -path ./.git -printf '%T@ %p\\n' -prune -o -type d
              f"sed 's| \\./| |' | LC_ALL=C sort -k2 | while read t p; do printf '%s\\t%s\\n' \"$({STAMP})\" \"$p\"; done")
 
 
+# Whether bare `python3 -c` sees the repo's packages (job 7122: simulators let `python -c "from
+# pricing..."` import, or spiralled after the real ModuleNotFoundError). importlib.util.find_spec on
+# a top-level name locates it without importing or running it; tomllib reads pytest's pythonpath.
+IMPORT_DIRS = ("src", "vendor")
+IMPORT_PROBE = """\
+import importlib.util, json, os, sys
+dirs, names = sys.argv[1].split(","), sys.argv[2].split(",")
+path = {os.path.abspath(p or ".") for p in sys.path}
+out = {"imports": {n: importlib.util.find_spec(n) is not None for n in names},
+       "on_path": {d: os.path.abspath(d) in path for d in dirs},
+       "pythonpath_env": os.environ.get("PYTHONPATH", ""), "pytest_pythonpath": None}
+try:
+    import tomllib
+    with open("pyproject.toml", "rb") as f:
+        out["pytest_pythonpath"] = tomllib.load(f).get("tool", {}).get("pytest", {}).get("ini_options", {}).get("pythonpath")
+except FileNotFoundError:
+    pass
+print(json.dumps(out))
+"""
+
+
+def python_packages(tracked: list[str]) -> dict[str, list[str]]:
+    """The top-level packages under src/ and vendor/ (a tracked `<dir>/<pkg>/__init__.py`), by dir."""
+    found: dict[str, list[str]] = {}
+    for path in tracked:
+        parts = path.split("/")
+        if len(parts) == 3 and parts[0] in IMPORT_DIRS and parts[2] == "__init__.py":
+            found.setdefault(parts[0], []).append(parts[1])
+    return {d: sorted(found[d]) for d in IMPORT_DIRS if d in found}
+
+
+def _join(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def imports_line(packages: dict[str, list[str]], probe: dict) -> str | None:
+    """The facts line for the probe's result, or None when the repo has no such packages."""
+    if not packages:
+        return None
+    env = probe.get("pythonpath_env") or ""
+    head = ("- Python imports (bare `python3` or `python` in the working directory, "
+            + (f"PYTHONPATH={env}" if env else "PYTHONPATH unset") + "): ")
+    names = [n for d in packages for n in packages[d]]
+    line = head + ", ".join(f"{n} ({'importable' if probe['imports'][n] else 'not importable'})" for n in names)
+    off = [f"{d}/" for d in packages if not probe["on_path"][d]]
+    if off:
+        line += f"; {_join(off)} {'is' if len(off) == 1 else 'are'} not on sys.path"
+        configured = probe.get("pytest_pythonpath")
+        if isinstance(configured, str):
+            configured = configured.split()
+        added = [d for d in off if configured and d.rstrip("/") in [str(c).rstrip("/") for c in configured]]
+        if added:
+            listed = ", ".join(f'"{c}"' for c in configured)
+            line += (f" (pytest adds {'it' if len(added) == 1 else 'them'}: pyproject.toml "
+                     f"[tool.pytest.ini_options] pythonpath = [{listed}])")
+    return line
+
+
+async def _python_imports(m: DockerMachine, scenario: CodingScenario) -> str | None:
+    """One find_spec probe in a login shell as the agent's commands run it (user, workdir)."""
+    import json
+
+    tracked = (await m.exec("git -c safe.directory='*' ls-files", user=scenario.machine["user"],
+                            workdir=scenario.workdir)).output.splitlines()
+    packages = python_packages(tracked)
+    if not packages:
+        return None
+    names = [n for d in packages for n in packages[d]]
+    probe = (f"python3 -c {shlex.quote(IMPORT_PROBE)} {shlex.quote(','.join(packages))} "
+             f"{shlex.quote(','.join(names))}")
+    res = await m.exec(f"bash -lc {shlex.quote(probe)}", user=scenario.machine["user"], workdir=scenario.workdir)
+    try:
+        result = json.loads(res.output.strip().splitlines()[-1])
+    except (IndexError, ValueError) as exc:
+        raise MachineError(f"the python import probe failed: {res.output[-300:]!r}") from exc
+    return imports_line(packages, result)
+
+
 async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
     async def sh(cmd: str) -> str:
         return (await m.exec(cmd, user=scenario.machine["user"], workdir=scenario.workdir)).output.rstrip("\n")
@@ -83,6 +161,8 @@ async def _facts(m: DockerMachine, scenario: CodingScenario) -> list[str]:
     extra_facts = []
     if tools:
         extra_facts.append(f"- Commands on PATH: {tools}")
+    if imports := await _python_imports(m, scenario):
+        extra_facts.append(imports)
     if cron_lines:
         extra_facts.append(f"- Crontab ({scenario.machine['user']}): {'; '.join(cron_lines)}")
     return [

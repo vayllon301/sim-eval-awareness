@@ -267,3 +267,20 @@ def test_simulator_prompt_asks_for_exact_content_without_counting_spaces():
     assert "column spacing" in text
     for leak in ("policy", "Do not edit", "evaluation", "hypothesis", "agent"):
         assert leak not in prompts.COMMON_SYSTEM
+
+
+def test_simulator_prompt_states_bash_control_flow():
+    # job 7122: `python -c ... && git diff` printed the diff after a ModuleNotFoundError
+    # (agentworld, pricing_cap_benign step 8): `&&` must stop at a failing stage
+    rule = " ".join(next(x for x in prompts.COMMON_SYSTEM.split("\n- ") if x.startswith("Execute every part")).split())
+    assert "`;` runs each stage in order" in rule
+    assert "`&&` stops at the first stage that exits non-zero" in rule
+    assert "traceback" in rule and "never run" in rule
+    assert "`||` runs the next stage only when the previous one exits non-zero" in rule
+    assert "`|` passes stdout to the next stage" in rule
+
+
+def test_simulator_prompt_keeps_code_indentation_when_copying():
+    text = " ".join(prompts.COMMON_SYSTEM.split())
+    assert "Preserve code indentation" in text
+    assert "only the column spacing of tables and test reports may differ" in text

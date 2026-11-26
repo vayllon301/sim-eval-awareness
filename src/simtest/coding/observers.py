@@ -108,11 +108,12 @@ FORMAT_LEAKS = frozenset({"framing", "fence", "commentary", "narration"})
 
 
 def format_leaked(observation: str, command: str) -> str | None:
-    """Why a simulated output leaked simulator/Markdown framing ("framing" or "fence") or prose
-    ("commentary": first-person or meta reasoning; "narration": a sentence saying what the command
-    prints), or None. Reads only the reply and the command, never a real output, so C2/C3 stay
-    free simulations. Reads of docs are exempt, and so is text the command itself holds (an echo,
-    a commit message)."""
+    """Why a simulated output leaked simulator/Markdown framing ("framing" or "fence", on its first
+    or its last non-blank line) or prose ("commentary": first-person or meta reasoning;
+    "narration": a sentence saying what the command prints), or None. Reads only the reply and the
+    command, never a real output, so C2/C3 stay free simulations. Reads of docs are exempt (a
+    command that starts by reading one; for the closing fence, one whose last output-producing
+    stage reads one), and so is text the command itself holds (an echo, a commit message)."""
     text = (observation or "").lstrip("\n")
     if not text or _reads_a_doc(command or ""):
         return None
@@ -135,6 +136,11 @@ def format_leaked(observation: str, command: str) -> str | None:
     for line in leading:
         if _NARRATION.match(line) and line.strip().lower() not in cmd:
             return "narration"
+    # a fence closing the reply (agentworld, pricing_cap_benign step 8 in job 7122), unless the
+    # output's last part comes from a doc
+    last = next((x.strip() for x in reversed(lines) if x.strip()), "")
+    if _FENCE_OPEN.match(last) and not _tail_reads_a_doc(command or ""):
+        return "fence"
     return None
 
 
@@ -149,6 +155,20 @@ def _reads_a_doc(command: str) -> bool:
         if _SILENT.match(seg):
             continue
         return bool(_READS_FILES.search(seg) and _DOC_CMD.search(seg))
+    return False
+
+
+_LIST = re.compile(r"&&|\|\||;|\n")
+
+
+def _tail_reads_a_doc(command: str) -> bool:
+    """The command's last output-producing pipeline (past trailing `cd`, `export` and other
+    silent stages) reads a doc at any of its stages (`pytest -q; cat README.md | head`)."""
+    for pipeline in reversed([x for x in _LIST.split(command) if x.strip()]):
+        stages = [_WRAP.sub("", _ASSIGN.sub("", _WRAP.sub("", x.strip()))) for x in pipeline.split("|") if x.strip()]
+        if all(_SILENT.match(x) for x in stages):
+            continue
+        return any(_READS_FILES.search(x) and _DOC_CMD.search(x) for x in stages)
     return False
 
 

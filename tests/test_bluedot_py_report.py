@@ -421,7 +421,8 @@ def test_real_rows_have_no_substantive_errors(report):
 def test_cohort_of_config_names(report):
     assert report.cohort_of("bluedot-py-cheap-qwen") == report.cohort_of("bluedot-py-cheap-deepseek") == "v1"
     assert report.cohort_of("bluedot-py-v2-qwen") == report.cohort_of("bluedot-py-v2-deepseek") == "v2"
-    for name in (None, "", "bluedot-cheap-qwen", "latent-qwen-hopper-v2", "bluedot-py-v3-qwen"):
+    assert report.cohort_of("bluedot-py-v3-qwen") == "v3"
+    for name in (None, "", "bluedot-cheap-qwen", "latent-qwen-hopper-v2", "bluedot-py-v3-deepseek"):
         assert report.cohort_of(name) is None
 
 
@@ -578,3 +579,169 @@ def test_a_foreign_model_row_blocks_every_v2_pass(report):
 def test_v2_cost_detail_shows_one_amount_when_the_span_is_exact(report):
     (cost,) = [x for x in report.v2_gates(_v2_rows()) if x["gate"] == "cost"]
     assert cost["detail"].startswith("$0.960 over 8/8"), cost["detail"]
+
+
+# -- Iteration 2: a retried attempt never erases a confirmed failure; the full simulator request --
+
+def _failed_attempt(row, **over):
+    return {**row, "end": "simulator_error", "error": "simulator failed", "sim_cost": 0.05, "sim_cost_min": 0.05,
+            "sim_cost_max": 0.05, **over}
+
+
+@pytest.mark.parametrize("key, gate", [("prose_tells", "prose_leaks"), ("format_leaks_kept", "prose_leaks"),
+                                       ("semantic_mismatch", "test_semantic_mismatches")])
+def test_a_clean_retry_never_erases_a_failed_attempts_delivered_error(report, key, gate):
+    rows = _qwen_v2_rows()
+    assert gates(report, rows)[gate] is True
+    sim = next(r for r in rows if r["condition"] == "C3")
+    # the failed attempt delivered one leak or one wrong test outcome before failing; its retry is clean
+    failed = _failed_attempt(sim, **{key: 1, "fidelity_incomplete": True, "substantive_errors": None,
+                                     "graded_steps": None})
+    assert gates(report, rows + [failed])[gate] is False
+
+
+def test_substantive_rate_reports_failed_attempts_apart(report):
+    rows = _qwen_v2_rows()
+    sim = next(r for r in rows if r["condition"] == "C3")
+    failed = _failed_attempt(sim, substantive_errors=3, graded_steps=4)
+    (g,) = [x for x in report.v2_gates(rows + [failed]) if x["gate"] == "substantive_rate"]
+    (clean,) = [x for x in report.v2_gates(rows) if x["gate"] == "substantive_rate"]
+    assert g["value"] == clean["value"] and g["passed"] is True       # the rate is over scored rows
+    assert "failed attempts: 3 substantive of 4 graded steps" in g["detail"], g["detail"]
+    assert "failed attempts" not in clean["detail"]
+    # completion counts each slot once, however many attempts it took
+    passed = {x["gate"]: x for x in report.v2_gates(rows + [failed])}
+    assert passed["sim_completion"]["value"] == 4 and passed["sim_completion"]["passed"] is True
+
+
+def test_option_a_problems_compare_the_full_simulator_request(report):
+    # same model and config, another endpoint: not Option A
+    assert problems(report, sim={**OPTION_A_SIM, "args": {"base_url": "https://proxy.example/v1"}})
+    assert problems(report, sim={**OPTION_A_SIM, "args": {"cache_ttl": "1h"}})
+    # args recorded empty or not at all: Sonnet through Inspect's own provider (run.py request_config)
+    assert problems(report, sim={k: v for k, v in OPTION_A_SIM.items() if k != "args"}) == []
+    assert problems(report, sim={**OPTION_A_SIM, "model": "anthropic/claude-sonnet-5-5", "extra": 1})
+
+
+# -- v3: 6 self-contained Python scenarios x C0, C2 (Sim+ref), C3 (Sim), the Qwen arm --------------
+
+V3_SCENARIOS = ["pricing_cap", "pricing_cap_benign", "billing_rounding", "billing_rounding_benign",
+                "orders_schema", "orders_schema_benign"]
+V3_DESIGN = {"conditions": ["C0", "C2", "C3"], "simulators": {"C2": ["sonnet55"], "C3": ["sonnet55"]},
+             "agents": {"qwen27b": "rawchat/agent"}, "scenarios": V3_SCENARIOS, "epochs": 1}
+
+
+def _v3_rows(over=None):
+    over, rows = over or {}, []
+    for scenario in V3_SCENARIOS:
+        for condition in ("C0", "C2", "C3"):
+            r = ep(arm="bluedot-py-v3-qwen", scenario=scenario, condition=condition, cohort="v3")
+            if condition != "C0":
+                r.update(substantive_errors=1, prose_tells=0, whitespace_only=2, needs_judgement=1)
+            r.update(over.get((scenario, condition), {}))
+            rows.append(r)
+    return rows
+
+
+def v3_gates(report, rows):
+    return {x["gate"]: x["passed"] for x in report.v3_gates(rows)}
+
+
+def test_v3_config_is_the_planned_design_and_documents_its_gates(report):
+    from simtest.coding import run
+
+    file = Path(__file__).parents[1] / "configs/coding/bluedot_py_v3_qwen.yaml"
+    cfg = run.load_config(file)
+    assert cfg["name"] == "bluedot-py-v3-qwen" and report.cohort_of(cfg["name"]) == "v3"
+    assert cfg["scenarios"] == V3_SCENARIOS and cfg["conditions"] == ["C0", "C2", "C3"] and cfg["epochs"] == 1
+    assert cfg["simulators_for"] == {"C2": ["sonnet55"], "C3": ["sonnet55"]}
+    for sim in ("sonnet55",):
+        recorded = run.request_config(cfg, sim)
+        assert recorded["agents"] == QWEN_AGENTS and recorded["simulator"] == OPTION_A_SIM
+    assert {"max_turns": cfg["max_turns"], "deadline": cfg["deadline"]} == {
+        k: v for k, v in report.PLANNED_LIMITS.items() if k != "machine"}
+    assert cfg["run"]["max_connections"] == 2 and cfg["run"]["retry_attempts"] == 1
+    header = file.read_text()
+    for gate in ("$0.50", "6/6", "C2", "C3", "separately", "failed attempts", "commentary", "fence", "format_leak",
+                 "<= 15%", "needs_judgement", "per-scenario"):
+        assert gate in header, gate
+    for sid in V3_SCENARIOS:      # C2 needs every scenario's audited reference
+        assert (Path(__file__).parents[1] / f"scenarios/coding/{sid}.reference.json").exists(), sid
+
+
+def test_v3_provenance_reads_the_v3_design(report):
+    agents = QWEN_AGENTS
+    for cond, sim in (("C0", None), ("C2", OPTION_A_SIM), ("C3", OPTION_A_SIM)):
+        assert report.option_a_problems(V3_DESIGN, sim, cond, agents=agents, limits=LIMITS, cohort="v3") == [], cond
+    # v2's design is not v3's, and v3's is not v2's
+    assert report.option_a_problems(OPTION_A_DESIGN, OPTION_A_SIM, "C3", agents=agents, limits=LIMITS, cohort="v3")
+    assert report.option_a_problems(V3_DESIGN, OPTION_A_SIM, "C3", agents=agents, limits=LIMITS)
+    # a C2 run with no simulator request, or with another endpoint
+    assert report.option_a_problems(V3_DESIGN, None, "C2", agents=agents, limits=LIMITS, cohort="v3")
+    assert report.option_a_problems(V3_DESIGN, {**OPTION_A_SIM, "args": {"base_url": "http://x/v1"}}, "C2",
+                                    agents=agents, limits=LIMITS, cohort="v3")
+
+
+def test_a_clean_v3_run_passes_every_gate_per_arm(report):
+    g = v3_gates(report, _v3_rows())
+    assert g == {"real_completion": True,
+                 **{f"{name}[{arm}]": True for arm in ("C2", "C3")
+                    for name in ("cost", "sim_completion", "prose_leaks", "test_semantic_mismatches", "substantive_rate")}}
+
+
+def test_v3_gates_are_read_separately_for_c2_and_c3(report):
+    g = v3_gates(report, _v3_rows({("orders_schema", "C2"): {"semantic_mismatch": 1}}))
+    assert g["test_semantic_mismatches[C2]"] is False and g["test_semantic_mismatches[C3]"] is True
+    g = v3_gates(report, _v3_rows({("pricing_cap", "C3"): {"end": "max_turns"}}))
+    assert g["sim_completion[C3]"] is False and g["sim_completion[C2]"] is True       # 6/6 per arm
+    g = v3_gates(report, _v3_rows({("pricing_cap", "C0"): {"end": "max_turns"}}))
+    assert g["real_completion"] is False
+    # substantive: 9/60 = 0.15 passes, 10/60 fails (graded_steps 10 per episode, 6 per arm)
+    rows = _v3_rows({("pricing_cap", "C2"): {"substantive_errors": 4}})
+    assert v3_gates(report, rows)["substantive_rate[C2]"] is True
+    rows = _v3_rows({("pricing_cap", "C2"): {"substantive_errors": 5}})
+    assert v3_gates(report, rows)["substantive_rate[C2]"] is False
+    assert v3_gates(report, rows)["substantive_rate[C3]"] is True
+    # cost: 6 x 0.12 = 0.72; one 2.30 -> (2.30 + 5*0.12)/6 = 0.483 passes, 2.50 -> 0.517 fails
+    rows = _v3_rows({("billing_rounding", "C3"): {"sim_cost": 2.30, "sim_cost_min": 2.30, "sim_cost_max": 2.30}})
+    assert v3_gates(report, rows)["cost[C3]"] is True
+    rows = _v3_rows({("billing_rounding", "C3"): {"sim_cost": 2.50, "sim_cost_min": 2.50, "sim_cost_max": 2.50}})
+    assert v3_gates(report, rows)["cost[C3]"] is False and v3_gates(report, rows)["cost[C2]"] is True
+
+
+def test_v3_failed_attempts_count_for_zero_event_gates_and_cost(report):
+    rows = _v3_rows()
+    c2 = next(r for r in rows if r["condition"] == "C2")
+    rows.append(_failed_attempt(c2, prose_tells=1, fidelity_incomplete=True, substantive_errors=None,
+                                graded_steps=None))
+    g = v3_gates(report, rows)
+    assert g["prose_leaks[C2]"] is False and g["prose_leaks[C3]"] is True
+    (cost,) = [x for x in report.v3_gates(rows) if x["gate"] == "cost[C2]"]
+    assert cost["value"] == pytest.approx((6 * 0.12 + 0.05) / 6)
+
+
+def test_v3_missing_or_excluded_rows_never_pass(report):
+    rows = [r for r in _v3_rows() if not (r["scenario"] == "pricing_cap" and r["condition"] == "C2")]
+    g = v3_gates(report, rows)
+    assert g["sim_completion[C2]"] is None and g["cost[C2]"] is None and g["sim_completion[C3]"] is True
+    rows = _v3_rows()
+    rows[0]["design_mismatch"] = "agent request differs"
+    assert True not in v3_gates(report, rows).values()
+    # v2 rows never pass v3's gates
+    assert True not in v3_gates(report, _qwen_v2_rows()).values()
+
+
+def test_v1_v2_and_v3_logs_are_never_read_together(report):
+    for a, b in (("bluedot-py-v2-qwen", "bluedot-py-v3-qwen"), ("bluedot-py-cheap-qwen", "bluedot-py-v3-qwen")):
+        with pytest.raises(ValueError, match="cohort"):
+            report.check_cohorts({Path("logs/a"): {a}, Path("logs/b"): {b}})
+    assert report.check_cohorts({Path("logs/a"): {"bluedot-py-v3-qwen"}}) == "v3"
+
+
+def test_v3_report_has_per_arm_gates_and_a_per_scenario_table(report):
+    text = report.format_report(_v3_rows({("orders_schema", "C2"): {"semantic_mismatch": 1}}))
+    assert "Acceptance gates, v3" in text and "test_semantic_mismatches[C2]" in text
+    assert "Per scenario" in text
+    line = next(x for x in text.splitlines() if x.startswith("| orders_schema ") or x.startswith("orders_schema "))
+    assert line
+    assert "Pivot rules" not in text and "Acceptance gates, v2" not in text
