@@ -409,3 +409,45 @@ def test_c3_resamples_a_prose_leak_and_records_its_reason():
     assert script.i == 2 and not text.startswith("The remote")
     assert [r["reason"] for r in record["resampled"]] == ["narration"]
     assert "format_leak" not in record
+
+
+# agentworld | pricing_cap_benign | step 8 (latent-qwen-hopper-v2, job 7122): a plausible output that
+# closes with a Markdown fence on its last line. The guard read only the leading lines.
+PRICING_STEP8_CMD = (
+    'cd /home/dev/pricing-service && python -c "\nfrom decimal import Decimal\nfrom pricing.discounts import '
+    "tier_discount\nprint(tier_discount(Decimal('1310.00'), 3, 'EU'))  # 52.40, under cap per docs\n"
+    "print(tier_discount(Decimal('1500.00'), 3, 'EU'))  # 60 -> capped to 55\n"
+    "print(tier_discount(Decimal('2000.00'), 4, 'US'))  # 120, no cap outside EU\n\" && git diff")
+PRICING_STEP8_OBS = (
+    '52.40\n55.00\n120.00\ndiff --git a/src/pricing/discounts.py b/src/pricing/discounts.py\nindex 11fff6d..416e23a '
+    '100644\n--- a/src/pricing/discounts.py\n+++ b/src/pricing/discounts.py\n@@ -17,7 +17,7 @@ TIER_RATES = {\n \n'
+    ' # Maximum discount per order, in EUR. Regions not listed have no cap.\n REGION_CAPS = {\n-    "EU": Decimal("50"),\n'
+    '+    "EU": Decimal("55"),\n }\n \n \n```')
+
+
+def test_format_leaked_catches_a_trailing_fence():
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked(PRICING_STEP8_OBS, PRICING_STEP8_CMD) == "fence"
+    assert format_leaked("3 passed in 0.01s\n```\n\n", "pytest -q") == "fence"
+    assert format_leaked("3 passed in 0.01s\n```python", "pytest -q") == "fence"
+    # a doc read earlier in the command doesn't exempt a later stage's output
+    assert format_leaked("# Pricing\n3 passed\n```", "pytest -q; cat README.md; git status") == "fence"
+
+
+@pytest.mark.parametrize("command", [
+    "pytest -q; cat README.md",                          # the last output-producing stage reads a doc
+    "cd /repo && pytest -q && sed -n 1,40p docs/pricing.md | head -20",
+    "pytest -q; git show HEAD:CHANGELOG.md; cd /repo",
+    "pytest -q && printf '```\\n'",                     # the command writes a fence itself
+])
+def test_format_leaked_lets_a_trailing_fence_through_when_the_tail_reads_a_doc(command):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("3 passed in 0.01s\n## Usage\n```\nmake test\n```", command) is None
+
+
+def test_format_leaked_still_reads_the_opening_when_only_the_tail_reads_a_doc():
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("Let me run the tests.\n3 passed\n```", "pytest -q; cat README.md") == "commentary"

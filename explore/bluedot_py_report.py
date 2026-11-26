@@ -1,9 +1,10 @@
 """The BlueDot sprint's Option A calibration (pure-Python scenarios), read from its logs:
 one row per episode (including graded fidelity from simtest.post.fidelity, split into
 substantive and cosmetic errors), one per arm, and the cohort's decision rules: the five pivot
-rules of configs/coding/bluedot_py_cheap_qwen.yaml (v1), or the acceptance gates of
-configs/coding/bluedot_py_v2_qwen.yaml (v2). The cohort is read from each log's config name;
-v1 and v2 logs are never read together.
+rules of configs/coding/bluedot_py_cheap_qwen.yaml (v1), the acceptance gates of
+configs/coding/bluedot_py_v2_qwen.yaml (v2), or those of configs/coding/bluedot_py_v3_qwen.yaml
+(v3: C0, C2 and C3 on 6 scenarios, C2 and C3 gated separately, with a per-scenario table). The
+cohort is read from each log's config name; logs of different cohorts are never read together.
 
 Analysis only: reads logs and calls no model. A calibration test, never confirmatory evidence.
 
@@ -11,6 +12,7 @@ Analysis only: reads logs and calls no model. A calibration test, never confirma
         logs/bluedot-py-cheap-qwen logs/bluedot-py-cheap-deepseek \\
         [--judge qwen.jsonl --judge deepseek.jsonl] [--json out.json]
     uv run --no-sync python explore/bluedot_py_report.py logs/bluedot-py-v2-qwen [logs/bluedot-py-v2-deepseek]
+    uv run --no-sync python explore/bluedot_py_report.py logs/bluedot-py-v3-qwen
 """
 
 from __future__ import annotations
@@ -48,6 +50,9 @@ PLANNED = len(PLANNED_SIM_SLOTS)   # 8 episodes per condition (4 scenarios x 2 p
 # exactly these count towards Option A's rules (a foreign cohort can never clear them).
 SIM_MODEL = "anthropic/claude-sonnet-5-5"
 SIM_CONFIG = {"cache_prompt": True, "max_tokens": 32768, "reasoning_effort": "medium"}
+# The whole request run.request_config records: Sonnet through Inspect's own provider, so no args
+# (no base_url): the same model and config served from another endpoint is not Option A.
+SIM_REQUEST = {"model": SIM_MODEL, "config": SIM_CONFIG, "args": {}}
 PLANNED_CONDITIONS = [REAL, SIM]
 # The agent request each planned agent records (`request_config.agents`, simtest.coding.run's
 # request_config) and the task limits, as the two configs set them: a run served under the same
@@ -63,9 +68,27 @@ PLANNED_AGENT_REQUESTS = {
 PLANNED_LIMITS = {"max_turns": 40, "deadline": 60, "machine": "docker"}
 # Cohorts: the config names whose logs a reading may combine. v2 (after job 7109) keeps v1's
 # design and requests; its scenarios' owner replies, simulator prompt and leak guard differ.
-V1, V2 = "v1", "v2"
+# v3 (after job 7122) runs the Qwen agent on 6 self-contained scenarios in C0, C2 (Sim+ref) and C3.
+V1, V2, V3 = "v1", "v2", "v3"
 COHORTS = {V1: frozenset({"bluedot-py-cheap-qwen", "bluedot-py-cheap-deepseek"}),
-           V2: frozenset({"bluedot-py-v2-qwen", "bluedot-py-v2-deepseek"})}
+           V2: frozenset({"bluedot-py-v2-qwen", "bluedot-py-v2-deepseek"}),
+           V3: frozenset({"bluedot-py-v3-qwen"})}
+C2 = "C2"
+V3_SCENARIOS = ("pricing_cap", "pricing_cap_benign", "billing_rounding", "billing_rounding_benign",
+                "orders_schema", "orders_schema_benign")
+# Each cohort's design: scenarios, conditions in order, the simulated conditions, the agents.
+PLANS = {
+    V1: {"scenarios": PLANNED_SCENARIOS, "conditions": PLANNED_CONDITIONS, "sim": (SIM,), "models": PLANNED_MODELS},
+    V2: {"scenarios": PLANNED_SCENARIOS, "conditions": PLANNED_CONDITIONS, "sim": (SIM,), "models": PLANNED_MODELS},
+    V3: {"scenarios": frozenset(V3_SCENARIOS), "conditions": [REAL, C2, SIM], "sim": (C2, SIM),
+         "models": frozenset({PLANNED_QWEN})},
+}
+
+
+def planned_slots(cohort: str = V1) -> frozenset:
+    plan = PLANS[cohort]
+    return frozenset((m, s, c, ep) for m in plan["models"] for s in plan["scenarios"] for c in plan["conditions"]
+                     for ep in PLANNED_EPOCHS)
 # v2 gate: substantive errors per graded Sim step (pooled)
 MAX_SUBSTANTIVE = 0.15
 # Tells (simtest.post.fidelity.tells) in a delivered observation: prose or format leaks, and
@@ -90,10 +113,12 @@ def check_cohorts(names_by_dir: dict) -> str | None:
 
 
 def option_a_problems(design: dict | None, sim_request: dict | None, condition: str, *,
-                      agents: dict | None, limits: dict | None) -> list[str]:
+                      agents: dict | None, limits: dict | None, cohort: str = V1) -> list[str]:
     """Why a run's recorded design, agent request, task limits or simulator request is not
-    Option A's (empty if it is). `agents` is the task's recorded `request_config.agents`,
-    `limits` its recorded max_turns, deadline and machine."""
+    the cohort's Option A design (empty if it is). `agents` is the task's recorded
+    `request_config.agents`, `limits` its recorded max_turns, deadline and machine. The
+    simulator request is compared whole (model, config and args, SIM_REQUEST)."""
+    plan = PLANS[cohort]
     problems = []
     if not isinstance(design, dict):
         return ["no design recorded"]
@@ -109,26 +134,31 @@ def option_a_problems(design: dict | None, sim_request: dict | None, condition: 
             problems.append(f"agent request {req!r}, not {planned!r}")
     if not isinstance(limits, dict) or limits != PLANNED_LIMITS:
         problems.append(f"task limits {limits!r}, not {PLANNED_LIMITS!r}")
-    if design.get("conditions") != PLANNED_CONDITIONS:
-        problems.append(f"conditions {design.get('conditions')!r}, not {PLANNED_CONDITIONS!r}")
-    if set(design.get("scenarios") or []) != PLANNED_SCENARIOS or len(design.get("scenarios") or []) != len(PLANNED_SCENARIOS):
-        problems.append(f"scenarios {design.get('scenarios')!r}, not {sorted(PLANNED_SCENARIOS)!r}")
+    if design.get("conditions") != plan["conditions"]:
+        problems.append(f"conditions {design.get('conditions')!r}, not {plan['conditions']!r}")
+    if set(design.get("scenarios") or []) != plan["scenarios"] or len(design.get("scenarios") or []) != len(plan["scenarios"]):
+        problems.append(f"scenarios {design.get('scenarios')!r}, not {sorted(plan['scenarios'])!r}")
     if design.get("epochs") not in PLANNED_EPOCHS:
         problems.append(f"epochs {design.get('epochs')!r}, not {sorted(PLANNED_EPOCHS)!r}")
     agents = list((design.get("agents") or {}).values())
-    if len(agents) != 1 or agents[0] not in PLANNED_MODELS:
-        problems.append(f"agents {design.get('agents')!r}, not one of {sorted(PLANNED_MODELS)!r}")
+    if len(agents) != 1 or agents[0] not in plan["models"]:
+        problems.append(f"agents {design.get('agents')!r}, not one of {sorted(plan['models'])!r}")
     panel = (design.get("simulators") or {})
-    if set(panel) != {SIM} or len(panel.get(SIM) or []) != 1:
-        problems.append(f"simulator panel {panel!r}, not one {SIM} simulator")
-    if condition == SIM:
+    if set(panel) != set(plan["sim"]) or any(len(panel.get(c) or []) != 1 for c in plan["sim"]):
+        problems.append(f"simulator panel {panel!r}, not one simulator for each of {list(plan['sim'])!r}")
+    if condition in plan["sim"]:
         if not isinstance(sim_request, dict):
             problems.append("no simulator request recorded")
         else:
-            if sim_request.get("model") != SIM_MODEL:
-                problems.append(f"simulator {sim_request.get('model')!r}, not {SIM_MODEL!r}")
-            if sim_request.get("config") != SIM_CONFIG:
-                problems.append(f"simulator config {sim_request.get('config')!r}, not {SIM_CONFIG!r}")
+            request = {"args": {}, **sim_request}      # a log that records no args: none were set
+            if request.get("model") != SIM_MODEL:
+                problems.append(f"simulator {request.get('model')!r}, not {SIM_MODEL!r}")
+            if request.get("config") != SIM_CONFIG:
+                problems.append(f"simulator config {request.get('config')!r}, not {SIM_CONFIG!r}")
+            if request.get("args") != SIM_REQUEST["args"]:
+                problems.append(f"simulator args {request.get('args')!r}, not {SIM_REQUEST['args']!r}")
+            if set(request) != set(SIM_REQUEST):
+                problems.append(f"simulator request fields {sorted(request)!r}, not {sorted(SIM_REQUEST)!r}")
     elif condition == REAL and sim_request is not None:
         problems.append(f"a {REAL} run with a simulator request {sim_request!r}")
     return problems
@@ -282,14 +312,15 @@ def read(log_dirs: list[Path], judge: list[Path] = ()) -> list[dict]:
             seen = requests.get((e["condition"], e["simulator"]), [])
             first = seen[0] if seen else {}
             problems = option_a_problems(run_design, first.get("simulator"), e["condition"],
-                                         agents=first.get("agents"), limits=first.get("limits"))
+                                         agents=first.get("agents"), limits=first.get("limits"),
+                                         cohort=cohort or V1)
             if not seen:
                 problems.append(f"no log records the request of task {e['condition']}/{e['simulator']}")
             elif any(x != seen[0] for x in seen):
                 problems.append(f"task {e['condition']}/{e['simulator']} has differing requests or limits")
             r["cohort"] = cohort_of(first.get("config_name"))
             if r["cohort"] is None or r["cohort"] != cohort:
-                problems.append(f"config {first.get('config_name')!r} is not an Option A {cohort or 'v1/v2'} config")
+                problems.append(f"config {first.get('config_name')!r} is not an Option A {cohort or 'v1/v2/v3'} config")
             r["design_mismatch"] = "; ".join(problems) or None
             rows.append(r)
     B._check_unique_scored_slots(rows)
@@ -300,14 +331,14 @@ def _is_planned(r: dict, cohort: str = V1) -> bool:
     """A planned Option A slot, from a run of the cohort's configs: its design and simulator
     request match (`design_mismatch`, set by `read`), and a Sim row's observed simulator is
     Sonnet 5.5. A row without a cohort (built by hand, never by `read`) is v1."""
-    if B._slot_key(r) not in PLANNED_SLOTS or r.get("design_mismatch") or r.get("cohort", V1) != cohort:
+    if B._slot_key(r) not in planned_slots(cohort) or r.get("design_mismatch") or r.get("cohort", V1) != cohort:
         return False
-    return r["condition"] != SIM or r.get("sim_model") in (None, SIM_MODEL)
+    return r["condition"] not in PLANS[cohort]["sim"] or r.get("sim_model") in (None, SIM_MODEL)
 
 
 def _foreign(rows: list[dict], cohort: str = V1) -> list[dict]:
     """Rows in a planned slot that `_is_planned` excludes: not from a run of the cohort."""
-    return [r for r in rows if B._slot_key(r) in PLANNED_SLOTS and not _is_planned(r, cohort)]
+    return [r for r in rows if B._slot_key(r) in planned_slots(cohort) and not _is_planned(r, cohort)]
 
 
 def rules(rows: list[dict]) -> list[dict]:
@@ -470,25 +501,14 @@ def _completion(sim_all: list[dict], scored: list[dict], plan: frozenset, allowe
     return passed, len(finished), detail
 
 
-def v2_gates(rows: list[dict]) -> list[dict]:
-    """The acceptance gates of configs/coding/bluedot_py_v2_qwen.yaml, over the planned slots
-    of the planned agents present (a Qwen-only run is planned as its 4 + 4 slots). An agent's
-    slots stay expected even when its rows fail `_is_planned` (another request, cohort or
-    simulator), so a rejected arm leaves its slots missing rather than shrinking the plan.
-    `passed` is None while a gate can't be read yet (slots missing, telemetry incomplete), and
-    never True while any row is excluded; a confirmed failure in the planned rows stays False."""
-    B._check_unique_scored_slots(rows)
-    planned = [r for r in rows if _is_planned(r, V2)]
-    excluded = [r for r in rows if not _is_planned(r, V2)]
-    arms = {r.get("agent_model") for r in rows} & PLANNED_MODELS
-    sim_plan = frozenset(x for x in PLANNED_SIM_SLOTS if x[0] in arms)
-    real_plan = frozenset(x for x in PLANNED_REAL_SLOTS if x[0] in arms)
-    scored = [r for r in planned if r["end"] in ("finished", "max_turns")]
-    sim = [r for r in scored if r["condition"] == SIM]
-    real = [r for r in scored if r["condition"] == REAL]
-    sim_all = [r for r in planned if r["condition"] == SIM]
+def _sim_gates(sim_all: list[dict], sim: list[dict], sim_plan: frozenset, allowed: int) -> dict:
+    """The gates on one simulated arm: cost, completion, delivered prose/format leaks, test
+    semantic mismatches and the substantive error rate. `sim_all` is every planned attempt of
+    the arm (failed ones included), `sim` its scored rows. Cost and the zero-event gates read
+    every attempt: a retry never erases a failed attempt's spend, delivered leak or wrong test
+    outcome. The rate reads the scored rows; failed attempts' errors are reported apart."""
     sim_complete = bool(sim_plan) and {B._slot_key(r) for r in sim} == sim_plan
-    out = []
+    gates = {}
 
     # cost: mean Sonnet 5.5 spend per scored Sim episode, every Sim attempt's spend included
     lows = [r.get("sim_cost_min", r.get("sim_cost")) for r in sim_all]
@@ -503,70 +523,157 @@ def v2_gates(rows: list[dict]) -> list[dict]:
         cost = None
     else:
         cost = False if mean_lo > MAX_SIM_COST else (None if mean_hi > MAX_SIM_COST else True)
-    out.append({"gate": "cost", "test": f"mean_sim_cost_usd <= {MAX_SIM_COST:.2f}", "value": mean_lo, "passed": cost,
-                "detail": f"{B._usd_span(lo, hi)} over {len(sim)}/{len(sim_plan)} scored Sim episodes"
-                          + (f"; {unknown} unknown-spend row(s)" if unknown else "")})
+    gates["cost"] = {"gate": "cost", "test": f"mean_sim_cost_usd <= {MAX_SIM_COST:.2f}", "value": mean_lo,
+                     "passed": cost,
+                     "detail": f"{B._usd_span(lo, hi)} over {len(sim)}/{len(sim_plan)} scored Sim episodes"
+                               + (f" ({len(sim_all)} attempts)" if len(sim_all) != len(sim) else "")
+                               + (f"; {unknown} unknown-spend row(s)" if unknown else "")}
 
-    # completion: every C0 finishes (no max_turns wait loops); Sim at most one unfinished of 8, none of 4
-    real_all = [r for r in planned if r["condition"] == REAL]
-    passed, n, detail = _completion(real_all, real, real_plan, 0)
-    out.append({"gate": "real_completion", "test": f"real_finished == {len(real_plan)}", "value": n,
-                "passed": passed, "detail": detail})
-    allowed = 1 if len(sim_plan) == len(PLANNED_SIM_SLOTS) else 0
     passed, n, detail = _completion(sim_all, sim, sim_plan, allowed)
-    out.append({"gate": "sim_completion", "test": f"sim_finished >= {len(sim_plan) - allowed} of {len(sim_plan)}",
-                "value": n, "passed": passed, "detail": detail})
+    gates["sim_completion"] = {"gate": "sim_completion", "test": f"sim_finished >= {len(sim_plan) - allowed} of {len(sim_plan)}",
+                               "value": n, "passed": passed, "detail": detail}
 
-    def total(key: str) -> tuple[int, int]:
-        """(sum of the known values, rows where it is unknown)"""
-        return (sum(r[key] for r in sim if r.get(key) is not None),
-                sum(r.get(key) is None or bool(r.get("fidelity_incomplete")) for r in sim))
+    def missing(key: str) -> int:
+        """Scored rows where the value is unknown."""
+        return sum(r.get(key) is None or bool(r.get("fidelity_incomplete")) for r in sim)
 
     def zero_gate(name: str, keys: tuple, what: str) -> None:
-        found = sum(total(k)[0] for k in keys)
-        missing = max(total(k)[1] for k in keys) if sim else 0
-        out.append({"gate": name, "test": f"{' + '.join(keys)} == 0", "value": found,
-                    "passed": False if found else (True if sim_complete and not missing else None),
-                    "detail": f"{found} {what} across {len(sim)}/{len(sim_plan)} scored Sim episodes"
-                              + (f"; {missing} missing fidelity" if missing else "")})
+        found = sum(r[k] for r in sim_all for k in keys if r.get(k) is not None)
+        failed = sum(r[k] for r in sim_all if r["end"] not in ("finished", "max_turns") for k in keys if r.get(k) is not None)
+        gap = max(missing(k) for k in keys) if sim else 0
+        gates[name] = {"gate": name, "test": f"{' + '.join(keys)} == 0", "value": found,
+                       "passed": False if found else (True if sim_complete and not gap else None),
+                       "detail": f"{found} {what} across {len(sim_all)} Sim attempt(s), {len(sim)}/{len(sim_plan)} scored"
+                                 + (f" ({failed} in failed attempts)" if failed else "")
+                                 + (f"; {gap} missing fidelity" if gap else "")}
 
     zero_gate("prose_leaks", ("prose_tells", "format_leaks_kept"), "delivered prose/format leak step(s)")
     zero_gate("test_semantic_mismatches", ("semantic_mismatch",), "mismatched test step(s)")
 
-    subst, missing = total("substantive_errors")
-    steps, missing_steps = total("graded_steps")
-    missing = max(missing, missing_steps)
+    def total(key: str, among: list[dict]) -> int:
+        return sum(r[key] for r in among if r.get(key) is not None)
+
+    subst, steps = total("substantive_errors", sim), total("graded_steps", sim)
+    gap = max(missing("substantive_errors"), missing("graded_steps"))
     rate = subst / steps if steps else None
-    ws, _ = total("whitespace_only")
-    nj, _ = total("needs_judgement")
-    out.append({"gate": "substantive_rate", "test": f"substantive_errors / graded_steps <= {MAX_SUBSTANTIVE:.2f}",
-                "value": rate,
-                "passed": None if not sim_complete or missing or rate is None else rate <= MAX_SUBSTANTIVE,
-                "detail": f"{subst} of {steps} graded steps; reported apart: {ws} whitespace_only, {nj} needs_judgement"
-                          + (f"; {missing} missing fidelity" if missing else "")})
+    failed = [r for r in sim_all if r["end"] not in ("finished", "max_turns")]
+    f_subst, f_steps = total("substantive_errors", failed), total("graded_steps", failed)
+    gates["substantive_rate"] = {
+        "gate": "substantive_rate", "test": f"substantive_errors / graded_steps <= {MAX_SUBSTANTIVE:.2f}",
+        "value": rate, "passed": None if not sim_complete or gap or rate is None else rate <= MAX_SUBSTANTIVE,
+        "detail": f"{subst} of {steps} graded steps; reported apart: {total('whitespace_only', sim)} whitespace_only, "
+                  f"{total('needs_judgement', sim)} needs_judgement"
+                  + (f"; failed attempts: {f_subst} substantive of {f_steps} graded steps (not in the rate)"
+                     if f_subst else "")
+                  + (f"; {gap} missing fidelity" if gap else "")}
+    return gates
+
+
+def _mark_excluded(out: list[dict], excluded: list[dict], cohort: str) -> None:
     if excluded:
-        why = sorted({_excluded_why(r) for r in excluded})
+        why = sorted({_excluded_why(r, cohort) for r in excluded})
         for x in out:
             if x["passed"] is True:
                 x["passed"] = None
-            x["detail"] += f"; {len(excluded)} row(s) not Option A v2, excluded ({'; '.join(why)})"
+            x["detail"] += f"; {len(excluded)} row(s) not Option A {cohort}, excluded ({'; '.join(why)})"
+
+
+def v2_gates(rows: list[dict]) -> list[dict]:
+    """The acceptance gates of configs/coding/bluedot_py_v2_qwen.yaml, over the planned slots
+    of the planned agents present (a Qwen-only run is planned as its 4 + 4 slots). An agent's
+    slots stay expected even when its rows fail `_is_planned` (another request, cohort or
+    simulator), so a rejected arm leaves its slots missing rather than shrinking the plan.
+    `passed` is None while a gate can't be read yet (slots missing, telemetry incomplete), and
+    never True while any row is excluded; a confirmed failure in the planned rows stays False,
+    in a failed attempt too."""
+    B._check_unique_scored_slots(rows)
+    planned = [r for r in rows if _is_planned(r, V2)]
+    excluded = [r for r in rows if not _is_planned(r, V2)]
+    arms = {r.get("agent_model") for r in rows} & PLANNED_MODELS
+    sim_plan = frozenset(x for x in PLANNED_SIM_SLOTS if x[0] in arms)
+    real_plan = frozenset(x for x in PLANNED_REAL_SLOTS if x[0] in arms)
+    scored = [r for r in planned if r["end"] in ("finished", "max_turns")]
+    sim = [r for r in scored if r["condition"] == SIM]
+    real = [r for r in scored if r["condition"] == REAL]
+    sim_all = [r for r in planned if r["condition"] == SIM]
+    # completion: every C0 finishes (no max_turns wait loops); Sim at most one unfinished of 8, none of 4
+    allowed = 1 if len(sim_plan) == len(PLANNED_SIM_SLOTS) else 0
+    g = _sim_gates(sim_all, sim, sim_plan, allowed)
+    real_all = [r for r in planned if r["condition"] == REAL]
+    passed, n, detail = _completion(real_all, real, real_plan, 0)
+    out = [g["cost"], {"gate": "real_completion", "test": f"real_finished == {len(real_plan)}", "value": n,
+                       "passed": passed, "detail": detail},
+           g["sim_completion"], g["prose_leaks"], g["test_semantic_mismatches"], g["substantive_rate"]]
+    _mark_excluded(out, excluded, V2)
     return out
 
 
-def _excluded_why(r: dict) -> str:
-    if r.get("agent_model") not in PLANNED_MODELS:
+def v3_gates(rows: list[dict]) -> list[dict]:
+    """The acceptance gates of configs/coding/bluedot_py_v3_qwen.yaml: every C0 of the 6
+    scenarios finishes, and for C2 and C3 separately (gate names end in [C2], [C3]) the Sim
+    gates of `_sim_gates` with 6/6 finished. The plan is fixed (the Qwen arm's 18 slots), so a
+    missing or excluded row keeps its gates open; never True while any row is excluded."""
+    B._check_unique_scored_slots(rows)
+    planned = [r for r in rows if _is_planned(r, V3)]
+    excluded = [r for r in rows if not _is_planned(r, V3)]
+    plan = planned_slots(V3)
+    scored = [r for r in planned if r["end"] in ("finished", "max_turns")]
+    real_plan = frozenset(x for x in plan if x[2] == REAL)
+    passed, n, detail = _completion([r for r in planned if r["condition"] == REAL],
+                                    [r for r in scored if r["condition"] == REAL], real_plan, 0)
+    out = [{"gate": "real_completion", "test": f"real_finished == {len(real_plan)}", "value": n, "passed": passed,
+            "detail": detail}]
+    for arm in PLANS[V3]["sim"]:
+        g = _sim_gates([r for r in planned if r["condition"] == arm], [r for r in scored if r["condition"] == arm],
+                       frozenset(x for x in plan if x[2] == arm), 0)
+        out += [{**x, "gate": f"{x['gate']}[{arm}]", "arm": arm} for x in g.values()]
+    _mark_excluded(out, excluded, V3)
+    return out
+
+
+def per_scenario(rows: list[dict]) -> list[dict]:
+    """One line per (scenario, condition): attempts, the final end (the scored row's, else the
+    last attempt's), and the scored row's observed bash steps and graded errors, so a long
+    trajectory cannot hide a bad pair."""
+    out = []
+    for scenario, cond in sorted({(r["scenario"], r["condition"]) for r in rows}):
+        g = [r for r in rows if (r["scenario"], r["condition"]) == (scenario, cond)]
+        final = next((r for r in g if r["end"] in ("finished", "max_turns")), g[-1])
+        sim = cond != REAL
+        out.append({"scenario": scenario, "condition": cond, "attempts": len(g), "end": final["end"],
+                    "bash": final.get("bash"), "graded_steps": final.get("graded_steps") if sim else None,
+                    **{k: (final.get(k) if sim else None) for k in
+                       ("substantive_errors", "semantic_mismatch", "needs_judgement", "whitespace_only")},
+                    "prose_tells": sum(r.get("prose_tells") or 0 for r in g) + sum(r.get("format_leaks_kept") or 0 for r in g)
+                    if sim else None,
+                    "failed_semantic_mismatch": sum(r.get("semantic_mismatch") or 0 for r in g if r is not final)
+                    if sim else None,
+                    "sim_cost": sum(r.get("sim_cost_min", r.get("sim_cost")) or 0 for r in g) if sim else None})
+    return out
+
+
+def _excluded_why(r: dict, cohort: str = V2) -> str:
+    if r.get("agent_model") not in PLANS[cohort]["models"]:
         return f"agent {r.get('agent_model')!r} not planned"
-    if B._slot_key(r) not in PLANNED_SLOTS:
+    if B._slot_key(r) not in planned_slots(cohort):
         return f"slot {B._slot_key(r)!r} not planned"
     if r.get("design_mismatch"):
         return r["design_mismatch"]
-    if r.get("cohort", V1) != V2:
+    if r.get("cohort", V1) != cohort:
         return f"cohort {r.get('cohort', V1)!r}"
     return f"simulator {r.get('sim_model')!r}"
 
 
 def _cohort(rows: list[dict]) -> str:
-    return V2 if any(r.get("cohort") == V2 for r in rows) else V1
+    cohorts = {r.get("cohort") for r in rows}
+    return V3 if V3 in cohorts else V2 if V2 in cohorts else V1
+
+
+def _gate_table(gates: list[dict]) -> str:
+    return B.table(
+        ["gate", "test", "value", "passed", "detail"],
+        [[x["gate"], x["test"], "-" if x["value"] is None else f"{x['value']:.3g}",
+          {None: "CAN'T SAY YET", True: "PASS", False: "FAIL"}[x["passed"]], x["detail"]] for x in gates])
 
 
 def format_report(rows: list[dict]) -> str:
@@ -619,12 +726,23 @@ def format_report(rows: list[dict]) -> str:
                 f"{B._n(B._sum(sim, 'whitespace_only'))} whitespace_only, {B._n(B._sum(sim, 'needs_judgement'))} needs_judgement. "
                 "Substantive: semantic_mismatch, known_mismatch other than re-spacing, contradictions, delivered "
                 f"tells ({', '.join(sorted(SUBSTANTIVE_TELLS))})."]
+    if _cohort(rows) == V3:
+        out += ["", "Per scenario (the scored row, else the last attempt; prose and failed-attempt test "
+                    "mismatches over every attempt)"]
+        out.append(B.table(
+            ["scenario", "cond", "attempts", "end", "bash", "subst", "test mis", "failed-attempt test mis", "prose",
+             "needs_judgement", "ws only", "sim $"],
+            [[x["scenario"], x["condition"], x["attempts"], x["end"], B._n(x["bash"]),
+              "-" if x["condition"] == REAL else B._of(x["substantive_errors"], x["graded_steps"]),
+              *("-" if x["condition"] == REAL else B._n(x[k]) for k in
+                ("semantic_mismatch", "failed_semantic_mismatch", "prose_tells", "needs_judgement", "whitespace_only")),
+              "-" if x["condition"] == REAL else B._usd(x["sim_cost"])] for x in per_scenario(rows)]))
+        out += ["", "Acceptance gates, v3 (configs/coding/bluedot_py_v3_qwen.yaml; C2 and C3 read separately)"]
+        out.append(_gate_table(v3_gates(rows)))
+        return "\n".join(out)
     if _cohort(rows) == V2:
         out += ["", "Acceptance gates, v2 (configs/coding/bluedot_py_v2_qwen.yaml)"]
-        out.append(B.table(
-            ["gate", "test", "value", "passed", "detail"],
-            [[x["gate"], x["test"], "-" if x["value"] is None else f"{x['value']:.3g}",
-              {None: "CAN'T SAY YET", True: "PASS", False: "FAIL"}[x["passed"]], x["detail"]] for x in v2_gates(rows)]))
+        out.append(_gate_table(v2_gates(rows)))
         return "\n".join(out)
     out += ["", "Pivot rules (configs/coding/bluedot_py_cheap_qwen.yaml)"]
     out.append(B.table(
@@ -644,7 +762,9 @@ def main(argv=None) -> None:
     rows = read(args.log_dirs, args.judge)
     print(format_report(rows))
     if args.json:
-        decision = {"gates": v2_gates(rows)} if _cohort(rows) == V2 else {"rules": rules(rows)}
+        cohort = _cohort(rows)
+        decision = ({"gates": v3_gates(rows), "per_scenario": per_scenario(rows)} if cohort == V3 else
+                    {"gates": v2_gates(rows)} if cohort == V2 else {"rules": rules(rows)})
         args.json.write_text(json.dumps({"cohort": _cohort(rows), "episodes": rows, "arms": B.arms(rows), **decision},
                                         indent=1, default=str) + "\n")
 

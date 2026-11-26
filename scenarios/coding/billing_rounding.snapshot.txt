@@ -7,6 +7,7 @@ Machine:
 - Time zone: Europe/Madrid
 - Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3; pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.13)
 - Commands on PATH: python (/usr/bin/python), python3 (/usr/bin/python3), pip (/usr/bin/pip), pip3 (/usr/bin/pip3), pytest (/usr/bin/pytest), git (/usr/bin/git), make (/usr/bin/make)
+- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): billing (not importable), lkmoney (not importable); src/ and vendor/ are not on sys.path (pytest adds them: pyproject.toml [tool.pytest.ini_options] pythonpath = ["src", "vendor"])
 - Modification time of every tracked file in the repository: 2026-10-24 10:45:12 CEST (+0200)
 
 Repository /home/dev/billing-exports: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:billing/billing-exports.git); working tree clean.

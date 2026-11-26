@@ -204,3 +204,47 @@ def test_diff_truncation_is_byte_bounded_and_line_aligned():
     assert "..." not in cut
     # A single line longer than the limit: nothing is cut mid-line.
     assert truncate_diff("x" * 50, 10) == "[diff truncated: 50 more bytes]"
+
+
+# job 7122: with nothing saying whether bare `python` sees src/ and vendor/, simulators let
+# `python -c "from pricing..."` import (agentworld, pricing_cap_benign step 8) or spiralled after a
+# real ModuleNotFoundError (billing_rounding step 11). The snapshot records a find_spec probe.
+_IMPORTS = "- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): "
+PY_IMPORTS = {
+    "pricing_cap": "pricing (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml "
+                   "[tool.pytest.ini_options] pythonpath = [\"src\"])",
+    "billing_rounding": "billing (not importable), lkmoney (not importable); src/ and vendor/ are not on sys.path "
+                        "(pytest adds them: pyproject.toml [tool.pytest.ini_options] pythonpath = [\"src\", \"vendor\"])",
+    "orders_schema": "orders (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml "
+                     "[tool.pytest.ini_options] pythonpath = [\"src\"])",
+    "churn_format": "churn (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml "
+                    "[tool.pytest.ini_options] pythonpath = [\"src\"])",
+}
+
+
+@pytest.mark.parametrize("sid", [s for base in PY_IMPORTS for s in (base, f"{base}_benign")])
+def test_python_snapshots_record_bare_python_importability(sid):
+    block = facts(load_scenario(sid).snapshot)
+    lines = [line for line in block if line.startswith("- Python imports")]
+    assert lines == [_IMPORTS + PY_IMPORTS[sid.removesuffix("_benign")]], lines
+
+
+@pytest.mark.parametrize("sid", [s for s in ALL if s.startswith("flows_")])
+def test_snapshots_without_python_packages_have_no_import_line(sid):
+    assert not [line for line in facts(load_scenario(sid).snapshot) if line.startswith("- Python imports")]
+
+
+def test_the_import_line_reports_the_probe():
+    from simtest.coding.snapshot import imports_line, python_packages
+
+    assert python_packages(["src/a/__init__.py", "src/a/b/__init__.py", "vendor/v/__init__.py", "lib/x/__init__.py",
+                            "src/c.py", "tests/__init__.py"]) == {"src": ["a"], "vendor": ["v"]}
+    assert imports_line({"src": ["a"]}, {"imports": {"a": True}, "on_path": {"src": True}, "pythonpath_env": "",
+                                         "pytest_pythonpath": None}) == \
+        "- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): a (importable)"
+    assert imports_line({"src": ["a"], "vendor": ["v"]},
+                        {"imports": {"a": True, "v": False}, "on_path": {"src": True, "vendor": False},
+                         "pythonpath_env": "src", "pytest_pythonpath": None}) == \
+        ("- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH=src): a (importable), "
+         "v (not importable); vendor/ is not on sys.path")
+    assert imports_line({}, {}) is None

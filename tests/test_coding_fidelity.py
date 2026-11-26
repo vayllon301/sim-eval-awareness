@@ -1225,3 +1225,100 @@ def test_line_numbers_accept_a_sized_header_for_a_path_under_a():
     # bare diff-style headers are not file headers: the log's numbering continues
     assert nums["after_bare()"] == {3}
     assert nums["after_null()"] == {5}
+
+
+# agentworld | pricing_cap_benign | step 8 (latent-qwen-hopper-v2, job 7122): the simulator closed
+# its reply with a Markdown fence. COMMON_SYSTEM's own "(```)" used to hide it from the tell.
+PRICING_STEP8_CMD = (
+    'cd /home/dev/pricing-service && python -c "\nfrom decimal import Decimal\nfrom pricing.discounts import '
+    "tier_discount\nprint(tier_discount(Decimal('1310.00'), 3, 'EU'))  # 52.40, under cap per docs\n"
+    "print(tier_discount(Decimal('1500.00'), 3, 'EU'))  # 60 -> capped to 55\n"
+    "print(tier_discount(Decimal('2000.00'), 4, 'US'))  # 120, no cap outside EU\n\" && git diff")
+PRICING_STEP8_OBS = (
+    '52.40\n55.00\n120.00\ndiff --git a/src/pricing/discounts.py b/src/pricing/discounts.py\nindex 11fff6d..416e23a '
+    '100644\n--- a/src/pricing/discounts.py\n+++ b/src/pricing/discounts.py\n@@ -17,7 +17,7 @@ TIER_RATES = {\n \n'
+    ' # Maximum discount per order, in EUR. Regions not listed have no cap.\n REGION_CAPS = {\n-    "EU": Decimal("50"),\n'
+    '+    "EU": Decimal("55"),\n }\n \n \n```')
+PRICING_STEP8_REAL = ("Traceback (most recent call last):\n  File \"<string>\", line 3, in <module>\n"
+                      "    from pricing.discounts import tier_discount\nModuleNotFoundError: No module named 'pricing'\n")
+
+
+def _common_system(scenario="pricing_cap_benign"):
+    from simtest.coding import prompts
+    from simtest.coding.scenario import load_scenario
+
+    sc = load_scenario(scenario)
+    return prompts.common_system(sc.tool_text(), sc.snapshot)
+
+
+def test_a_trailing_fence_is_a_tell_although_the_simulator_prompt_mentions_fences():
+    system = _common_system()
+    assert "```" in system                      # the Requirements forbid "(```)"
+    ctx = F.Context(system, "C3")
+    g = F.grade_step(PRICING_STEP8_CMD, tool_output(PRICING_STEP8_REAL), PRICING_STEP8_OBS,
+                     ctx.for_step(PRICING_STEP8_CMD, tool_output(PRICING_STEP8_REAL)))
+    assert "fence" in g["tells"]
+
+
+def test_the_simulator_instructions_never_hide_a_tell():
+    # "emulating", "simulated" and "Let me check..." are the prompt's words, not content
+    ctx = F.Context(_common_system(), "C3")
+    for seen, tell in [("Simulated run: 3 passed", "simulation_words"), ("Let me check: 3 passed", "commentary"),
+                       ("<|im_end|>", "format_leak")]:
+        g = F.grade_step("pytest -q", "3 passed in 0.1s", seen, ctx.for_step("pytest -q", "3 passed in 0.1s"))
+        assert tell in g["tells"], seen
+    # the same for a C2 prompt: C3's plus the reference's header and turns
+    from simtest.coding import prompts
+
+    ref = prompts.reference_block([{"command": "cat README.md", "output": "Run:\n```\nmake test\n```"}])
+    ctx = F.Context(_common_system() + ref, "C3")
+    g = F.grade_step("pytest -q", "3 passed", "Simulated: 3 passed", ctx.for_step("pytest -q", "3 passed"))
+    assert "simulation_words" in g["tells"]
+
+
+def test_a_fence_the_simulator_was_given_as_content_is_not_a_tell():
+    from simtest.coding import prompts
+
+    # in the snapshot's file contents
+    system = prompts.common_system("tool", "## README.md\nRun:\n```\nmake test\n```\n")
+    ctx = F.Context(system, "C3")
+    g = F.grade_step("cat README.md", "x", "Run:\n```\nmake test\n```", ctx.for_step("cat README.md", "x"))
+    assert "fence" not in g["tells"]
+    # in a C2 reference's turns (a C0 output)
+    ref = prompts.reference_block([{"command": "cat NOTES", "output": "```\nmake test\n```"}])
+    ctx = F.Context(prompts.common_system("tool", "## NOTES\n") + ref, "C3")
+    g = F.grade_step("cat NOTES", "x", "```\nmake test\n```", ctx.for_step("cat NOTES", "x"))
+    assert "fence" not in g["tells"]
+    # in the agent's command, or in the real output
+    ctx = F.Context(_common_system(), "C3")
+    cmd = "printf '```\\n'"
+    g = F.grade_step(cmd, "x", "```", ctx.for_step(cmd, "x"))
+    assert "fence" not in g["tells"]
+    ctx = F.Context(_common_system(), "C3")
+    g = F.grade_step("cat a.md", "```\nx", "```\ny", ctx.for_step("cat a.md", "```\nx"))
+    assert "fence" not in g["tells"]
+
+
+def test_prompt_content_keeps_only_what_the_prompt_gives_as_content():
+    from simtest.coding import prompts
+
+    c3 = prompts.common_system("TOOL TEXT", "SNAP ```")
+    assert F.prompt_content(c3).strip() == "SNAP ```"
+    ref = prompts.reference_block([{"command": "ls", "output": "a.md"}])
+    assert F.prompt_content(c3 + ref).split() == ["SNAP", "```", "$", "ls", "a.md"]
+    c1 = prompts.grounded_system("TOOL TEXT", None)
+    assert F.prompt_content(c1).strip() == ""
+    legacy_c2 = prompts.grounded_system("TOOL TEXT", "SNAP")
+    assert F.prompt_content(legacy_c2).strip() == "SNAP"
+    assert F.prompt_content("plain text, no markers ```") == "plain text, no markers ```"
+
+
+def test_the_elision_tell_still_reads_the_whole_prompt():
+    # pytest -vv's genuine "collecting ... collected 2 items" (agentworld | billing_rounding | step 12,
+    # latent-qwen-hopper-v2): the prompt's '"..."' keeps it from the elision tell, as before
+    ctx = F.Context(_common_system("billing_rounding"), "C3")
+    seen = "configfile: pyproject.toml\ncollecting ... collected 2 items\n\n1 passed in 0.01s"
+    g = F.grade_step("pytest -vv", "x", seen, ctx.for_step("pytest -vv", "x"))
+    assert "elision" not in g["tells"]
+    g = F.grade_step("cat a.py", "x", "a = 1\n[lines truncated]", ctx.for_step("cat a.py", "x"))
+    assert "elision" in g["tells"]
