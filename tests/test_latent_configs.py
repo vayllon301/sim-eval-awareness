@@ -16,6 +16,7 @@ PYTHON_PAIRS = [
 
 CONFIGS = (
     ("configs/coding/latent_qwen_hopper_only.yaml", "latent-qwen-hopper-only", ["qwen27b_sim", "agentworld"]),
+    ("configs/coding/latent_qwen_hopper_v2.yaml", "latent-qwen-hopper-v2", ["qwen27b_sim", "agentworld"]),
     ("configs/coding/latent_qwen_same_family.yaml", "latent-qwen-same-family", ["qwen27b_sim", "sonnet55"]),
     ("configs/coding/latent_deepseek_same_family.yaml", "latent-deepseek-same-family", ["deepseek_sim", "sonnet55"]),
 )
@@ -37,7 +38,8 @@ def test_latent_configs_load_and_share_the_four_python_pairs(path, name, sims):
 
 def test_latent_qwen_configs_match_hopper_agent_and_same_family_endpoint():
     pilot = load_config("configs/coding/pilot.yaml")
-    for path in ("configs/coding/latent_qwen_hopper_only.yaml", "configs/coding/latent_qwen_same_family.yaml"):
+    for path in ("configs/coding/latent_qwen_hopper_only.yaml", "configs/coding/latent_qwen_hopper_v2.yaml",
+                 "configs/coding/latent_qwen_same_family.yaml"):
         cfg = load_config(path)
         assert request_config(cfg)["agents"] == request_config(pilot)["agents"]
         assert cfg["simulators"]["qwen27b_sim"]["model"] == cfg["agents"]["qwen27b"]["model"]
@@ -70,3 +72,31 @@ def test_preflight_runs_same_family_config_with_shared_served_model(tmp_path, ma
         check_snapshots=False,
     )
     assert ok and problems == []
+
+
+def test_hopper_simulators_get_pilots_64k_output_cap_except_the_v1_record():
+    """Job 7109: 13 calls stopped at 16,384 tokens (every qwen27b_sim episode, 5 of 8 agentworld
+    ones). v2 and the not-yet-run same-family config use configs/coding/pilot.yaml's 65,536; v1
+    stays as run."""
+    pilot = load_config("configs/coding/pilot.yaml")
+    cap = pilot["simulators"]["agentworld"]["config"]["max_tokens"]
+    assert cap == 65536
+    v2 = load_config("configs/coding/latent_qwen_hopper_v2.yaml")
+    for name in ("qwen27b_sim", "agentworld"):
+        assert v2["simulators"][name]["config"]["max_tokens"] == cap, name
+    assert request_config(v2, "agentworld")["simulator"] == request_config(pilot, "agentworld")["simulator"]
+    same = load_config("configs/coding/latent_qwen_same_family.yaml")
+    assert same["simulators"]["qwen27b_sim"]["config"]["max_tokens"] == cap
+    v1 = load_config("configs/coding/latent_qwen_hopper_only.yaml")
+    assert {n: s["config"]["max_tokens"] for n, s in v1["simulators"].items()} == {"qwen27b_sim": 16384,
+                                                                                  "agentworld": 16384}
+
+
+def test_v2_differs_from_the_v1_record_only_in_name_and_simulator_caps():
+    v1 = load_config("configs/coding/latent_qwen_hopper_only.yaml")
+    v2 = load_config("configs/coding/latent_qwen_hopper_v2.yaml")
+    for cfg in (v1, v2):
+        cfg.pop("name")
+        for spec in cfg["simulators"].values():
+            spec["config"].pop("max_tokens")
+    assert v1 == v2

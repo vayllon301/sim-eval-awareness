@@ -13,6 +13,9 @@
 # Note on token accounting: in `C3(qwen27b_sim)`, agent and simulator share `rawchat/agent`,
 # so Inspect's `sample.model_usage` sums both under that key; per-call simulator usage stays
 # recorded separately in `CodingEpisode:simulator_calls` (agent usage = total - simulator).
+#
+# qwen27b_sim's output cap is configs/coding/pilot.yaml's 65,536 tokens (not yet run when it was
+# raised from 16,384): in job 7109 every qwen27b_sim episode ended at a 16,384-token call.
 family: coding
 name: latent-qwen-same-family
 scenarios:
@@ -37,7 +40,7 @@ simulators:
   qwen27b_sim:
     model: rawchat/agent
     base_url: http://localhost:18000/v1
-    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 16384}
+    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 65536}
   sonnet55:
     model: anthropic/claude-sonnet-5-5
     config: {reasoning_effort: medium, cache_prompt: true, max_tokens: 32768}
