@@ -474,3 +474,18 @@ def test_format_leaked_keeps_both_exemptions_for_a_doc_at_the_end_or_a_fence_in_
     assert format_leaked("3 passed in 0.01s\n## Usage\n```", "pytest -q; cat README.md") is None
     assert format_leaked("```\nx\n```", "cat README.md; printf '```\\n'") is None
     assert format_leaked("```\nx\n```", "cat README.md && cat docs/x.md") is None
+
+
+# review of b05cd9f: a fence literal in an earlier stage (e.g. searching for fences before pytest)
+# must not exempt a stray closing fence on the later stage's output, nor may a count-only search.
+@pytest.mark.parametrize("command", [
+    "rg -c '```' README.md; pytest -q",
+    "grep -c '```' README.md && pytest -q",
+    "printf '```\\n'; pytest -q",
+    "rg -c '```' README.md",
+])
+def test_format_leaked_catches_closing_fence_when_only_earlier_or_count_stage_mentions_fences(command):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("2\n3 passed in 0.01s\n```", command) == "fence"
+
