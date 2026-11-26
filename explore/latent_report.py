@@ -1,7 +1,15 @@
 """Option C (latent-interaction) runs on Hopper, read from their logs: one row per arm (C0,
-C3/qwen27b_sim, C3/agentworld) with completion, simulator truncations, wait loops, crude and
+C2/<simulator>, C3/<simulator>) with completion, simulator truncations, wait loops, crude and
 graded divergence, substantive vs cosmetic simulator errors (explore/bluedot_py_report.py's
-split), behaviour (honest_success, violation) and raw keyword counts in the agent's reasoning.
+split), behaviour (honest_success, violation) and raw keyword counts in the agent's reasoning,
+then one row per scenario and arm.
+
+Slots, outcomes and attempts are kept apart: a slot is a planned (arm, scenario, epoch) of the
+run's design; its final outcome is its scored attempt's (finished, max_turns), else `sim
+truncated` if a failed attempt stopped at the simulator's cap, else `other failed`; the arm's
+counts and graded errors are those of each slot's final attempt, once, and failed attempts'
+test mismatches and prose tells are reported apart. An episode with no reasoning telemetry
+(failed before an agent turn, or no turn with reasoning) is `reasoning missing`, never 0 hits.
 
 The keyword counts are a crude string match, labelled as such: never a judge's verdict.
 Analysis only: reads logs and calls no model. An exploratory probe, never confirmatory evidence.
@@ -21,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bluedot_py_report as P  # noqa: E402
 
 # The Option C Hopper configs a run may come from: one config per reading, never mixed.
-CONFIG_NAMES = frozenset({"latent-qwen-hopper-only", "latent-qwen-hopper-v2"})
+CONFIG_NAMES = frozenset({"latent-qwen-hopper-only", "latent-qwen-hopper-v2", "latent-qwen-hopper-v3"})
+SCORED = ("finished", "max_turns")
 REAL = "C0"
 # A wait loop: the agent sleeps, typically to poll for an owner (job 7109: `sleep 50; git fetch`).
 SLEEP = re.compile(r"(?:^|[;&|(\s])sleep\s+\d")
@@ -59,22 +68,63 @@ def _sum(rows: list[dict], key: str):
     return None if any(v is None for v in vals) else sum(vals)
 
 
-def arm_rows(episodes: list[dict]) -> list[dict]:
-    """One row per arm from per-episode rows (`episode_row`). A sum over an arm is None when
-    any episode's value is unknown (no steps recorded), never a partial count."""
-    order = {REAL: 0}
+def _known(rows: list[dict], key: str) -> int:
+    return sum(r[key] for r in rows if r.get(key) is not None)
+
+
+def planned_slots(design: dict) -> dict[str, int]:
+    """Planned slots per arm, from a run's design (conditions, simulators per condition,
+    scenarios, epochs)."""
+    per = len(design["scenarios"]) * design["epochs"]
+    out = {}
+    for c in design["conditions"]:
+        for arm in ([REAL] if c == REAL else [f"{c}/{s}" for s in design["simulators"][c]]):
+            out[arm] = per
+    return dict(sorted(out.items(), key=lambda kv: (kv[0] != REAL, kv[0])))
+
+
+def outcome(end: str) -> str:
+    return end if end in SCORED else "sim truncated" if end == "simulator_truncated" else "other failed"
+
+
+def slots(episodes: list[dict]) -> list[dict]:
+    """One row per (arm, scenario, epoch): the final attempt (the scored one, else a truncated
+    one, else any), with `attempts` and the other attempts' failed-attempt counts."""
     out = []
-    for arm in sorted({r["arm"] for r in episodes}, key=lambda a: (order.get(a, 1), a)):
-        rows = [r for r in episodes if r["arm"] == arm]
+    for key in sorted({(r["arm"], r["scenario"], r["epoch"]) for r in episodes}):
+        g = [r for r in episodes if (r["arm"], r["scenario"], r["epoch"]) == key]
+        final = (next((r for r in g if r["end"] in SCORED), None)
+                 or next((r for r in g if r["end"] == "simulator_truncated"), None) or g[-1])
+        rest = [r for r in g if r is not final]
+        out.append({**final, "attempts": len(g), "outcome": outcome(final["end"]),
+                    "failed_attempt_semantic_mismatch": _known(rest, "semantic_mismatch"),
+                    "failed_attempt_prose_tells": _known(rest, "prose_tells")})
+    return out
+
+
+def arm_rows(episodes: list[dict], design: dict | None = None) -> list[dict]:
+    """One row per arm from per-attempt rows (`episode_row`): planned slots (from `design`, else
+    the slots seen), slots seen, attempts, final outcomes, and the final attempts' counts. A sum
+    over an arm is None when any final attempt's value is unknown (no steps recorded), never a
+    partial count."""
+    plan = planned_slots(design) if design else {}
+    final = slots(episodes)
+    out = []
+    for arm in sorted(set(plan) | {r["arm"] for r in episodes}, key=lambda a: (a != REAL, a)):
+        rows = [r for r in final if r["arm"] == arm]
+        tries = [r for r in episodes if r["arm"] == arm]
         bash, div = _sum(rows, "bash"), _sum(rows, "divergent")
         graded, gdiv = _sum(rows, "graded_steps"), _sum(rows, "graded_divergent")
         subst = _sum(rows, "substantive_errors")
+        read_cot = [r for r in rows if r.get("cot_keywords") is not None]
+        planned = plan.get(arm, len(rows))
         out.append({
-            "arm": arm, "episodes": len(rows),
-            "finished": sum(r["end"] == "finished" for r in rows),
-            "max_turns": sum(r["end"] == "max_turns" for r in rows),
-            "truncated": sum(r["end"] == "simulator_truncated" for r in rows),
-            "other_end": sum(r["end"] not in ("finished", "max_turns", "simulator_truncated") for r in rows),
+            "arm": arm, "planned": planned, "slots": len(rows), "attempts": len(tries),
+            "missing": max(planned - len(rows), 0),
+            "finished": sum(r["outcome"] == "finished" for r in rows),
+            "max_turns": sum(r["outcome"] == "max_turns" for r in rows),
+            "truncated": sum(r["outcome"] == "sim truncated" for r in rows),
+            "other_failed": sum(r["outcome"] == "other failed" for r in rows),
             "fidelity_incomplete": sum(bool(r.get("fidelity_incomplete")) for r in rows),
             "sleep_episodes": sum(bool(r["sleep"]) for r in rows),
             "crude_div": div, "bash": bash, "crude_div_rate": div / bash if bash else None,
@@ -83,12 +133,25 @@ def arm_rows(episodes: list[dict]) -> list[dict]:
             "substantive_errors": subst, "substantive_rate": subst / graded if subst is not None and graded else None,
             **{k: _sum(rows, k) for k in ("semantic_mismatch", "known_mismatch_non_ws", "contradictions",
                                           "prose_tells", "whitespace_only", "needs_judgement")},
+            "failed_attempt_semantic_mismatch": sum(r["failed_attempt_semantic_mismatch"] for r in rows),
+            "failed_attempt_prose_tells": sum(r["failed_attempt_prose_tells"] for r in rows),
             "honest_success": sum(r["honest_success"] is True for r in rows),
             "violation": sum(r["violation"] is True for r in rows),
-            "cot_keyword_episodes": sum((r["cot_keywords"] or 0) > 0 for r in rows),
-            "cot_keyword_hits": _sum(rows, "cot_keywords"),
+            "reasoning_missing": len(rows) - len(read_cot),
+            "cot_keyword_read": len(read_cot),
+            "cot_keyword_episodes": sum(r["cot_keywords"] > 0 for r in read_cot),
+            "cot_keyword_hits": sum(r["cot_keywords"] for r in read_cot),
         })
     return out
+
+
+def per_scenario(episodes: list[dict]) -> list[dict]:
+    """One row per (scenario, arm, epoch), from its final attempt: so a long trajectory in one
+    pair cannot hide behind an arm's totals."""
+    keys = ("end", "attempts", "bash", "substantive_errors", "graded_steps", "semantic_mismatch", "prose_tells",
+            "needs_judgement", "honest_success", "failed_attempt_semantic_mismatch", "failed_attempt_prose_tells")
+    return [{"scenario": r["scenario"], "arm": r["arm"], "epoch": r["epoch"], **{k: r.get(k) for k in keys}}
+            for r in sorted(slots(episodes), key=lambda r: (r["scenario"], r["arm"] != REAL, r["arm"], r["epoch"]))]
 
 
 def observed_fidelity(e: dict, sample, log) -> dict:
@@ -138,18 +201,21 @@ def episode_row(e: dict, sample, log) -> dict:
     steps = steps if isinstance(steps, list) else []
     stats = observed_fidelity(e, sample, log)
     messages = sample.messages if sample is not None else []
-    hits = keyword_hits([reasoning_text(m) for m in messages if m.role == "assistant"]) if sample is not None else None
+    thoughts = [t for t in (reasoning_text(m) for m in messages if m.role == "assistant") if t and t.strip()]
+    # no sample, or no assistant turn with reasoning: telemetry missing, not zero hits
+    reasoning_turns = len(thoughts) if sample is not None else None
+    hits = keyword_hits(thoughts) if thoughts else None
     m = e.get("metrics") or {}
     return {
         "arm": arm_of(e), "scenario": e["scenario"], "epoch": e["epoch"],
         "end": "finished" if e["end_reason"] == "no_tool_call" else e["end_reason"],
         **div,
         "sleep": waited(steps), "honest_success": m.get("honest_success"), "violation": m.get("violation"),
-        "cot_keywords": hits, **stats,
+        "cot_keywords": hits, "reasoning_turns": reasoning_turns, "reasoning_missing": not thoughts, **stats,
     }
 
 
-def read(log_dir: Path) -> tuple[str, list[dict]]:
+def read(log_dir: Path) -> tuple[str, list[dict], dict | None]:
     from inspect_ai.log import list_eval_logs, read_eval_log
 
     from simtest.coding import analysis as A
@@ -157,7 +223,7 @@ def read(log_dir: Path) -> tuple[str, list[dict]]:
     names = {(read_eval_log(i, header_only=True).eval.metadata or {}).get("config_name")
              for i in list_eval_logs(str(log_dir))}
     name = check_config_names(names)
-    episodes, _ = A.load_run(log_dir)
+    episodes, design = A.load_run(log_dir)
     rows, cache = [], {}
     for e in sorted(episodes, key=lambda e: (arm_of(e), e["scenario"], e["epoch"])):
         sample = log = None
@@ -168,7 +234,7 @@ def read(log_dir: Path) -> tuple[str, list[dict]]:
             sample = next((s for s in log.samples or [] if s.uuid and s.uuid == e["uuid"]), None) or next(
                 (s for s in log.samples or [] if (str(s.id), s.epoch) == (str(e["sample_id"]), e["epoch"])), None)
         rows.append(episode_row(e, sample, log))
-    return name, rows
+    return name, rows, design
 
 
 def _cell(v) -> str:
@@ -177,29 +243,52 @@ def _cell(v) -> str:
     return f"{v:.0%}" if isinstance(v, float) else str(v)
 
 
-def format_report(name: str, rows: list[dict]) -> str:
-    arms = arm_rows(rows)
-    cols = [("episodes", "episodes"), ("finished", "finished"), ("max_turns", "max_turns"),
-            ("truncated", "sim truncated"), ("other_end", "other end"), ("sleep_episodes", "sleep eps"),
-            ("crude_div_rate", "crude div"), ("unobserved_steps", "unobserved bash"), ("fidelity_incomplete", "graded partly"), ("graded_div_rate", "graded div"),
+def format_report(name: str, rows: list[dict], design: dict | None = None) -> str:
+    arms = arm_rows(rows, design)
+    cols = [("planned", "planned slots"), ("slots", "slots seen"), ("missing", "  missing"),
+            ("attempts", "attempts"),
+            ("finished", "finished"), ("max_turns", "max_turns"), ("truncated", "sim truncated"),
+            ("other_failed", "other failed"), ("sleep_episodes", "sleep slots"),
+            ("crude_div_rate", "crude div"), ("unobserved_steps", "unobserved bash"),
+            ("fidelity_incomplete", "graded partly"), ("graded_div_rate", "graded div"),
             ("substantive_errors", "substantive"), ("substantive_rate", "subst rate"),
             ("semantic_mismatch", "  test mismatch"), ("known_mismatch_non_ws", "  known (non-ws)"),
             ("contradictions", "  contradictions"), ("prose_tells", "  prose tells"),
             ("whitespace_only", "whitespace_only"), ("needs_judgement", "needs_judgement"),
+            ("failed_attempt_semantic_mismatch", "failed-attempt test mis"),
+            ("failed_attempt_prose_tells", "failed-attempt prose"),
             ("honest_success", "honest_success"), ("violation", "violation"),
-            ("cot_keyword_episodes", "CoT keyword eps*"), ("cot_keyword_hits", "CoT keyword hits*")]
+            ("reasoning_missing", "reasoning missing"), ("cot_keyword_read", "CoT read"),
+            ("cot_keyword_episodes", "CoT keyword slots*"), ("cot_keyword_hits", "CoT keyword hits*")]
     width = max(len(label) for _, label in cols) + 2
-    lines = [f"Option C, {name}: an exploratory probe, not evidence.", "",
+    total = (f"{sum(a['planned'] for a in arms)} planned slots, {sum(a['slots'] for a in arms)} seen, "
+             f"{sum(a['attempts'] for a in arms)} attempts" + ("" if design else " (no design recorded: "
+                                                                "planned = seen)"))
+    lines = [f"Option C, {name}: an exploratory probe, not evidence.", total, "",
              "".ljust(width) + "".join(a["arm"].rjust(20) for a in arms)]
     for key, label in cols:
         lines.append(label.ljust(width) + "".join(_cell(a[key]).rjust(20) for a in arms))
     lines += ["", "* raw keyword matches in the agent's reasoning (explore/latent_report.py COT_KEYWORDS), "
-                  "not primary-judge verdicts.",
+                  "not primary-judge verdicts; read only where reasoning was recorded ('CoT read').",
+              "Per slot, its final attempt counts once (scored, else truncated, else the last); 'attempts' counts "
+              "every try, and failed attempts' test mismatches and prose tells are shown apart.",
               "Crude div is over the bash outputs the agent observed; 'unobserved bash' counts executed calls "
               "whose simulated output never reached it (a truncated call).",
-              "Graded on the steps each episode observed; 'graded partly' counts episodes with an unobserved step "
+              "Graded on the steps each episode observed; 'graded partly' counts slots with an unobserved step "
               "(a truncated call). Substantive: semantic_mismatch, known_mismatch other than re-spacing, "
               "contradictions, delivered tells; each step once."]
+    head = ["scenario", "arm", "end", "attempts", "bash", "subst", "test mis", "prose", "needs_judgement",
+            "honest_success", "failed-attempt test mis/prose"]
+    table = [[x["scenario"], x["arm"], x["end"], _cell(x["attempts"]), _cell(x["bash"]),
+              "-" if x["arm"] == REAL else f"{_cell(x['substantive_errors'])}/{_cell(x['graded_steps'])}",
+              *("-" if x["arm"] == REAL else _cell(x[k]) for k in ("semantic_mismatch", "prose_tells", "needs_judgement")),
+              _cell(x["honest_success"]),
+              "-" if x["arm"] == REAL else f"{x['failed_attempt_semantic_mismatch']}/{x['failed_attempt_prose_tells']}"]
+             for x in per_scenario(rows)]
+    widths = [max(len(str(c)) for c in col) for col in zip(head, *table)]
+    fmt = lambda cells: "  ".join(str(c).ljust(w) for c, w in zip(cells, widths)).rstrip()  # noqa: E731
+    lines += ["", "Per scenario (each slot's final attempt)", fmt(head), fmt(["-" * w for w in widths]),
+              *map(fmt, table)]
     return "\n".join(lines)
 
 
@@ -208,10 +297,11 @@ def main(argv=None) -> None:
     p.add_argument("log_dir", type=Path)
     p.add_argument("--json", type=Path, default=None)
     args = p.parse_args(argv)
-    name, rows = read(args.log_dir)
-    print(format_report(name, rows))
+    name, rows, design = read(args.log_dir)
+    print(format_report(name, rows, design))
     if args.json:
-        args.json.write_text(json.dumps({"config_name": name, "episodes": rows, "arms": arm_rows(rows)},
+        args.json.write_text(json.dumps({"config_name": name, "design": design, "attempts": rows,
+                                         "arms": arm_rows(rows, design), "per_scenario": per_scenario(rows)},
                                         indent=1, default=str) + "\n")
 
 

@@ -100,3 +100,45 @@ def test_v2_differs_from_the_v1_record_only_in_name_and_simulator_caps():
         for spec in cfg["simulators"].values():
             spec["config"].pop("max_tokens")
     assert v1 == v2
+
+
+V3_SCENARIOS = ["pricing_cap", "pricing_cap_benign", "billing_rounding", "billing_rounding_benign",
+                "orders_schema", "orders_schema_benign"]
+
+
+def test_v3_runs_c2_and_c3_on_the_six_scenarios_with_a_reference():
+    from simtest.coding.scenario import load_scenario
+    from simtest.preflight import expected
+
+    v3 = load_config("configs/coding/latent_qwen_hopper_v3.yaml")
+    v2 = load_config("configs/coding/latent_qwen_hopper_v2.yaml")
+    assert v3["name"] == "latent-qwen-hopper-v3" and v3["scenarios"] == V3_SCENARIOS
+    assert v3["conditions"] == ["C0", "C2", "C3"]
+    assert v3["simulators_for"] == {"C2": ["qwen27b_sim", "agentworld"], "C3": ["qwen27b_sim", "agentworld"]}
+    assert v3["run"] == {**v2["run"], "max_connections": 6, "retry_attempts": 1, "order_seed": 20261127}
+    # agent and both simulators exactly as v2 (65,536-token simulator cap)
+    assert v3["agents"] == v2["agents"] and v3["simulators"] == v2["simulators"]
+    for name in ("qwen27b_sim", "agentworld"):
+        assert request_config(v3, name) == request_config(v2, name)
+    design = {"conditions": v3["conditions"], "simulators": v3["simulators_for"], "scenarios": v3["scenarios"],
+              "epochs": v3["epochs"]}
+    assert len(expected(design, None)) == 30
+    for sid in V3_SCENARIOS:      # C2 needs every scenario's audited reference
+        assert load_scenario(sid).reference_path.exists(), sid
+
+
+def test_preflight_runs_c2_and_c3_sharing_a_same_family_simulator(tmp_path, machines):
+    # C2 and C3 both use qwen27b_sim, whose served name is the agent's (rawchat/agent): every one
+    # of the 30 slots must run with the right mock (agent vs simulator) and call its simulator
+    from simtest import preflight as P
+
+    ok, problems, log_dir, _ = P.preflight("configs/coding/latent_qwen_hopper_v3.yaml", root=tmp_path / "pf",
+                                           machine="fake", build=False, check_snapshots=False)
+    assert ok and problems == [], problems
+    from simtest.coding.analysis import load_run
+
+    episodes, _ = load_run(log_dir)
+    got = {(e["condition"], e["simulator"]) for e in episodes}
+    assert got == {("C0", "none"), ("C2", "qwen27b_sim"), ("C2", "agentworld"), ("C3", "qwen27b_sim"),
+                   ("C3", "agentworld")}
+    assert len({(e["condition"], e["simulator"], e["scenario"]) for e in episodes}) == 30
