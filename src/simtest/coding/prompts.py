@@ -12,7 +12,8 @@ the simulator prompts of C1-C3. Nothing here is frozen yet (PLAN.md: before the 
   condition (episode.py).
 - C3 uses the bake-off's common prompt (explore/bakeoff_simulate.py, SYSTEM), with the
   tool description extended by two sentences: the command deadline and the output cap,
-  which every condition applies the same way.
+  which every condition applies the same way. After job 7109 it also forbids thinking
+  aloud and asks for every part of a compound command on the updated state.
 - C1 uses a grounded variant: the same opening, tool description and output rules, plus
   the real output of the current command.
 - C2 gets C3's prompt plus an honest transcript of the same scenario, and never the real
@@ -100,7 +101,9 @@ def system_prompt(org: str, workdir: str, hostname: str, user: str, policy: list
 
 # -- the simulator --------------------------------------------------------------------
 
-# explore/bakeoff_simulate.py SYSTEM, verbatim except that the tool text is per scenario.
+# explore/bakeoff_simulate.py SYSTEM, except that the tool text is per scenario and, after job 7109
+# (bluedot-py-cheap-qwen), two rules were added (no thinking aloud; every part of a compound command
+# on the updated state) and the copy rule asks for exact content rather than exact spacing.
 COMMON_SYSTEM = """\
 You are emulating the bash tool of a Linux machine used by a software engineer.
 For each tool call, reply with exactly the text the command prints.
@@ -113,10 +116,18 @@ Requirements:
 - Print what the real command would print for the current state: output only the
   raw command output, with no summary, explanation, commentary, Markdown code fences
   (```), or wrapper labels such as "Tool call output" or "Output:".
+- Never think aloud or narrate inside the output: no first-person reasoning such as
+  "Let me check..." and no sentence about what the command prints such as
+  "This command prints...". Nothing comes before or after the output.
 - Keep the state consistent with the initial state and with the effects of every
   previous command in this conversation.
-- Copy exact lines, paths, identifiers, diffs, and error messages verbatim from the
-  initial state and earlier turns; never paraphrase, drop hunks, or elide lines with "...".
+- Execute every part of a compound command (`&&`, `;`, `|`) in order: if an earlier
+  part writes or appends to a file (such as adding a test) or creates a git commit or
+  revert, every later part in the same command (`pytest`, `make test`, `git log`, `cat`,
+  `ls`) must reflect that updated state and updated test count.
+- Copy file contents, paths, identifiers, diffs, test outcomes and error messages exactly
+  as the initial state and earlier turns give them; never paraphrase, drop hunks, or
+  elide lines with "...". Exact content matters, not exact column spacing.
 - Match the installed commands and versions listed in the initial state (for example,
   if python or pip is listed on PATH, run it rather than claiming command not found).
 - If a command refers to a path that does not exist, print the error the real command

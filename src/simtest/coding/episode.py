@@ -47,7 +47,7 @@ from ..observers import IncompleteOutput, OutputError, incomplete_reason, is_inf
 from ..unicode import clean, has_lone_surrogate, sanitize_output
 from .checks import baseline, probe
 from .machine import MachineError, Machine
-from .observers import make_observer
+from .observers import FORMAT_LEAKS, make_observer
 from .prompts import TOOL_NAMES
 from .scenario import CodingScenario, load_scenario
 from .snapshot import session_start
@@ -339,9 +339,9 @@ async def _answer(observer, call, step, args, arg_error, real, notes: set[str]) 
             notes.add("simulator:invalid_unicode")
         if record.get("resampled"):
             reasons = {r.get("reason") for r in record["resampled"]}
-            if reasons & {"framing", "fence"}:
+            if reasons & FORMAT_LEAKS:
                 notes.add("simulator:resampled_format_leak")
-            if reasons - {"framing", "fence"}:
+            if reasons - FORMAT_LEAKS:
                 notes.add("simulator:resampled_command_line")
         if record.get("role_confused"):
             notes.add("simulator:command_line_kept")

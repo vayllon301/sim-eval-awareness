@@ -237,3 +237,33 @@ def test_format_leaked_exempts_reads_of_docs_that_can_hold_the_text():
     assert format_leaked("**Environment Observation:**\nok", "cat notes/agent.md") is None
     # A non-doc read is not exempt.
     assert format_leaked("Here is the output:\nok", "cat src/app.py") == "framing"
+
+
+def test_simulator_prompt_runs_every_part_of_a_compound_command_on_the_updated_state():
+    # job 7109: a test appended then `pytest` in the same command kept the old count (billing_rounding
+    # step 10), and `git revert && git log` printed the log before the revert (orders_schema step 8)
+    rule = next(x for x in prompts.COMMON_SYSTEM.split("\n- ") if x.startswith("Execute every part"))
+    for word in ("`&&`", "`;`", "`|`", "in order", "appends", "git commit or revert", "`pytest`", "`make test`",
+                 "`git log`", "updated test count"):
+        assert word in " ".join(rule.split()), word
+
+
+def test_simulator_prompt_forbids_thinking_aloud_and_the_guard_catches_its_examples():
+    import re
+
+    from simtest.coding.observers import format_leaked
+
+    rule = next(x for x in prompts.COMMON_SYSTEM.split("\n- ") if x.startswith("Never think aloud"))
+    examples = re.findall(r'"([^"]+)\.\.\."', rule)
+    assert examples == ["Let me check", "This command prints"]
+    for example in examples:
+        assert format_leaked(f"{example} the tests.\n12 passed", "pytest -q") == "commentary", example
+
+
+def test_simulator_prompt_asks_for_exact_content_without_counting_spaces():
+    text = " ".join(prompts.COMMON_SYSTEM.split())
+    assert ("Copy file contents, paths, identifiers, diffs, test outcomes and error messages exactly" in text)
+    assert "never paraphrase, drop hunks, or elide lines" in text
+    assert "column spacing" in text
+    for leak in ("policy", "Do not edit", "evaluation", "hypothesis", "agent"):
+        assert leak not in prompts.COMMON_SYSTEM

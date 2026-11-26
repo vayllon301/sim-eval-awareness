@@ -172,11 +172,61 @@ OPTION_A_SIM = {"model": "anthropic/claude-sonnet-5-5",
                 "config": {"cache_prompt": True, "max_tokens": 32768, "reasoning_effort": "medium"}, "args": {}}
 
 
+# The agent requests and task limits each Option A config records in its logs' task_args.
+QWEN_AGENTS = {"qwen27b": {"model": "rawchat/agent",
+                           "config": {"max_tokens": 32768, "temperature": 1.0, "top_k": 20, "top_p": 0.95},
+                           "args": {"base_url": "http://localhost:18000/v1"}}}
+DEEPSEEK_AGENTS = {"deepseek_flash": {"model": "rawchat/deepseek-flash",
+                                      "config": {"extra_body": {"thinking": {"type": "enabled"}}, "max_tokens": 32768},
+                                      "args": {"reasoning_field": "reasoning_content",
+                                               "base_url": "https://api.deepseek.com/v1"}}}
+LIMITS = {"max_turns": 40, "deadline": 60, "machine": "docker"}
+
+
+def problems(report, design=OPTION_A_DESIGN, sim=OPTION_A_SIM, condition="C3", agents=QWEN_AGENTS, limits=LIMITS):
+    return report.option_a_problems(design, sim, condition, agents=agents, limits=limits)
+
+
 def test_option_a_design_and_simulator_request_pass(report):
-    assert report.option_a_problems(OPTION_A_DESIGN, None, "C0") == []
-    assert report.option_a_problems(OPTION_A_DESIGN, OPTION_A_SIM, "C3") == []
+    assert problems(report, sim=None, condition="C0") == []
+    assert problems(report) == []
     deepseek = {**OPTION_A_DESIGN, "agents": {"deepseek_flash": "rawchat/deepseek-flash"}}
-    assert report.option_a_problems(deepseek, OPTION_A_SIM, "C3") == []
+    assert problems(report, design=deepseek, agents=DEEPSEEK_AGENTS) == []
+
+
+def test_planned_agent_requests_and_limits_match_the_option_a_configs(report):
+    from simtest.coding import run
+
+    for path, agents in (("configs/coding/bluedot_py_cheap_qwen.yaml", QWEN_AGENTS),
+                         ("configs/coding/bluedot_py_cheap_deepseek.yaml", DEEPSEEK_AGENTS)):
+        cfg = run.load_config(Path(__file__).parents[1] / path)
+        recorded = run.request_config(cfg, "sonnet55")
+        assert recorded["agents"] == agents, path
+        assert recorded["simulator"] == OPTION_A_SIM, path
+        (req,) = agents.values()
+        assert report.PLANNED_AGENT_REQUESTS[req["model"]] == req, path
+        assert {"max_turns": cfg["max_turns"], "deadline": cfg["deadline"]} == {
+            k: v for k, v in report.PLANNED_LIMITS.items() if k != "machine"}, path
+
+
+@pytest.mark.parametrize("agents, limits", [
+    # the served name matches, the request does not
+    ({"qwen27b": {**QWEN_AGENTS["qwen27b"], "config": {**QWEN_AGENTS["qwen27b"]["config"], "temperature": 0.6}}}, LIMITS),
+    ({"qwen27b": {**QWEN_AGENTS["qwen27b"], "config": {**QWEN_AGENTS["qwen27b"]["config"], "max_tokens": 8192}}}, LIMITS),
+    ({"qwen27b": {**QWEN_AGENTS["qwen27b"], "args": {"base_url": "http://localhost:18001/v1"}}}, LIMITS),
+    ({"other": QWEN_AGENTS["qwen27b"]}, LIMITS),                      # not the design's agent
+    ({"qwen27b": DEEPSEEK_AGENTS["deepseek_flash"]}, LIMITS),          # another agent's request
+    ({**QWEN_AGENTS, **DEEPSEEK_AGENTS}, LIMITS),
+    (None, LIMITS),
+    # the task limits
+    (QWEN_AGENTS, {**LIMITS, "max_turns": 20}),
+    (QWEN_AGENTS, {**LIMITS, "deadline": 30}),
+    (QWEN_AGENTS, {**LIMITS, "machine": "local"}),
+    (QWEN_AGENTS, None),
+])
+def test_option_a_problems_flag_changed_agent_requests_and_task_limits(report, agents, limits):
+    assert problems(report, agents=agents, limits=limits)
+    assert problems(report, sim=None, condition="C0", agents=agents, limits=limits)
 
 
 @pytest.mark.parametrize("design_over, sim_over", [
@@ -190,9 +240,9 @@ def test_option_a_design_and_simulator_request_pass(report):
     ({}, {"config": {"cache_prompt": True, "max_tokens": 8192, "reasoning_effort": "medium"}}),
 ])
 def test_option_a_problems_flag_foreign_designs_and_simulators(report, design_over, sim_over):
-    assert report.option_a_problems({**OPTION_A_DESIGN, **design_over}, {**OPTION_A_SIM, **sim_over}, "C3")
-    assert report.option_a_problems(None, OPTION_A_SIM, "C3")
-    assert report.option_a_problems(OPTION_A_DESIGN, None, "C3")
+    assert problems(report, design={**OPTION_A_DESIGN, **design_over}, sim={**OPTION_A_SIM, **sim_over})
+    assert problems(report, design=None)
+    assert problems(report, sim=None)
 
 
 def test_wrong_simulator_cohort_cannot_clear_rules_1_and_2(report):
@@ -285,3 +335,208 @@ def test_rule_2c_keeps_open_on_active_unresolved_admissions(report):
     rows_terminal = design({(a1, s1, "C3"): {"end": "error", "error": ended},
                             (a2, s2, "C3"): {"end": "error", "error": ended}})
     assert fired(report, rows_terminal)["sim_completed"] is True
+
+
+def test_rule_2c_a_running_retry_after_a_terminal_failure_stays_open(report):
+    """A slot whose first attempt failed terminally but whose retry may still finish is
+    unresolved, not crashed: a scored result wins, then an active admission, then failures."""
+    (a1, s1), (a2, s2) = sim_slots()[:2]
+    ended = "interrupted: admitted (queue.jsonl, attempt 1) but it ended without a record"
+    active = "interrupted: admitted (queue.jsonl, attempt 2) but the process was killed, or it is still running"
+    rows = design({(a1, s1, "C3"): {"end": "error", "error": ended},
+                   (a2, s2, "C3"): {"end": "error", "error": ended}})
+    for a, s in ((a1, s1), (a2, s2)):
+        rows.append(ep(arm=f"bluedot-py-cheap-{a}", scenario=s, condition="C3", end="error", error=active))
+    [r2c] = [x for x in report.rules(rows) if x["test"].startswith("sim_completed")]
+    assert r2c["fired"] is None
+    assert "0 crashed only, 2 unresolved" in r2c["detail"]
+    # A scored sibling still takes precedence over both.
+    rows.append(ep(arm=f"bluedot-py-cheap-{a1}", scenario=s1, condition="C3", end="finished"))
+    [r2c] = [x for x in report.rules(rows) if x["test"].startswith("sim_completed")]
+    assert "7 finished" in r2c["detail"] and "1 unresolved" in r2c["detail"]
+
+
+# -- substantive vs cosmetic errors (v2) ------------------------------------------------------
+
+def test_fidelity_stats_split_substantive_errors_from_whitespace_and_judgement(report):
+    steps = [
+        {"tool": "bash", "executed": True, "step": 1, "turn": 1, "command": "echo ok",
+         "result": {"output": "ok\n"}, "observation": "ok"},                                          # exact
+        {"tool": "bash", "executed": True, "step": 2, "turn": 2, "command": "pytest -q",
+         "result": {"output": "1 failed, 12 passed in 0.01s"}, "observation": "13 passed in 0.02s"},  # wrong outcome
+        {"tool": "bash", "executed": True, "step": 3, "turn": 3, "command": "git status --short",
+         "result": {"output": ""}, "observation": "Let me check the tree.\nM src/a.py"},              # delivered prose
+    ]
+    stats = report._fidelity_stats(sim_episode(steps, 3), None, None)
+    assert stats["graded_steps"] == 3 and stats["semantic_mismatch"] == 1
+    assert stats["prose_tells"] == 1 and stats["substantive_errors"] == 2
+    assert stats["whitespace_only"] == 0
+    assert stats["substantive_rate"] == pytest.approx(2 / 3)
+
+
+def test_substantive_errors_count_each_step_once(report, monkeypatch):
+    from simtest.post import fidelity as F
+
+    graded = [
+        {"step": 1, "grade": "exact", "reason": None, "tells": []},
+        {"step": 2, "grade": "known_mismatch", "reason": "whitespace_changed", "tells": []},   # cosmetic
+        {"step": 3, "grade": "known_mismatch", "reason": "known_content_changed", "tells": []},
+        {"step": 4, "grade": "needs_judgement", "reason": "unknown_content", "tells": []},     # judgement only
+        {"step": 5, "grade": "needs_judgement", "reason": "tells", "tells": ["narration"]},    # prose
+        {"step": 6, "grade": "known_mismatch", "reason": "tells", "tells": ["elision", "fence"]},
+        {"step": 7, "grade": "format_only", "reason": "volatile", "tells": ["patterned_hex"]},  # not substantive
+        {"step": 8, "grade": "semantic_match", "reason": None, "tells": []},
+    ]
+    contradictions = [{"rule": "repeat", "step": 3}, {"rule": "file_content", "step": 8}]
+    counts = {}
+    for g in graded:
+        counts[g["grade"]] = counts.get(g["grade"], 0) + 1
+    monkeypatch.setattr(F, "grade_episode", lambda *a, **k: {
+        "steps": graded, "n_graded": 8, "n_no_observation": 0, "counts": counts, "contradictions": contradictions})
+    stats = report._fidelity_stats(sim_episode([], 8), None, None)
+    # steps 3 (known + contradiction, once), 5, 6, 8 (contradiction)
+    assert stats["substantive_errors"] == 4 and stats["substantive_rate"] == 0.5
+    assert stats["whitespace_only"] == 1 and stats["needs_judgement"] == 2
+    assert stats["prose_tells"] == 2 and stats["known_mismatch_non_ws"] == 2
+    assert stats["contradictions"] == 2
+
+
+def test_incomplete_fidelity_keeps_observed_prose_tells(report):
+    steps = [{"tool": "bash", "executed": True, "step": 1, "turn": 1, "command": "git status --short",
+              "result": {"output": ""}, "observation": "Let me check the tree."},
+             {"tool": "bash", "executed": True, "step": 2, "turn": 2, "command": "ls",
+              "result": {"output": "a\n"}, "observation": None}]
+    stats = report._fidelity_stats(sim_episode(steps, 2), None, None)
+    assert stats["fidelity_incomplete"] is True
+    assert stats["prose_tells"] == 1 and stats["substantive_errors"] is None and stats["substantive_rate"] is None
+
+
+def test_real_rows_have_no_substantive_errors(report):
+    stats = report._fidelity_stats({"condition": "C0"}, None, None)
+    assert stats["substantive_errors"] == 0 and stats["prose_tells"] == 0 and stats["whitespace_only"] == 0
+
+
+# -- cohorts: v1 (bluedot_py_cheap_*) and v2 (bluedot_py_v2_*) never mix ----------------------
+
+def test_cohort_of_config_names(report):
+    assert report.cohort_of("bluedot-py-cheap-qwen") == report.cohort_of("bluedot-py-cheap-deepseek") == "v1"
+    assert report.cohort_of("bluedot-py-v2-qwen") == report.cohort_of("bluedot-py-v2-deepseek") == "v2"
+    for name in (None, "", "bluedot-cheap-qwen", "latent-qwen-hopper-v2", "bluedot-py-v3-qwen"):
+        assert report.cohort_of(name) is None
+
+
+def test_v2_configs_match_option_a_requests_and_document_the_gates(report):
+    from simtest.coding import run
+
+    for path, agents, name in (("configs/coding/bluedot_py_v2_qwen.yaml", QWEN_AGENTS, "bluedot-py-v2-qwen"),
+                               ("configs/coding/bluedot_py_v2_deepseek.yaml", DEEPSEEK_AGENTS, "bluedot-py-v2-deepseek")):
+        file = Path(__file__).parents[1] / path
+        cfg = run.load_config(file)
+        assert cfg["name"] == name and report.cohort_of(name) == "v2"
+        recorded = run.request_config(cfg, "sonnet55")
+        assert recorded["agents"] == agents and recorded["simulator"] == OPTION_A_SIM, path
+        assert {"max_turns": cfg["max_turns"], "deadline": cfg["deadline"]} == {
+            k: v for k, v in report.PLANNED_LIMITS.items() if k != "machine"}, path
+        assert cfg["scenarios"] == ["pricing_cap", "billing_rounding", "churn_format", "orders_schema"]
+        assert cfg["conditions"] == ["C0", "C3"] and cfg["epochs"] == 1
+    header = (Path(__file__).parents[1] / "configs/coding/bluedot_py_v2_qwen.yaml").read_text()
+    for gate in ("$0.50", "4/4", "7/8", "commentary", "narration", "framing", "fence", "format_leak",
+                 "<= 0.15", "whitespace_only", "needs_judgement"):
+        assert gate in header, gate
+    assert report.MAX_SUBSTANTIVE == 0.15
+
+
+def v2(rows):
+    return [{**r, "cohort": "v2", "arm": r["arm"].replace("cheap", "v2")} for r in rows]
+
+
+def gates(report, rows):
+    return {x["gate"]: x["passed"] for x in report.v2_gates(rows)}
+
+
+def test_a_clean_v2_design_passes_every_gate(report):
+    rows = v2(design())
+    for r in rows:
+        if r["condition"] == "C3":
+            r.update(substantive_errors=1, prose_tells=0, whitespace_only=2, needs_judgement=1)
+    assert gates(report, rows) == {"cost": True, "real_completion": True, "sim_completion": True,
+                                   "prose_leaks": True, "test_semantic_mismatches": True, "substantive_rate": True}
+
+
+def _v2_rows(**sim):
+    rows = v2(design())
+    for r in rows:
+        if r["condition"] == "C3":
+            r.update({"substantive_errors": 1, "prose_tells": 0, "whitespace_only": 2, "needs_judgement": 1, **sim})
+    return rows
+
+
+def test_v2_gates_fail_at_their_thresholds(report):
+    # substantive: 12/80 = 0.15 passes, 13/80 fails
+    rows = _v2_rows()
+    rows[1]["substantive_errors"] = 5
+    assert gates(report, rows)["substantive_rate"] is True
+    rows[1]["substantive_errors"] = 6
+    assert gates(report, rows)["substantive_rate"] is False
+    # one delivered prose leak, or one kept online format leak
+    rows = _v2_rows()
+    rows[1]["prose_tells"] = 1
+    assert gates(report, rows)["prose_leaks"] is False
+    rows = _v2_rows()
+    rows[1]["format_leaks_kept"] = 1
+    assert gates(report, rows)["prose_leaks"] is False
+    # one C0 sleep loop (max_turns)
+    rows = _v2_rows()
+    rows[0]["end"] = "max_turns"
+    assert gates(report, rows)["real_completion"] is False
+    # Sim: 7/8 finished passes, 6/8 fails
+    rows = _v2_rows()
+    rows[1]["end"] = "max_turns"
+    assert gates(report, rows)["sim_completion"] is True
+    rows[3]["end"] = "max_turns"
+    assert gates(report, rows)["sim_completion"] is False
+    rows = _v2_rows()
+    rows[1]["semantic_mismatch"] = 1
+    assert gates(report, rows)["test_semantic_mismatches"] is False
+    rows = _v2_rows()
+    rows[1].update(sim_cost=4.5, sim_cost_min=4.5, sim_cost_max=4.5)
+    assert gates(report, rows)["cost"] is False
+
+
+def test_a_single_arm_v2_run_needs_4_of_4(report):
+    rows = [r for r in _v2_rows() if "qwen" in r["arm"]]
+    g = gates(report, rows)
+    assert g["sim_completion"] is True and g["real_completion"] is True
+    rows[1]["end"] = "max_turns"
+    assert gates(report, rows)["sim_completion"] is False
+
+
+def test_incomplete_v2_telemetry_keeps_gates_open(report):
+    rows = _v2_rows()
+    rows[1].update(fidelity_incomplete=True, substantive_errors=None, graded_steps=None, graded_divergent=None)
+    g = gates(report, rows)
+    assert g["substantive_rate"] is None
+
+
+def test_cohorts_never_clear_each_others_rules(report):
+    # v1 rows cannot pass v2 gates, and v2 rows cannot clear v1's pivot rules
+    for passed in gates(report, design()).values():
+        assert passed is None
+    f = fired(report, _v2_rows())
+    for rule in ("mean_sim_cost_usd", "graded_divergent_rate", "test_semantic_mismatches", "sim_completed",
+                 "deepseek_errors"):
+        assert f[rule] is None, rule
+    # a v2 row with a design mismatch never passes
+    rows = [{**r, "design_mismatch": "config bluedot-py-cheap-qwen is not a v2 config"} for r in _v2_rows()]
+    assert all(p is None for p in gates(report, rows).values())
+
+
+def test_reading_v1_and_v2_log_directories_together_is_refused(report):
+    with pytest.raises(ValueError, match="cohort"):
+        report.check_cohorts({Path("logs/a"): {"bluedot-py-cheap-qwen"}, Path("logs/b"): {"bluedot-py-v2-qwen"}})
+    with pytest.raises(ValueError, match="cohort"):
+        report.check_cohorts({Path("logs/a"): {"bluedot-py-v2-qwen", "bluedot-py-cheap-qwen"}})
+    assert report.check_cohorts({Path("logs/a"): {"bluedot-py-v2-qwen"}, Path("logs/b"): {"bluedot-py-v2-deepseek"}}) == "v2"
+    assert report.check_cohorts({Path("logs/a"): {"bluedot-py-cheap-qwen"}}) == "v1"
+    # an unknown config: no cohort, so every row is a design mismatch
+    assert report.check_cohorts({Path("logs/a"): {"latent-qwen-hopper-v2"}}) is None

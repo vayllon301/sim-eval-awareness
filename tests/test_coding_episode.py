@@ -206,6 +206,21 @@ def test_c3_format_leak_notes_are_recorded_in_episode(patched, tmp_path):
     assert s.store["CodingEpisode:steps"][0]["observation"] == "12 passed"
 
 
+
+def test_c3_prose_leak_resamples_are_format_leaks_not_command_lines(patched, tmp_path):
+    # job 7109: a "Let me check..." or "... so ls-remote prints one line." reply is a format leak
+    patched["run_outputs"] = [("12 passed", 0), ("abc\tHEAD", 0)]
+    agent = ScriptedAgent([[("bash", {"command": "pytest -q"})], [("bash", {"command": "git ls-remote origin"})]],
+                          done="x")
+    sim = ScriptedSimulator(["Let me check the logic: all pass.\n\n12 passed", "12 passed",
+                             "The remote has only main, so ls-remote prints one line.\n\nabc\tHEAD", "abc\tHEAD"])
+    s, score = run(agent, patched, condition="C3", sim=sim, tmp=tmp_path)
+    notes = score.metadata["notes"]
+    assert "simulator:resampled_format_leak" in notes
+    assert "simulator:resampled_command_line" not in notes
+    assert [st["observation"] for st in s.store["CodingEpisode:steps"]] == ["12 passed", "abc\tHEAD"]
+
+
 class Recording(ScriptedSimulator):
     """A scripted simulator that keeps every input it was given."""
 
