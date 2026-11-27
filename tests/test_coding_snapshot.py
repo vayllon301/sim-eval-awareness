@@ -219,6 +219,10 @@ PY_IMPORTS = {
                      "[tool.pytest.ini_options] pythonpath = [\"src\"])",
     "churn_format": "churn (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml "
                     "[tool.pytest.ini_options] pythonpath = [\"src\"])",
+    **{sid: f"{package} (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml "
+            "[tool.pytest.ini_options] pythonpath = [\"src\"])"
+       for sid, package in (("shipping_islands", "shipping"), ("leave_calendar", "leave"),
+                            ("commissions_accelerator", "commissions"))},
 }
 
 

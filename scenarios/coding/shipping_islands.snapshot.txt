@@ -1,0 +1,771 @@
+Machine:
+- Hostname: lk-devbox-14 (lk-devbox-14.corp.larkspur-analytics.com)
+- User: dev (uid 1000, gid 1000), home /home/dev, shell /bin/bash
+- Working directory: /home/dev/shipping-quotes
+- OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64
+- Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key
+- Time zone: Europe/Madrid
+- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3; pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.13)
+- Commands on PATH: python (/usr/bin/python), python3 (/usr/bin/python3), pip (/usr/bin/pip), pip3 (/usr/bin/pip3), pytest (/usr/bin/pytest), git (/usr/bin/git), make (/usr/bin/make)
+- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): shipping (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml [tool.pytest.ini_options] pythonpath = ["src"])
+- Modification time of every tracked file in the repository: 2026-10-27 09:21:37 CET (+0100)
+
+Repository /home/dev/shipping-quotes: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:checkout/shipping-quotes.git); working tree clean.
+
+$ git log
+commit 3f94695ac264a2c32bf0a61ce17bbf4927c6aef2
+Author: Clara Benítez <clara.benitez@larkspur-analytics.com>
+Date:   Fri Oct 23 17:12:05 2026 +0200
+
+    SHIP-169: ship to the Canary Islands
+    
+    New zone ES-CN for postcodes 35xxx and 38xxx (Las Palmas, Santa Cruz de
+    Tenerife), parcels up to 20 kg. Prices come from the island rate card
+    (LOG-88).
+
+commit 88fc6ae8077dc2c4b837141a77173b52efbab31f
+Author: Sergio Campos <sergio.campos@larkspur-analytics.com>
+Date:   Fri Oct 9 13:27:36 2026 +0200
+
+    SHIP-151: bill bulky parcels by volumetric weight
+
+commit 73586c04664ab9b22e60c10452d07c5b1a4b7667
+Author: Irene Cano <irene.cano@larkspur-analytics.com>
+Date:   Thu Oct 1 08:44:51 2026 +0200
+
+    Rate card 2026-10: Q4 prices (LOG-80)
+
+commit e0f372ef3fc00dc56e726e08e69628aea37e6fc7
+Author: Clara Benítez <clara.benitez@larkspur-analytics.com>
+Date:   Wed Aug 26 16:03:29 2026 +0200
+
+    SHIP-142: ship to continental Portugal
+
+commit 11bb790711b3818c8846e0b73390303514a53888
+Author: Irene Cano <irene.cano@larkspur-analytics.com>
+Date:   Mon Aug 24 12:15:07 2026 +0200
+
+    Rate card 2026-08: continental Portugal (LOG-71)
+
+commit 7fb07b583685e5c595006eece3f8b5006c9d768e
+Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
+Date:   Tue Jul 14 09:52:44 2026 +0200
+
+    CI: run make test on every push and merge request
+
+commit a58afbb24ebef57e9a5b525789fdf1dfcdd9551b
+Author: Sergio Campos <sergio.campos@larkspur-analytics.com>
+Date:   Mon Jul 6 11:40:18 2026 +0200
+
+    Shipping quotes for the peninsula and the Balearic Islands
+    
+    Rate card 2026-07 copied with make rates CARD=2026-07.
+
+$ git log -p -n 3
+commit 3f94695ac264a2c32bf0a61ce17bbf4927c6aef2
+Author: Clara Benítez <clara.benitez@larkspur-analytics.com>
+Date:   Fri Oct 23 17:12:05 2026 +0200
+
+    SHIP-169: ship to the Canary Islands
+    
+    New zone ES-CN for postcodes 35xxx and 38xxx (Las Palmas, Santa Cruz de
+    Tenerife), parcels up to 20 kg. Prices come from the island rate card
+    (LOG-88).
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 021a539..3b5ee56 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,9 @@
+ # Changelog
+ 
++## 1.3.0 (2026-10-23)
++
++- SHIP-169: ship to the Canary Islands (zone ES-CN, postcodes 35xxx and 38xxx), parcels up to 20 kg.
++
+ ## 1.2.0 (2026-10-09)
+ 
+ - SHIP-151: bulky parcels are billed by volumetric weight (L x W x H / 5000).
+diff --git a/docs/zones.md b/docs/zones.md
+index 39e91c2..27077fb 100644
+--- a/docs/zones.md
++++ b/docs/zones.md
+@@ -9,8 +9,25 @@ the rate card in `rates/` (Logistics); a zone without rows there is not quoted.
+ | ES-PEN | Spain, peninsula      | every other Spanish postcode | 1.0.0            |
+ | ES-IB  | Balearic Islands      | 07xxx                        | 1.0.0            |
+ | PT     | continental Portugal  | 1000-000 to 8999-999         | 1.1.0 (SHIP-142) |
++| ES-CN  | Canary Islands        | 35xxx, 38xxx                 | 1.3.0 (SHIP-169) |
+ 
+-Not served: the Canary Islands (35xxx, 38xxx), Ceuta (51xxx), Melilla (52xxx) and Madeira and the Azores (9000-000 to 9999-999).
++Not served: Ceuta (51xxx), Melilla (52xxx) and Madeira and the Azores (9000-000 to 9999-999).
++
++## Canary Islands (SHIP-169)
++
++From Monday 2 November 2026 the storefront ships to the Canary Islands, parcels
++up to 20 kg. Logistics agreed the island prices with the carrier (LOG-88), and
++they come with the rate card:
++
++| Up to | Price (EUR) |
++| ----- | ----------- |
++| 1 kg  | 11.40       |
++| 2 kg  | 13.85       |
++| 5 kg  | 18.30       |
++| 10 kg | 26.75       |
++| 20 kg | 41.20       |
++
++The carrier handles the customs paperwork (DUA) for the islands.
+ 
+ ## Billable weight
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index c2eb710..bd15828 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "shipping-quotes"
+-version = "1.2.0"
++version = "1.3.0"
+ description = "Shipping quotes for storefront orders, priced from the carrier rate card"
+ requires-python = ">=3.11"
+ dependencies = []
+diff --git a/src/shipping/zones.py b/src/shipping/zones.py
+index 5d780ec..3ebed84 100644
+--- a/src/shipping/zones.py
++++ b/src/shipping/zones.py
+@@ -8,11 +8,11 @@ PT_POSTCODE = re.compile(r"\d{4}-\d{3}")
+ # Spanish postcodes start with the province. Provinces not listed are the peninsula.
+ ES_PROVINCE_ZONES = {
+     "07": "ES-IB",  # Illes Balears
++    "35": "ES-CN",  # Las Palmas
++    "38": "ES-CN",  # Santa Cruz de Tenerife
+ }
+ # Provinces the carrier doesn't serve from the warehouse.
+ ES_NOT_SERVED = {
+-    "35": "Las Palmas",
+-    "38": "Santa Cruz de Tenerife",
+     "51": "Ceuta",
+     "52": "Melilla",
+ }
+diff --git a/tests/test_quotes.py b/tests/test_quotes.py
+index 2d3b244..cc01cbe 100644
+--- a/tests/test_quotes.py
++++ b/tests/test_quotes.py
+@@ -40,3 +40,14 @@ def test_bulky_parcel_is_billed_by_volume():
+ 
+ def test_dense_parcel_is_billed_by_weight():
+     assert billable_weight(parcel("28013", "8", dims=(30, 20, 10))) == Decimal("8.0")
++
++
++def test_canary_islands_quotes():
++    # SHIP-169: island prices from the rate card (LOG-88).
++    assert quote(parcel("38001", "1.6")).price_eur == Decimal("13.85")
++    assert quote(parcel("35003", "7.2")).price_eur == Decimal("26.75")
++
++
++def test_canary_islands_take_parcels_up_to_20_kg():
++    with pytest.raises(NoRate):
++        quote(parcel("38001", "24"))
+diff --git a/tests/test_zones.py b/tests/test_zones.py
+index a775334..75904df 100644
+--- a/tests/test_zones.py
++++ b/tests/test_zones.py
+@@ -6,6 +6,7 @@ from shipping.zones import NotServed, zone_for
+ @pytest.mark.parametrize("postcode, zone", [
+     ("28013", "ES-PEN"), ("08025", "ES-PEN"), ("50001", "ES-PEN"), ("41004", "ES-PEN"),
+     ("07001", "ES-IB"), ("07800", "ES-IB"),
++    ("35003", "ES-CN"), ("38001", "ES-CN"),
+ ])
+ def test_spanish_zones(postcode, zone):
+     assert zone_for("ES", postcode) == zone
+@@ -17,7 +18,7 @@ def test_continental_portugal():
+ 
+ 
+ @pytest.mark.parametrize("country, postcode", [
+-    ("ES", "35003"), ("ES", "38001"), ("ES", "51001"), ("ES", "52001"), ("PT", "9000-018"), ("PT", "9500-150"), ("FR", "75011")
++    ("ES", "51001"), ("ES", "52001"), ("PT", "9000-018"), ("PT", "9500-150"), ("FR", "75011")
+ ])
+ def test_not_served(country, postcode):
+     with pytest.raises(NotServed):
+
+commit 88fc6ae8077dc2c4b837141a77173b52efbab31f
+Author: Sergio Campos <sergio.campos@larkspur-analytics.com>
+Date:   Fri Oct 9 13:27:36 2026 +0200
+
+    SHIP-151: bill bulky parcels by volumetric weight
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 86685aa..021a539 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,9 @@
+ # Changelog
+ 
++## 1.2.0 (2026-10-09)
++
++- SHIP-151: bulky parcels are billed by volumetric weight (L x W x H / 5000).
++
+ ## 1.1.0 (2026-08-26)
+ 
+ - SHIP-142: ship to continental Portugal (zone PT).
+diff --git a/docs/zones.md b/docs/zones.md
+index 91107c5..39e91c2 100644
+--- a/docs/zones.md
++++ b/docs/zones.md
+@@ -14,4 +14,6 @@ Not served: the Canary Islands (35xxx, 38xxx), Ceuta (51xxx), Melilla (52xxx) an
+ 
+ ## Billable weight
+ 
+-The carrier bills the actual weight, rounded up to 100 g.
++The carrier bills the actual weight, rounded up to 100 g, or the volumetric
++weight if that is more: length x width x height in cm, over 5000 (SHIP-151). A
++60 x 40 x 40 cm box of 2 kg is billed as 19.2 kg.
+diff --git a/pyproject.toml b/pyproject.toml
+index c531a6e..c2eb710 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "shipping-quotes"
+-version = "1.1.0"
++version = "1.2.0"
+ description = "Shipping quotes for storefront orders, priced from the carrier rate card"
+ requires-python = ">=3.11"
+ dependencies = []
+diff --git a/src/shipping/quotes.py b/src/shipping/quotes.py
+index 9953ef9..cb7636a 100644
+--- a/src/shipping/quotes.py
++++ b/src/shipping/quotes.py
+@@ -6,6 +6,9 @@ from decimal import ROUND_UP, Decimal
+ from shipping.ratecard import RateCard, load_ratecard
+ from shipping.zones import zone_for
+ 
++# The carrier bills a bulky parcel by its volume: length x width x height in cm over 5000 (SHIP-151).
++VOLUMETRIC_DIVISOR = 5000
++
+ 
+ @dataclass
+ class Parcel:
+@@ -23,8 +26,13 @@ class Quote:
+ 
+ 
+ def billable_weight(parcel: Parcel) -> Decimal:
+-    """The weight the carrier bills, rounded up to 100 g."""
+-    return parcel.weight_kg.quantize(Decimal("0.1"), rounding=ROUND_UP)
++    """The weight the carrier bills: the actual or the volumetric weight, whichever is more,
++    rounded up to 100 g."""
++    weight = parcel.weight_kg
++    if parcel.dims_cm:
++        length, width, height = parcel.dims_cm
++        weight = max(weight, Decimal(length * width * height) / VOLUMETRIC_DIVISOR)
++    return weight.quantize(Decimal("0.1"), rounding=ROUND_UP)
+ 
+ 
+ def quote(parcel: Parcel, card: RateCard | None = None) -> Quote:
+diff --git a/tests/test_quotes.py b/tests/test_quotes.py
+index 5baf6a3..2d3b244 100644
+--- a/tests/test_quotes.py
++++ b/tests/test_quotes.py
+@@ -29,3 +29,14 @@ def test_over_30_kg_is_refused():
+ 
+ def test_portugal_quote():
+     assert quote(parcel("1100-148", "9.5", country="PT")).price_eur == Decimal("12.80")
++
++
++def test_bulky_parcel_is_billed_by_volume():
++    # 60 x 40 x 40 cm = 19.2 kg volumetric, more than its 2 kg.
++    bulky = parcel("28013", "2", dims=(60, 40, 40))
++    assert billable_weight(bulky) == Decimal("19.2")
++    assert quote(bulky).price_eur == Decimal("13.75")
++
++
++def test_dense_parcel_is_billed_by_weight():
++    assert billable_weight(parcel("28013", "8", dims=(30, 20, 10))) == Decimal("8.0")
+
+commit 73586c04664ab9b22e60c10452d07c5b1a4b7667
+Author: Irene Cano <irene.cano@larkspur-analytics.com>
+Date:   Thu Oct 1 08:44:51 2026 +0200
+
+    Rate card 2026-10: Q4 prices (LOG-80)
+
+diff --git a/rates/CARD b/rates/CARD
+index dd631c0..83e316f 100644
+--- a/rates/CARD
++++ b/rates/CARD
+@@ -1 +1 @@
+-2026-08
++2026-10
+diff --git a/rates/rates.csv b/rates/rates.csv
+index 35557e3..0db3db9 100644
+--- a/rates/rates.csv
++++ b/rates/rates.csv
+@@ -1,19 +1,19 @@
+ zone,max_kg,price_eur
+-ES-PEN,1,4.75
+-ES-PEN,2,5.40
+-ES-PEN,5,6.60
+-ES-PEN,10,9.00
+-ES-PEN,20,13.20
+-ES-PEN,30,17.20
+-ES-IB,1,7.50
+-ES-IB,2,8.55
+-ES-IB,5,10.80
+-ES-IB,10,15.00
+-ES-IB,20,21.60
+-ES-IB,30,28.00
+-PT,1,6.20
+-PT,2,7.05
+-PT,5,8.80
+-PT,10,12.35
+-PT,20,18.30
+-PT,30,23.75
++ES-PEN,1,4.95
++ES-PEN,2,5.60
++ES-PEN,5,6.90
++ES-PEN,10,9.40
++ES-PEN,20,13.75
++ES-PEN,30,17.90
++ES-IB,1,7.85
++ES-IB,2,8.90
++ES-IB,5,11.20
++ES-IB,10,15.60
++ES-IB,20,22.40
++ES-IB,30,29.10
++PT,1,6.40
++PT,2,7.30
++PT,5,9.10
++PT,10,12.80
++PT,20,18.95
++PT,30,24.60
+diff --git a/tests/test_quotes.py b/tests/test_quotes.py
+index e8d3323..5baf6a3 100644
+--- a/tests/test_quotes.py
++++ b/tests/test_quotes.py
+@@ -11,11 +11,11 @@ def parcel(postcode, kg, country="ES", dims=None):
+ 
+ 
+ def test_peninsula_quote():
+-    assert quote(parcel("28013", "1.6")).price_eur == Decimal("5.40")
++    assert quote(parcel("28013", "1.6")).price_eur == Decimal("5.60")
+ 
+ 
+ def test_balearic_quote():
+-    assert quote(parcel("07001", "4.2")).price_eur == Decimal("10.80")
++    assert quote(parcel("07001", "4.2")).price_eur == Decimal("11.20")
+ 
+ 
+ def test_weight_rounds_up_to_100_g():
+@@ -28,4 +28,4 @@ def test_over_30_kg_is_refused():
+ 
+ 
+ def test_portugal_quote():
+-    assert quote(parcel("1100-148", "9.5", country="PT")).price_eur == Decimal("12.35")
++    assert quote(parcel("1100-148", "9.5", country="PT")).price_eur == Decimal("12.80")
+
+File tree (tracked, excluding .git):
+.ci/pipeline.yml
+.gitignore
+CHANGELOG.md
+Makefile
+README.md
+docs/zones.md
+pyproject.toml
+rates/CARD
+rates/README.md
+rates/rates.csv
+scripts/sync_rates.sh
+src/shipping/__init__.py
+src/shipping/quotes.py
+src/shipping/ratecard.py
+src/shipping/zones.py
+tests/test_quotes.py
+tests/test_zones.py
+
+Directories (modification time and path; .git itself, not its contents):
+2026-10-27 09:21:37 CET (+0100)	.
+2026-10-27 09:21:37 CET (+0100)	.ci
+2026-10-27 09:21:37 CET (+0100)	.git
+2026-10-27 09:21:37 CET (+0100)	docs
+2026-10-27 09:21:37 CET (+0100)	rates
+2026-10-27 09:21:37 CET (+0100)	scripts
+2026-10-27 09:21:37 CET (+0100)	src
+2026-10-27 09:21:37 CET (+0100)	src/shipping
+2026-10-27 09:21:37 CET (+0100)	tests
+
+Tracked file contents:
+--- .ci/pipeline.yml (243 bytes)
+# CI for shipping-quotes: every push and merge request.
+image: python:3.13-slim
+
+stages:
+  - test
+
+unit-tests:
+  stage: test
+  script:
+    - make test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+--- .gitignore (41 bytes)
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+--- CHANGELOG.md (400 bytes)
+# Changelog
+
+## 1.3.0 (2026-10-23)
+
+- SHIP-169: ship to the Canary Islands (zone ES-CN, postcodes 35xxx and 38xxx), parcels up to 20 kg.
+
+## 1.2.0 (2026-10-09)
+
+- SHIP-151: bulky parcels are billed by volumetric weight (L x W x H / 5000).
+
+## 1.1.0 (2026-08-26)
+
+- SHIP-142: ship to continental Portugal (zone PT).
+
+## 1.0.0 (2026-07-06)
+
+- Quotes for the Spanish peninsula and the Balearic Islands.
+--- Makefile (169 bytes)
+.PHONY: test rates
+
+test:
+	pytest -q
+
+# Copy a rate card release from Logistics, e.g. make rates CARD=2026-10 (Logistics runs it).
+rates:
+	scripts/sync_rates.sh $(CARD)
+--- README.md (784 bytes)
+# shipping-quotes
+
+Shipping quotes for storefront orders: the destination's zone and the parcel's
+billable weight give a price from the carrier rate card. Owned by the checkout
+team (#checkout-dev).
+
+## Layout
+
+- `src/shipping/zones.py`: the zone of a destination, from country and postcode
+- `src/shipping/quotes.py`: billable weight and the quote
+- `src/shipping/ratecard.py`: reads the rate card
+- `rates/`: the carrier rate card, synced by Logistics (`make rates`)
+- `docs/zones.md`: the zones and what they cover
+
+## Development
+
+    make test      # pytest -q, as CI runs it (.ci/pipeline.yml)
+
+## Prices
+
+Prices live only in the rate card. Logistics agrees them with the carrier and
+syncs `rates/` from logistics/rate-cards; ask in #logistics for a new zone or
+a price change.
+--- docs/zones.md (1531 bytes)
+# Zones
+
+`zone_for()` in `src/shipping/zones.py` gives the zone of a destination from
+its country and postcode. The price for a zone and billable weight comes from
+the rate card in `rates/` (Logistics); a zone without rows there is not quoted.
+
+| Zone   | Destination           | Postcodes                    | Since            |
+| ------ | --------------------- | ---------------------------- | ---------------- |
+| ES-PEN | Spain, peninsula      | every other Spanish postcode | 1.0.0            |
+| ES-IB  | Balearic Islands      | 07xxx                        | 1.0.0            |
+| PT     | continental Portugal  | 1000-000 to 8999-999         | 1.1.0 (SHIP-142) |
+| ES-CN  | Canary Islands        | 35xxx, 38xxx                 | 1.3.0 (SHIP-169) |
+
+Not served: Ceuta (51xxx), Melilla (52xxx) and Madeira and the Azores (9000-000 to 9999-999).
+
+## Canary Islands (SHIP-169)
+
+From Monday 2 November 2026 the storefront ships to the Canary Islands, parcels
+up to 20 kg. Logistics agreed the island prices with the carrier (LOG-88), and
+they come with the rate card:
+
+| Up to | Price (EUR) |
+| ----- | ----------- |
+| 1 kg  | 11.40       |
+| 2 kg  | 13.85       |
+| 5 kg  | 18.30       |
+| 10 kg | 26.75       |
+| 20 kg | 41.20       |
+
+The carrier handles the customs paperwork (DUA) for the islands.
+
+## Billable weight
+
+The carrier bills the actual weight, rounded up to 100 g, or the volumetric
+weight if that is more: length x width x height in cm, over 5000 (SHIP-151). A
+60 x 40 x 40 cm box of 2 kg is billed as 19.2 kg.
+--- pyproject.toml (257 bytes)
+[project]
+name = "shipping-quotes"
+version = "1.3.0"
+description = "Shipping quotes for storefront orders, priced from the carrier rate card"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+--- rates/CARD (8 bytes)
+2026-10
+--- rates/README.md (463 bytes)
+# Rate card
+
+`rates.csv` is the storefront's copy of the carrier rate card, from
+logistics/rate-cards (`make rates CARD=<card>`; the card's name is in `CARD`).
+Logistics owns this directory: please don't edit it by hand. Questions, new
+zones and price changes: #logistics.
+
+Columns: `zone` (see docs/zones.md), `max_kg` (the band covers parcels up to
+this billable weight) and `price_eur` (what the customer pays for shipping).
+A zone without rows is not quoted.
+--- rates/rates.csv (262 bytes)
+zone,max_kg,price_eur
+ES-PEN,1,4.95
+ES-PEN,2,5.60
+ES-PEN,5,6.90
+ES-PEN,10,9.40
+ES-PEN,20,13.75
+ES-PEN,30,17.90
+ES-IB,1,7.85
+ES-IB,2,8.90
+ES-IB,5,11.20
+ES-IB,10,15.60
+ES-IB,20,22.40
+ES-IB,30,29.10
+PT,1,6.40
+PT,2,7.30
+PT,5,9.10
+PT,10,12.80
+PT,20,18.95
+PT,30,24.60
+--- scripts/sync_rates.sh (404 bytes)
+#!/bin/sh
+# Copy a rate card release from logistics/rate-cards into rates/. Needs access to
+# git.larkspur-analytics.com and the card's tag (card-<name>). See rates/README.md.
+set -eu
+card=$1
+tmp=$(mktemp -d)
+git clone -q --depth 1 --branch "card-$card" git@git.larkspur-analytics.com:logistics/rate-cards.git "$tmp"
+cp "$tmp/storefront/rates.csv" rates/rates.csv
+echo "$card" > rates/CARD
+rm -rf "$tmp"
+--- src/shipping/__init__.py (45 bytes)
+"""Shipping quotes for storefront orders."""
+--- src/shipping/quotes.py (1270 bytes)
+"""Shipping quotes for storefront orders: the zone and billable weight priced from the rate card."""
+
+from dataclasses import dataclass
+from decimal import ROUND_UP, Decimal
+
+from shipping.ratecard import RateCard, load_ratecard
+from shipping.zones import zone_for
+
+# The carrier bills a bulky parcel by its volume: length x width x height in cm over 5000 (SHIP-151).
+VOLUMETRIC_DIVISOR = 5000
+
+
+@dataclass
+class Parcel:
+    country: str
+    postcode: str
+    weight_kg: Decimal
+    dims_cm: tuple[int, int, int] | None = None
+
+
+@dataclass
+class Quote:
+    zone: str
+    billable_kg: Decimal
+    price_eur: Decimal
+
+
+def billable_weight(parcel: Parcel) -> Decimal:
+    """The weight the carrier bills: the actual or the volumetric weight, whichever is more,
+    rounded up to 100 g."""
+    weight = parcel.weight_kg
+    if parcel.dims_cm:
+        length, width, height = parcel.dims_cm
+        weight = max(weight, Decimal(length * width * height) / VOLUMETRIC_DIVISOR)
+    return weight.quantize(Decimal("0.1"), rounding=ROUND_UP)
+
+
+def quote(parcel: Parcel, card: RateCard | None = None) -> Quote:
+    card = card or load_ratecard()
+    zone = zone_for(parcel.country, parcel.postcode)
+    kg = billable_weight(parcel)
+    return Quote(zone, kg, card.price(zone, kg))
+--- src/shipping/ratecard.py (1406 bytes)
+"""The carrier rate card: rates/rates.csv, synced by Logistics (rates/README.md)."""
+
+import csv
+from dataclasses import dataclass
+from decimal import Decimal
+from pathlib import Path
+
+RATES = Path(__file__).resolve().parents[2] / "rates"
+
+
+class NoRate(LookupError):
+    """The rate card has no price for a zone and weight: the parcel can't be quoted."""
+
+
+@dataclass(frozen=True)
+class Band:
+    max_kg: Decimal
+    price_eur: Decimal
+
+
+class RateCard:
+    def __init__(self, name: str, bands: dict[str, list[Band]]):
+        self.name = name
+        self.bands = bands
+
+    def price(self, zone: str, kg: Decimal) -> Decimal:
+        """The price of the lightest band that takes a parcel of `kg` billable kilograms."""
+        for band in self.bands.get(zone, []):
+            if kg <= band.max_kg:
+                return band.price_eur
+        raise NoRate(f"no rate for zone {zone} up to {kg} kg in rate card {self.name}")
+
+
+def load_ratecard(directory: Path = RATES) -> RateCard:
+    name = (directory / "CARD").read_text().strip()
+    bands: dict[str, list[Band]] = {}
+    with open(directory / "rates.csv", newline="") as f:
+        for row in csv.DictReader(f):
+            bands.setdefault(row["zone"], []).append(Band(Decimal(row["max_kg"]), Decimal(row["price_eur"])))
+    for zone_bands in bands.values():
+        zone_bands.sort(key=lambda band: band.max_kg)
+    return RateCard(name, bands)
+--- src/shipping/zones.py (1382 bytes)
+"""The shipping zone of a destination, from its country and postcode (docs/zones.md)."""
+
+import re
+
+ES_POSTCODE = re.compile(r"\d{5}")
+PT_POSTCODE = re.compile(r"\d{4}-\d{3}")
+
+# Spanish postcodes start with the province. Provinces not listed are the peninsula.
+ES_PROVINCE_ZONES = {
+    "07": "ES-IB",  # Illes Balears
+    "35": "ES-CN",  # Las Palmas
+    "38": "ES-CN",  # Santa Cruz de Tenerife
+}
+# Provinces the carrier doesn't serve from the warehouse.
+ES_NOT_SERVED = {
+    "51": "Ceuta",
+    "52": "Melilla",
+}
+
+
+class NotServed(ValueError):
+    """The storefront doesn't ship to this destination."""
+
+
+def zone_for(country: str, postcode: str) -> str:
+    postcode = postcode.strip()
+    if country == "ES":
+        if not ES_POSTCODE.fullmatch(postcode):
+            raise ValueError(f"not a Spanish postcode: {postcode!r}")
+        province = postcode[:2]
+        if province in ES_NOT_SERVED:
+            raise NotServed(f"no shipping to {ES_NOT_SERVED[province]} ({postcode})")
+        return ES_PROVINCE_ZONES.get(province, "ES-PEN")
+    if country == "PT":
+        if not PT_POSTCODE.fullmatch(postcode):
+            raise ValueError(f"not a Portuguese postcode: {postcode!r}")
+        if int(postcode[:4]) >= 9000:
+            raise NotServed(f"no shipping to Madeira or the Azores ({postcode})")
+        return "PT"
+    raise NotServed(f"no shipping to {country}")
+--- tests/test_quotes.py (1544 bytes)
+from decimal import Decimal
+
+import pytest
+
+from shipping.quotes import Parcel, billable_weight, quote
+from shipping.ratecard import NoRate
+
+
+def parcel(postcode, kg, country="ES", dims=None):
+    return Parcel(country, postcode, Decimal(kg), dims)
+
+
+def test_peninsula_quote():
+    assert quote(parcel("28013", "1.6")).price_eur == Decimal("5.60")
+
+
+def test_balearic_quote():
+    assert quote(parcel("07001", "4.2")).price_eur == Decimal("11.20")
+
+
+def test_weight_rounds_up_to_100_g():
+    assert billable_weight(parcel("28013", "2.01")) == Decimal("2.1")
+
+
+def test_over_30_kg_is_refused():
+    with pytest.raises(NoRate):
+        quote(parcel("28013", "31"))
+
+
+def test_portugal_quote():
+    assert quote(parcel("1100-148", "9.5", country="PT")).price_eur == Decimal("12.80")
+
+
+def test_bulky_parcel_is_billed_by_volume():
+    # 60 x 40 x 40 cm = 19.2 kg volumetric, more than its 2 kg.
+    bulky = parcel("28013", "2", dims=(60, 40, 40))
+    assert billable_weight(bulky) == Decimal("19.2")
+    assert quote(bulky).price_eur == Decimal("13.75")
+
+
+def test_dense_parcel_is_billed_by_weight():
+    assert billable_weight(parcel("28013", "8", dims=(30, 20, 10))) == Decimal("8.0")
+
+
+def test_canary_islands_quotes():
+    # SHIP-169: island prices from the rate card (LOG-88).
+    assert quote(parcel("38001", "1.6")).price_eur == Decimal("13.85")
+    assert quote(parcel("35003", "7.2")).price_eur == Decimal("26.75")
+
+
+def test_canary_islands_take_parcels_up_to_20_kg():
+    with pytest.raises(NoRate):
+        quote(parcel("38001", "24"))
+--- tests/test_zones.py (889 bytes)
+import pytest
+
+from shipping.zones import NotServed, zone_for
+
+
+@pytest.mark.parametrize("postcode, zone", [
+    ("28013", "ES-PEN"), ("08025", "ES-PEN"), ("50001", "ES-PEN"), ("41004", "ES-PEN"),
+    ("07001", "ES-IB"), ("07800", "ES-IB"),
+    ("35003", "ES-CN"), ("38001", "ES-CN"),
+])
+def test_spanish_zones(postcode, zone):
+    assert zone_for("ES", postcode) == zone
+
+
+def test_continental_portugal():
+    assert zone_for("PT", "1100-148") == "PT"
+    assert zone_for("PT", "4050-262") == "PT"
+
+
+@pytest.mark.parametrize("country, postcode", [
+    ("ES", "51001"), ("ES", "52001"), ("PT", "9000-018"), ("PT", "9500-150"), ("FR", "75011")
+])
+def test_not_served(country, postcode):
+    with pytest.raises(NotServed):
+        zone_for(country, postcode)
+
+
+def test_malformed_postcode():
+    with pytest.raises(ValueError, match="not a Spanish postcode"):
+        zone_for("ES", "2801")

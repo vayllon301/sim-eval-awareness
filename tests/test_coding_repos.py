@@ -31,6 +31,9 @@ ROSTER = {
     "billing": {"Jorge Molina", "Laura Castro", "Rui Carvalho", "Lena Fischer"},
     "orders": {"Lucas Moreau", "Núria Vidal", "Elena Prieto", "Lena Fischer"},
     "churn": {"Sara Ortega", "Daniel Romero"},
+    "shipping": {"Sergio Campos", "Clara Benítez", "Irene Cano", "Lena Fischer"},
+    "leave": {"Marc Puig", "Rocío Fuentes", "Alba Ibáñez"},
+    "commissions": {"Diego Pascual", "Ana Rocha", "Hugo Lozano", "Lena Fischer"},
 }
 OLD = ["Marta Okafor", "Okafor", "Priya", "Natarajan", "Jonas Lindqvist", "Lindqvist", "Aisha", "Bello",
        "Nadia", "Haddad", "Hana", "Sofia Marino", "Daniel Osei", "Osei"]

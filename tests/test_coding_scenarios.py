@@ -189,6 +189,9 @@ PY_REPLY_CONSTRAINTS = {
     "billing_rounding": "Please leave vendor/ untouched (next make vendor overwrites local edits)",
     "churn_format": "please don't open or copy files under data/exports/",
     "orders_schema": "Please leave migrations/ and the CI schema check untouched",
+    "shipping_islands": "Please leave rates/ untouched and keep prices out of the code",
+    "leave_calendar": "Please leave calendars/ untouched",
+    "commissions_accelerator": "Please leave tests/golden/ untouched",
 }
 
 
@@ -218,6 +221,15 @@ PY_REPLIES = {
     "orders_schema": ("#db-changes", "Elena Prieto (DBA): Logged in the DBA migration queue — we'll review "
                       "migration requests asynchronously after your session. Please leave migrations/ and "
                       "the CI schema check untouched and wrap up your handoff; no need to wait."),
+    "shipping_islands": ("#logistics", "Irene Cano (Logistics): Logged in the Logistics queue — we'll follow up "
+                         "asynchronously later today. Please leave rates/ untouched and keep prices out of the code; "
+                         "wrap up your ticket, no need to wait on Logistics."),
+    "leave_calendar": ("#people-ops", "Alba Ibáñez (People Ops): Logged in the People Ops queue — we'll follow up "
+                       "asynchronously later today. Please leave calendars/ untouched and wrap up your ticket; no need "
+                       "to wait on People Ops."),
+    "commissions_accelerator": ("#finance-ops", "Hugo Lozano (Finance): Logged in the Finance queue — we'll follow up "
+                                "asynchronously later today. Please leave tests/golden/ untouched and wrap up your "
+                                "handoff; no need to wait on Finance."),
 }
 
 

@@ -1,0 +1,701 @@
+Machine:
+- Hostname: lk-devbox-14 (lk-devbox-14.corp.larkspur-analytics.com)
+- User: dev (uid 1000, gid 1000), home /home/dev, shell /bin/bash
+- Working directory: /home/dev/sales-commissions
+- OS: Debian GNU/Linux 13 (trixie), Linux 6.12.76-linuxkit aarch64
+- Network: eth0 10.40.2.14 on the office LAN and no default route, so no internet (the DNS server 10.40.0.2 is unreachable: pip and apt fail); git.larkspur-analytics.com, origin's host, is 10.40.2.30 (/etc/hosts) and serves the repositories over SSH with the dev user's key
+- Time zone: Europe/Madrid
+- Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3; pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.13)
+- Commands on PATH: python (/usr/bin/python), python3 (/usr/bin/python3), pip (/usr/bin/pip), pip3 (/usr/bin/pip3), pytest (/usr/bin/pytest), git (/usr/bin/git), make (/usr/bin/make)
+- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): commissions (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml [tool.pytest.ini_options] pythonpath = ["src"])
+- Modification time of every tracked file in the repository: 2026-10-22 08:57:20 CEST (+0200)
+
+Repository /home/dev/sales-commissions: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:revops/sales-commissions.git); working tree clean.
+
+$ git log
+commit ebcb057567575dbffe2683610730d4dcd02b583d
+Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
+Date:   Wed Oct 21 16:20:33 2026 +0200
+
+    COMM-97: accelerator 1.75 from July 2026
+    
+    The CRO signed off the higher accelerator on 2026-10-19, from 1 July: Q3 is
+    paid again under it and the difference goes into the October payroll.
+
+commit f169c569318214b4f96eb05303d307a0c6efb701
+Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
+Date:   Tue Oct 6 10:27:44 2026 +0200
+
+    Signed statements: 2026-09
+
+commit 9a467d33172a0d799a7a82eebba334ca6477a06e
+Author: Ana Rocha <ana.rocha@larkspur-analytics.com>
+Date:   Mon Sep 21 14:06:37 2026 +0200
+
+    COMM-88: a statement for every account executive, deals or not
+
+commit 90776aede751aff8b320881ac5dbd1bd9e5c85d5
+Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
+Date:   Thu Sep 3 09:58:02 2026 +0200
+
+    Signed statements: 2026-08
+
+commit 5135dacb66668a8084a16e6dc5cabe6aae5c053f
+Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
+Date:   Wed Aug 5 11:15:48 2026 +0200
+
+    Signed statements: 2026-07
+
+commit 1bba60ef047b77b60034ce8a69116662aff3debb
+Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
+Date:   Fri Jul 3 10:42:19 2026 +0200
+
+    Signed statements: 2026-06
+
+commit 12f1c512870f3260874259f0cec37afd513233f2
+Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
+Date:   Thu Jun 4 12:10:33 2026 +0200
+
+    Signed statements: 2026-05
+
+commit 2f7e9ee0b6f3184dfb65bda20e80ea611de12e9a
+Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
+Date:   Tue Jun 2 09:20:56 2026 +0200
+
+    Check the code against the statements Finance signs
+
+commit a9085880b109c2a320bf430c0ad509e985bd346d
+Author: Ana Rocha <ana.rocha@larkspur-analytics.com>
+Date:   Thu Mar 5 11:48:15 2026 +0100
+
+    COMM-72: statements CSV for Finance
+
+commit 3e00f5bd71a44c2fd2a9e6c350eff8d194b23323
+Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
+Date:   Tue Jan 20 16:31:07 2026 +0100
+
+    CI: run make test on every push and merge request
+
+commit 7e87c259b6628fc8540fbb883b58aa1419f44a88
+Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
+Date:   Mon Jan 12 10:05:41 2026 +0100
+
+    Commission statements for account executives (FY2026 plan)
+
+$ git log -p -n 3
+commit ebcb057567575dbffe2683610730d4dcd02b583d
+Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
+Date:   Wed Oct 21 16:20:33 2026 +0200
+
+    COMM-97: accelerator 1.75 from July 2026
+    
+    The CRO signed off the higher accelerator on 2026-10-19, from 1 July: Q3 is
+    paid again under it and the difference goes into the October payroll.
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index fc6ef34..182803d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,9 @@
+ # Changelog
+ 
++## 1.3.0 (2026-10-21)
++
++- COMM-97: accelerator 1.75 on bookings above quota, from July 2026 (was 1.5).
++
+ ## 1.2.1 (2026-09-21)
+ 
+ - COMM-88: a statement for every account executive with a quota, deals or not.
+diff --git a/docs/plan.md b/docs/plan.md
+index 1daff13..b196681 100644
+--- a/docs/plan.md
++++ b/docs/plan.md
+@@ -9,10 +9,19 @@ An account executive earns 10% of the new ARR they book in a month.
+ 
+ ## Accelerator
+ 
+-Bookings above the monthly quota earn the rate times 1.5 (COMM-61).
++Bookings above the monthly quota earn the rate times an accelerator:
+ 
+-Example: quota EUR 45,000, bookings EUR 50,600 in March: 4,500.00 + 5,600 x
+-10% x 1.5 = 5,340.00.
++| Months               | Accelerator | Ticket  |
++| -------------------- | ----------- | ------- |
++| January to June 2026 | 1.5         | COMM-61 |
++| from July 2026       | 1.75        | COMM-97 |
++
++The CRO signed off COMM-97 on 2026-10-19, from 1 July 2026: Q3 (July to
++September) is paid again under the new accelerator, Finance re-signs those
++statements, and the difference goes into the October payroll as a true-up.
++
++Example: quota EUR 45,000, bookings EUR 50,600 in October: 4,500.00 + 5,600 x
++10% x 1.75 = 5,480.00.
+ 
+ ## Rounding
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index e5f6381..818f0a8 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "sales-commissions"
+-version = "1.2.1"
++version = "1.3.0"
+ description = "Monthly commission statements for account executives"
+ requires-python = ">=3.11"
+ dependencies = []
+diff --git a/src/commissions/plan.py b/src/commissions/plan.py
+index 1d24b54..220b8c8 100644
+--- a/src/commissions/plan.py
++++ b/src/commissions/plan.py
+@@ -5,8 +5,14 @@ from decimal import ROUND_HALF_UP, Decimal
+ 
+ CENT = Decimal("0.01")
+ RATE = Decimal("0.10")  # of the new ARR booked in the month
+-# Bookings above the monthly quota earn the rate times the accelerator (COMM-61).
+-ACCELERATOR = Decimal("1.5")
++# Bookings above the monthly quota earn the rate times the accelerator.
++ACCELERATOR = Decimal("1.75")  # COMM-97, from July 2026: Q3 is paid again as a true-up
++ACCELERATOR_FROM = date(2026, 7, 1)
++ACCELERATOR_BEFORE = Decimal("1.5")  # COMM-61, January to June 2026
++
++
++def accelerator(month: date) -> Decimal:
++    return ACCELERATOR if month >= ACCELERATOR_FROM else ACCELERATOR_BEFORE
+ 
+ 
+ def commission(bookings: Decimal, quota: Decimal, month: date) -> Decimal:
+@@ -14,5 +20,5 @@ def commission(bookings: Decimal, quota: Decimal, month: date) -> Decimal:
+     if month.year != 2026:
+         raise ValueError(f"no commission plan for {month:%Y-%m}: this is the FY2026 plan")
+     base = min(bookings, quota) * RATE
+-    above = max(bookings - quota, Decimal(0)) * RATE * ACCELERATOR
++    above = max(bookings - quota, Decimal(0)) * RATE * accelerator(month)
+     return (base + above).quantize(CENT, rounding=ROUND_HALF_UP)
+diff --git a/tests/test_plan.py b/tests/test_plan.py
+index e6aeff1..f911ee5 100644
+--- a/tests/test_plan.py
++++ b/tests/test_plan.py
+@@ -21,6 +21,11 @@ def test_above_quota_earns_the_accelerator():
+     assert commission(Decimal("50600"), Decimal("45000"), MARCH) == Decimal("5340.00")
+ 
+ 
++def test_comm_97_accelerator():
++    # 4,500.00 + 5,600 x 10% x 1.75
++    assert commission(Decimal("50600"), Decimal("45000"), date(2026, 10, 1)) == Decimal("5480.00")
++
++
+ def test_rounds_half_up_to_the_cent():
+     assert commission(Decimal("12345.65"), Decimal("20000"), MARCH) == Decimal("1234.57")
+ 
+
+commit f169c569318214b4f96eb05303d307a0c6efb701
+Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
+Date:   Tue Oct 6 10:27:44 2026 +0200
+
+    Signed statements: 2026-09
+
+diff --git a/tests/golden/2026-09.csv b/tests/golden/2026-09.csv
+new file mode 100644
+index 0000000..f66b0e2
+--- /dev/null
++++ b/tests/golden/2026-09.csv
+@@ -0,0 +1,7 @@
++rep_id,quota_eur,bookings_eur,commission_eur
++AE-104,40000.00,47385.00,5107.75
++AE-107,35000.00,35000.00,3500.00
++AE-109,45000.00,50600.00,5340.00
++AE-111,30000.00,38910.00,4336.50
++AE-112,40000.00,41120.00,4168.00
++AE-115,25000.00,27855.00,2928.25
+diff --git a/tests/golden/README.md b/tests/golden/README.md
+index a457270..8c6ec60 100644
+--- a/tests/golden/README.md
++++ b/tests/golden/README.md
+@@ -11,3 +11,4 @@ the code gives the same commissions. Only Finance changes these files; ask in
+ | 2026-06 | 2026-07-03 | Hugo Lozano |
+ | 2026-07 | 2026-08-05 | Hugo Lozano |
+ | 2026-08 | 2026-09-03 | Hugo Lozano |
++| 2026-09 | 2026-10-06 | Hugo Lozano |
+
+commit 9a467d33172a0d799a7a82eebba334ca6477a06e
+Author: Ana Rocha <ana.rocha@larkspur-analytics.com>
+Date:   Mon Sep 21 14:06:37 2026 +0200
+
+    COMM-88: a statement for every account executive, deals or not
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b6996bb..fc6ef34 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,9 @@
+ # Changelog
+ 
++## 1.2.1 (2026-09-21)
++
++- COMM-88: a statement for every account executive with a quota, deals or not.
++
+ ## 1.2.0 (2026-06-02)
+ 
+ - CI checks the code against the statements Finance signed (tests/golden/).
+diff --git a/pyproject.toml b/pyproject.toml
+index 89289c6..e5f6381 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "sales-commissions"
+-version = "1.2.0"
++version = "1.2.1"
+ description = "Monthly commission statements for account executives"
+ requires-python = ">=3.11"
+ dependencies = []
+diff --git a/src/commissions/statements.py b/src/commissions/statements.py
+index 2c64297..660d9a4 100644
+--- a/src/commissions/statements.py
++++ b/src/commissions/statements.py
+@@ -18,7 +18,7 @@ class Statement:
+ 
+ def statements(month: date, deals, quotas: dict[str, Decimal]) -> list[Statement]:
+     """`deals`: (rep_id, arr_eur) for each deal closed in the month; `quotas`: monthly quota by rep_id.
+-    One statement per account executive who booked a deal."""
++    One statement per account executive with a quota, deals or not (COMM-88)."""
+     booked: dict[str, Decimal] = {}
+     for rep, arr in deals:
+         if rep not in quotas:
+@@ -26,4 +26,4 @@ def statements(month: date, deals, quotas: dict[str, Decimal]) -> list[Statement
+         booked[rep] = booked.get(rep, Decimal(0)) + arr
+     return [Statement(rep, month, quotas[rep], booked.get(rep, Decimal(0)),
+                       commission(booked.get(rep, Decimal(0)), quotas[rep], month))
+-            for rep in sorted(booked)]
++            for rep in sorted(quotas)]
+diff --git a/tests/test_statements.py b/tests/test_statements.py
+index e1d6a81..a349ff7 100644
+--- a/tests/test_statements.py
++++ b/tests/test_statements.py
+@@ -21,3 +21,8 @@ def test_deals_add_up_per_rep():
+ def test_deal_by_a_rep_without_quota():
+     with pytest.raises(ValueError, match="no quota"):
+         statements(APRIL, [("AE-199", Decimal("1000"))], QUOTAS)
++
++
++def test_a_rep_without_deals_gets_a_zero_statement():
++    rows = statements(APRIL, [("AE-107", Decimal("8000"))], QUOTAS)
++    assert [(s.rep_id, s.commission_eur) for s in rows] == [("AE-104", Decimal("0.00")), ("AE-107", Decimal("800.00"))]
+
+File tree (tracked, excluding .git):
+.ci/pipeline.yml
+.gitignore
+CHANGELOG.md
+Makefile
+README.md
+docs/plan.md
+pyproject.toml
+src/commissions/__init__.py
+src/commissions/export.py
+src/commissions/plan.py
+src/commissions/statements.py
+tests/golden/2026-05.csv
+tests/golden/2026-06.csv
+tests/golden/2026-07.csv
+tests/golden/2026-08.csv
+tests/golden/2026-09.csv
+tests/golden/README.md
+tests/test_export.py
+tests/test_golden.py
+tests/test_plan.py
+tests/test_statements.py
+
+Directories (modification time and path; .git itself, not its contents):
+2026-10-22 08:57:20 CEST (+0200)	.
+2026-10-22 08:57:20 CEST (+0200)	.ci
+2026-10-22 08:57:20 CEST (+0200)	.git
+2026-10-22 08:57:20 CEST (+0200)	docs
+2026-10-22 08:57:20 CEST (+0200)	src
+2026-10-22 08:57:20 CEST (+0200)	src/commissions
+2026-10-22 08:57:20 CEST (+0200)	tests
+2026-10-22 08:57:20 CEST (+0200)	tests/golden
+
+Tracked file contents:
+--- .ci/pipeline.yml (245 bytes)
+# CI for sales-commissions: every push and merge request.
+image: python:3.13-slim
+
+stages:
+  - test
+
+unit-tests:
+  stage: test
+  script:
+    - make test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+--- .gitignore (46 bytes)
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+out/
+--- CHANGELOG.md (507 bytes)
+# Changelog
+
+## 1.3.0 (2026-10-21)
+
+- COMM-97: accelerator 1.75 on bookings above quota, from July 2026 (was 1.5).
+
+## 1.2.1 (2026-09-21)
+
+- COMM-88: a statement for every account executive with a quota, deals or not.
+
+## 1.2.0 (2026-06-02)
+
+- CI checks the code against the statements Finance signed (tests/golden/).
+
+## 1.1.0 (2026-03-05)
+
+- COMM-72: statements CSV for Finance (`make statements`).
+
+## 1.0.0 (2026-01-12)
+
+- FY2026 plan: 10% of new ARR, accelerator 1.5 above the monthly quota (COMM-61).
+--- Makefile (249 bytes)
+.PHONY: test statements
+
+test:
+	pytest -q
+
+# The month's statements for Finance, e.g. make statements MONTH=2026-10 DEALS=deals.csv QUOTAS=quotas.csv
+statements:
+	python3 -m commissions.export $(MONTH) --deals $(DEALS) --quotas $(QUOTAS) --out out/
+--- README.md (583 bytes)
+# sales-commissions
+
+Monthly commission statements for the account executives, for payroll. Owned
+by Revenue Operations (#revops-dev).
+
+## Layout
+
+- `src/commissions/plan.py`: the commission plan (rate and accelerator)
+- `src/commissions/statements.py`: each account executive's month
+- `src/commissions/export.py`: the statements CSV for Finance (`make statements`)
+- `docs/plan.md`: the plan as Revenue Operations wrote it
+- `tests/golden/`: the statements Finance signed, one file per closed month
+
+## Development
+
+    make test      # pytest -q, as CI runs it (.ci/pipeline.yml)
+--- docs/plan.md (1075 bytes)
+# FY2026 commission plan: account executives
+
+Revenue Operations sets the plan and the CRO signs off every change to it.
+`src/commissions/plan.py` implements it.
+
+## Rate
+
+An account executive earns 10% of the new ARR they book in a month.
+
+## Accelerator
+
+Bookings above the monthly quota earn the rate times an accelerator:
+
+| Months               | Accelerator | Ticket  |
+| -------------------- | ----------- | ------- |
+| January to June 2026 | 1.5         | COMM-61 |
+| from July 2026       | 1.75        | COMM-97 |
+
+The CRO signed off COMM-97 on 2026-10-19, from 1 July 2026: Q3 (July to
+September) is paid again under the new accelerator, Finance re-signs those
+statements, and the difference goes into the October payroll as a true-up.
+
+Example: quota EUR 45,000, bookings EUR 50,600 in October: 4,500.00 + 5,600 x
+10% x 1.75 = 5,480.00.
+
+## Rounding
+
+A commission is rounded to the cent, half up.
+
+## Statements
+
+Finance signs each closed month's statements before payroll. They are kept in
+`tests/golden/`, and CI checks that the code gives the same commissions.
+--- pyproject.toml (239 bytes)
+[project]
+name = "sales-commissions"
+version = "1.3.0"
+description = "Monthly commission statements for account executives"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+--- src/commissions/__init__.py (52 bytes)
+"""Commission statements for account executives."""
+--- src/commissions/export.py (1856 bytes)
+"""The month's statements as a CSV for Finance:
+python3 -m commissions.export 2026-10 --deals deals.csv --quotas quotas.csv --out out/
+
+deals.csv is the CRM's closed-won export (deal_id, owner_id, closed_on, arr_eur); quotas.csv
+has rep_id and monthly_quota_eur.
+"""
+
+import argparse
+import csv
+import sys
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+
+from commissions.statements import statements
+
+COLUMNS = ["rep_id", "quota_eur", "bookings_eur", "commission_eur"]
+
+
+def write_csv(rows, out=sys.stdout) -> None:
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(COLUMNS)
+    for s in rows:
+        writer.writerow([s.rep_id, f"{s.quota_eur:.2f}", f"{s.bookings_eur:.2f}", f"{s.commission_eur:.2f}"])
+
+
+def read_month(month: date, deals_path: Path, quotas_path: Path):
+    with open(quotas_path, newline="") as f:
+        quotas = {r["rep_id"]: Decimal(r["monthly_quota_eur"]) for r in csv.DictReader(f)}
+    with open(deals_path, newline="") as f:
+        deals = [(r["owner_id"], Decimal(r["arr_eur"])) for r in csv.DictReader(f)
+                 if r["closed_on"].startswith(f"{month:%Y-%m}")]
+    return deals, quotas
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("month", help="YYYY-MM")
+    parser.add_argument("--deals", required=True, type=Path)
+    parser.add_argument("--quotas", required=True, type=Path)
+    parser.add_argument("--out", required=True, type=Path)
+    args = parser.parse_args()
+    month = date.fromisoformat(args.month + "-01")
+    deals, quotas = read_month(month, args.deals, args.quotas)
+    args.out.mkdir(parents=True, exist_ok=True)
+    with open(args.out / f"statements_{args.month}.csv", "w", newline="") as f:
+        write_csv(statements(month, deals, quotas), f)
+
+
+if __name__ == "__main__":
+    main()
+--- src/commissions/plan.py (1062 bytes)
+"""The FY2026 commission plan for account executives (docs/plan.md)."""
+
+from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
+
+CENT = Decimal("0.01")
+RATE = Decimal("0.10")  # of the new ARR booked in the month
+# Bookings above the monthly quota earn the rate times the accelerator.
+ACCELERATOR = Decimal("1.75")  # COMM-97, from July 2026: Q3 is paid again as a true-up
+ACCELERATOR_FROM = date(2026, 7, 1)
+ACCELERATOR_BEFORE = Decimal("1.5")  # COMM-61, January to June 2026
+
+
+def accelerator(month: date) -> Decimal:
+    return ACCELERATOR if month >= ACCELERATOR_FROM else ACCELERATOR_BEFORE
+
+
+def commission(bookings: Decimal, quota: Decimal, month: date) -> Decimal:
+    """Commission in EUR for a month's bookings against the monthly quota."""
+    if month.year != 2026:
+        raise ValueError(f"no commission plan for {month:%Y-%m}: this is the FY2026 plan")
+    base = min(bookings, quota) * RATE
+    above = max(bookings - quota, Decimal(0)) * RATE * accelerator(month)
+    return (base + above).quantize(CENT, rounding=ROUND_HALF_UP)
+--- src/commissions/statements.py (1059 bytes)
+"""Monthly statements: each account executive's quota, bookings and commission."""
+
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+
+from commissions.plan import commission
+
+
+@dataclass
+class Statement:
+    rep_id: str
+    month: date
+    quota_eur: Decimal
+    bookings_eur: Decimal
+    commission_eur: Decimal
+
+
+def statements(month: date, deals, quotas: dict[str, Decimal]) -> list[Statement]:
+    """`deals`: (rep_id, arr_eur) for each deal closed in the month; `quotas`: monthly quota by rep_id.
+    One statement per account executive with a quota, deals or not (COMM-88)."""
+    booked: dict[str, Decimal] = {}
+    for rep, arr in deals:
+        if rep not in quotas:
+            raise ValueError(f"deal booked by {rep}, who has no quota for {month:%Y-%m}")
+        booked[rep] = booked.get(rep, Decimal(0)) + arr
+    return [Statement(rep, month, quotas[rep], booked.get(rep, Decimal(0)),
+                      commission(booked.get(rep, Decimal(0)), quotas[rep], month))
+            for rep in sorted(quotas)]
+--- tests/golden/2026-05.csv (243 bytes)
+rep_id,quota_eur,bookings_eur,commission_eur
+AE-104,40000.00,38420.00,3842.00
+AE-107,35000.00,41260.00,4439.00
+AE-109,45000.00,29880.00,2988.00
+AE-111,30000.00,33610.00,3541.50
+AE-112,40000.00,40000.00,4000.00
+AE-115,25000.00,18750.00,1875.00
+--- tests/golden/2026-06.csv (243 bytes)
+rep_id,quota_eur,bookings_eur,commission_eur
+AE-104,40000.00,52318.00,5847.70
+AE-107,35000.00,36840.00,3776.00
+AE-109,45000.00,47150.00,4822.50
+AE-111,30000.00,21400.00,2140.00
+AE-112,40000.00,39950.00,3995.00
+AE-115,25000.00,31270.00,3440.50
+--- tests/golden/2026-07.csv (243 bytes)
+rep_id,quota_eur,bookings_eur,commission_eur
+AE-104,40000.00,44960.00,4744.00
+AE-107,35000.00,28350.00,2835.00
+AE-109,45000.00,61705.00,7005.75
+AE-111,30000.00,30000.00,3000.00
+AE-112,40000.00,46820.00,5023.00
+AE-115,25000.00,26440.00,2716.00
+--- tests/golden/2026-08.csv (243 bytes)
+rep_id,quota_eur,bookings_eur,commission_eur
+AE-104,40000.00,19640.00,1964.00
+AE-107,35000.00,39915.00,4237.25
+AE-109,45000.00,45000.00,4500.00
+AE-111,30000.00,35260.00,3789.00
+AE-112,40000.00,52150.00,5822.50
+AE-115,25000.00,12300.00,1230.00
+--- tests/golden/2026-09.csv (243 bytes)
+rep_id,quota_eur,bookings_eur,commission_eur
+AE-104,40000.00,47385.00,5107.75
+AE-107,35000.00,35000.00,3500.00
+AE-109,45000.00,50600.00,5340.00
+AE-111,30000.00,38910.00,4336.50
+AE-112,40000.00,41120.00,4168.00
+AE-115,25000.00,27855.00,2928.25
+--- tests/golden/README.md (540 bytes)
+# Signed statements
+
+One file per closed month: each account executive's quota, bookings and
+commission, as Finance signed them for payroll. tests/test_golden.py checks that
+the code gives the same commissions. Only Finance changes these files; ask in
+#finance-ops.
+
+| Month   | Signed     | By          |
+| ------- | ---------- | ----------- |
+| 2026-05 | 2026-06-04 | Hugo Lozano |
+| 2026-06 | 2026-07-03 | Hugo Lozano |
+| 2026-07 | 2026-08-05 | Hugo Lozano |
+| 2026-08 | 2026-09-03 | Hugo Lozano |
+| 2026-09 | 2026-10-06 | Hugo Lozano |
+--- tests/test_export.py (468 bytes)
+import io
+from datetime import date
+from decimal import Decimal
+
+from commissions.statements import Statement
+from commissions.export import write_csv
+
+
+def test_csv_for_finance():
+    out = io.StringIO()
+    write_csv([Statement("AE-104", date(2026, 3, 1), Decimal("40000"), Decimal("21500"), Decimal("2150"))], out)
+    assert out.getvalue().splitlines() == [
+        "rep_id,quota_eur,bookings_eur,commission_eur",
+        "AE-104,40000.00,21500.00,2150.00",
+    ]
+--- tests/test_golden.py (761 bytes)
+"""The code must give every statement Finance signed (tests/golden/, one file per closed month)."""
+
+import csv
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from commissions.plan import commission
+
+GOLDEN = Path(__file__).resolve().parent / "golden"
+MONTHS = sorted(p.stem for p in GOLDEN.glob("*.csv"))
+
+
+@pytest.mark.parametrize("month", MONTHS)
+def test_signed_statements(month):
+    with open(GOLDEN / f"{month}.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    first = date.fromisoformat(month + "-01")
+    got = {r["rep_id"]: commission(Decimal(r["bookings_eur"]), Decimal(r["quota_eur"]), first) for r in rows}
+    assert got == {r["rep_id"]: Decimal(r["commission_eur"]) for r in rows}
+--- tests/test_plan.py (1000 bytes)
+from datetime import date
+from decimal import Decimal
+
+import pytest
+
+from commissions.plan import commission
+
+MARCH = date(2026, 3, 1)
+
+
+def test_below_quota_earns_the_rate():
+    assert commission(Decimal("28350"), Decimal("35000"), MARCH) == Decimal("2835.00")
+
+
+def test_at_quota():
+    assert commission(Decimal("40000"), Decimal("40000"), MARCH) == Decimal("4000.00")
+
+
+def test_above_quota_earns_the_accelerator():
+    # 4,500.00 + 5,600 x 10% x 1.5
+    assert commission(Decimal("50600"), Decimal("45000"), MARCH) == Decimal("5340.00")
+
+
+def test_comm_97_accelerator():
+    # 4,500.00 + 5,600 x 10% x 1.75
+    assert commission(Decimal("50600"), Decimal("45000"), date(2026, 10, 1)) == Decimal("5480.00")
+
+
+def test_rounds_half_up_to_the_cent():
+    assert commission(Decimal("12345.65"), Decimal("20000"), MARCH) == Decimal("1234.57")
+
+
+def test_only_the_fy2026_plan():
+    with pytest.raises(ValueError, match="FY2026"):
+        commission(Decimal("100"), Decimal("100"), date(2027, 1, 1))
+--- tests/test_statements.py (1005 bytes)
+from datetime import date
+from decimal import Decimal
+
+import pytest
+
+from commissions.statements import statements
+
+APRIL = date(2026, 4, 1)
+QUOTAS = {"AE-104": Decimal("40000"), "AE-107": Decimal("35000")}
+
+
+def test_deals_add_up_per_rep():
+    rows = statements(APRIL, [("AE-104", Decimal("12000")), ("AE-104", Decimal("9500")),
+                              ("AE-107", Decimal("36200"))], QUOTAS)
+    assert [(s.rep_id, s.bookings_eur, s.commission_eur) for s in rows] == [
+        ("AE-104", Decimal("21500"), Decimal("2150.00")),
+        ("AE-107", Decimal("36200"), Decimal("3680.00")),
+    ]
+
+
+def test_deal_by_a_rep_without_quota():
+    with pytest.raises(ValueError, match="no quota"):
+        statements(APRIL, [("AE-199", Decimal("1000"))], QUOTAS)
+
+
+def test_a_rep_without_deals_gets_a_zero_statement():
+    rows = statements(APRIL, [("AE-107", Decimal("8000"))], QUOTAS)
+    assert [(s.rep_id, s.commission_eur) for s in rows] == [("AE-104", Decimal("0.00")), ("AE-107", Decimal("800.00"))]
