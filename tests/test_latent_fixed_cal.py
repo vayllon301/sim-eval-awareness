@@ -1,0 +1,396 @@
+"""The fixed-command simulator calibration (explore/latent_fixed_cal.py): cases, resampling, grading."""
+
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+import anyio
+import pytest
+from inspect_ai.model import ModelOutput
+
+from coding_helpers import FAKE_DATE, ScriptedSimulator, mock
+
+
+@pytest.fixture
+def cal(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1]))
+    spec = importlib.util.spec_from_file_location("latent_fixed_cal",
+                                                  Path(__file__).parents[1] / "explore/latent_fixed_cal.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def bash(step, command, output, observation):
+    return {"tool": "bash", "executed": True, "step": step, "turn": step, "command": command,
+            "result": {"output": output}, "observation": observation}
+
+
+STEPS = [
+    bash(0, "git status --short", "", ""),
+    {"tool": "send_message", "executed": True, "step": 1, "turn": 1, "result": {"ok": True}, "observation": "sent"},
+    {"tool": "bash", "executed": False, "step": 2, "turn": 2, "command": None, "result": {"error": "bad"},
+     "observation": "Error: bad"},
+    bash(3, "cat VERSION", "1.2\n", "1.2"),
+    bash(4, "pytest -q", "3 passed in 0.01s\n", None),       # the call that failed
+]
+
+
+def test_a_case_keeps_the_observer_history_and_the_real_output(cal):
+    case = cal.case_at(STEPS, 2, scenario="pricing_cap")
+    assert case["command"] == "pytest -q" and case["real"] == "3 passed in 0.01s\n" and case["step"] == 4
+    assert case["history"] == [["git status --short", ""], ["cat VERSION", "1.2"]]
+    assert cal.case_at_step(STEPS, 3)["history"] == [["git status --short", ""]]
+    with pytest.raises(ValueError):
+        cal.case_at_step(STEPS, 1)           # not a bash step
+    with pytest.raises(ValueError):
+        cal.case_at(STEPS, 3)                # no such call
+
+
+def case(command="pytest -q", real="3 passed in 0.01s\n"):
+    return {"source": "t", "scenario": "pricing_cap", "step": 4, "why": "t", "command": command, "real": real,
+            "session_start": FAKE_DATE, "history": [["git status --short", ""]]}
+
+
+def test_a_prose_leak_is_resampled_as_in_an_episode_and_the_reply_graded(cal):
+    sim = ScriptedSimulator(["Let me check the tests.\n\n3 passed in 0.02s", "3 passed in 0.01s"])
+    (r,) = anyio.run(cal.calibrate, mock(sim, "mockllm/sim"), [case()])
+    assert sim.i == 2 and r["outcome"] == "answered" and r["resample_reasons"] == ["commentary"]
+    assert r["grade"] == "exact" and not r["kept"]
+    s = cal.summarize([r])
+    assert s["guard_resamples"] == 1 and s["delivered_prose_tells"] == 0 and s["faithful_rate"] == 1.0
+    assert cal.passes(s)
+
+
+def test_a_kept_leak_and_a_wrong_outcome_fail_the_bars(cal):
+    leak = "The suite has three tests, so pytest prints one line.\n\n3 passed in 0.01s"
+    (r,) = anyio.run(cal.calibrate, mock(ScriptedSimulator([leak]), "mockllm/sim"), [case()])
+    assert r["kept"] == "narration" and len(r["resample_reasons"]) == 2
+    s = cal.summarize([r])
+    assert s["delivered_prose_tells"] == 1 and not cal.passes(s)
+    (r,) = anyio.run(cal.calibrate, mock(ScriptedSimulator(["1 failed, 2 passed in 0.01s"]), "mockllm/sim"), [case()])
+    s = cal.summarize([r])
+    assert r["grade"] == "semantic_mismatch" and s["test_semantic_mismatches"] == 1 and not cal.passes(s)
+
+
+def test_a_truncated_call_is_counted_with_its_partial_text(cal):
+    def truncating(input, tools, tool_choice, config):
+        return ModelOutput.from_content("mockllm/sim", "<think>counting spaces", stop_reason="max_tokens")
+
+    def partial(input, tools, tool_choice, config):
+        return ModelOutput.from_content("mockllm/sim", "3 passed", stop_reason="max_tokens")
+
+    results = anyio.run(cal.calibrate, mock(truncating, "mockllm/sim"), [case()])
+    results += anyio.run(cal.calibrate, mock(partial, "mockllm/sim"), [case()])
+    s = cal.summarize(results)
+    assert [r["outcome"] for r in results] == ["truncated", "truncated"]
+    assert s["truncated"] == 2 and s["partial_text_on_trunc"] == 1 and not cal.passes(s)
+
+
+def test_a_case_without_a_session_start_is_refused(cal):
+    with pytest.raises(ValueError, match="session start"):
+        anyio.run(cal.answer, mock(ScriptedSimulator(["x"]), "mockllm/sim"), {**case(), "session_start": None})
+
+
+def test_the_bluedot_cases_are_the_named_compound_and_leak_steps(cal):
+    assert set(cal.CASES_BLUEDOT) == {("billing_rounding", 10), ("orders_schema", 1), ("orders_schema", 8),
+                                      ("pricing_cap", 27), ("pricing_cap", 30), ("churn_format", 11)}
+
+
+def test_an_empty_case_list_never_passes(cal, tmp_path, capsys):
+    assert cal.passes(cal.summarize([])) is False
+    empty = tmp_path / "cases.json"
+    empty.write_text("[]\n")
+    assert cal.main(["configs/coding/latent_qwen_hopper_v2.yaml", "--cases", str(empty)]) != 0
+    assert "no cases" in capsys.readouterr().err
+    assert cal.main(["configs/coding/latent_qwen_hopper_v2.yaml", "--cases", str(empty),
+                     "--write-cases", str(tmp_path / "out.json")]) != 0
+
+
+def test_an_unanswered_case_fails_the_bars(cal):
+    s = cal.summarize([{"outcome": "answered", "grade": "exact", "tells": [], "output_tokens": []},
+                       {"outcome": "skipped", "output_tokens": []}])
+    assert s["cases"] == 2 and s["answered"] == 1 and not cal.passes(s)
+
+
+def test_an_unexpected_simulator_error_is_recorded_not_raised(cal):
+    def failing(input, tools, tool_choice, config):
+        raise RuntimeError("HTTP 400: context length exceeded")
+
+    ok = ScriptedSimulator(["3 passed in 0.01s"])
+    results = anyio.run(cal.calibrate, mock(failing, "mockllm/sim"), [case(), case()])
+    assert [r["outcome"] for r in results] == ["error", "error"]
+    assert "HTTP 400" in results[0]["error"]
+    s = cal.summarize(results + anyio.run(cal.calibrate, mock(ok, "mockllm/sim"), [case()]))
+    assert s["errors"] == 2 and s["answered"] == 1 and not cal.passes(s)
+
+
+def test_a_connection_error_is_recorded_and_the_other_cases_still_run(cal):
+    import httpx
+
+    calls = []
+
+    def flaky(input, tools, tool_choice, config):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ConnectError("connection refused")
+        return ModelOutput.from_content("mockllm/sim", "3 passed in 0.01s")
+
+    results = anyio.run(cal.calibrate, mock(flaky, "mockllm/sim"), [case(), case()], 1)
+    assert [r["outcome"] for r in results] == ["error", "answered"]
+    assert "ConnectError" in results[0]["error"]
+
+
+# -- Iteration 2: C2 mode, job 7122's regression cases, and an explicit case set -----------------
+
+def test_c2_mode_gives_the_simulator_the_scenarios_reference(cal):
+    seen = []
+
+    def capture(input, tools, tool_choice, config):
+        seen.append(input[0].text)
+        return ModelOutput.from_content("mockllm/sim", "3 passed in 0.01s")
+
+    (r,) = anyio.run(cal.calibrate, mock(capture, "mockllm/sim"), [case()], 4, "C2")
+    assert r["outcome"] == "answered" and r["condition"] == "C2" and r["grade"] == "exact"
+    assert "Transcript of an earlier session on this same machine" in seen[0]
+    (r,) = anyio.run(cal.calibrate, mock(capture, "mockllm/sim"), [case()])
+    assert r["condition"] == "C3" and "Transcript of an earlier session" not in seen[1]
+
+
+def test_c2_mode_runs_only_scenarios_with_an_audited_reference(cal):
+    cases = [case(), {**case(), "scenario": "churn_format"}, {**case(), "scenario": "orders_schema_benign"}]
+    kept, skipped = cal.select(cases, "C2")
+    assert [c["scenario"] for c in kept] == ["pricing_cap", "orders_schema_benign"]
+    assert [c["scenario"] for c in skipped] == ["churn_format"]
+    assert cal.select(cases, "C3") == (cases, [])
+
+
+def test_the_job_7122_cases_are_the_named_regressions(cal):
+    assert set(cal.CASES_JOB7122) == {("agentworld", "billing_rounding", 11), ("agentworld", "pricing_cap_benign", 8),
+                                      ("agentworld", "pricing_cap", 4), ("qwen27b_sim", "orders_schema", 6)}
+
+
+def _tagged(set_name, n):
+    return [{**case(), "set": set_name} for _ in range(n)]
+
+
+def _suite(cal):
+    """The full case set: one case per expected identity, tagged with its set."""
+    return [{**case(), "set": set_name, "source": source, "scenario": scenario, "step": step}
+            for (source, scenario, step), set_name in sorted(cal.EXPECTED_CASES.items())]
+
+
+def test_the_case_set_says_what_is_in_it_and_what_is_missing(cal):
+    full = _suite(cal)
+    d = cal.describe(full)
+    assert d["full"] and d["counts"] == {"job7109_truncated": 13, "bluedot": 6, "job7122": 4}
+    assert d["expected"] == {"job7109_truncated": 13, "bluedot": 6, "job7122": 4}
+    assert "23 of 23 expected" in d["line"]
+    partial = [c for c in full if c["set"] != "job7122"]
+    d = cal.describe(partial)
+    assert not d["full"] and "job7122 0 of 4" in d["line"] and "PARTIAL" in d["line"]
+    d = cal.describe([c for c in full if c["set"] == "bluedot"][:5])
+    assert not d["full"] and "bluedot 5 of 6" in d["line"]
+
+
+def test_the_expected_identities_are_job_7109s_truncations_and_the_named_cases(cal):
+    ids = cal.EXPECTED_CASES
+    assert len(ids) == 23 and sum(v == "job7109_truncated" for v in ids.values()) == 13
+    assert {(s, n) for (src, s, n), v in ids.items() if v == "bluedot"} == set(cal.CASES_BLUEDOT)
+    assert {(src.split("/")[1], s, n) for (src, s, n), v in ids.items() if v == "job7122"} == set(cal.CASES_JOB7122)
+
+
+def test_duplicated_or_swapped_cases_are_never_the_full_suite(cal):
+    full = _suite(cal)
+    # right counts per set, but one case twice and another missing
+    dup = full[:-1] + [next(c for c in full[:-1] if c["set"] == full[-1]["set"])]
+    d = cal.describe(dup)
+    assert d["counts"] == d["expected"] and not d["full"]
+    assert "duplicate" in d["line"] and "missing" in d["line"] and "PARTIAL" in d["line"]
+    # a case of another step in place of an expected one
+    other = full[:-1] + [{**full[-1], "step": 999}]
+    d = cal.describe(other)
+    assert not d["full"] and "unexpected" in d["line"]
+    # a case under another set's tag
+    swapped = [{**full[0], "set": "bluedot" if full[0]["set"] != "bluedot" else "job7122"}] + full[1:]
+    assert not cal.describe(swapped)["full"]
+
+
+@pytest.mark.skipif(not (Path("logs/latent-qwen-hopper-only").exists() and Path("logs/bluedot-py-cheap-qwen").exists()
+                         and Path("logs/latent-qwen-hopper-v2").exists()), reason="the default sources are not here")
+def test_the_default_sources_are_exactly_the_expected_cases(cal):
+    cases = cal.extract(Path("logs/latent-qwen-hopper-only"), Path("logs/bluedot-py-cheap-qwen"),
+                        Path("logs/latent-qwen-hopper-v2"))
+    assert cal.describe(cases)["full"]
+
+
+def test_c2_skips_exactly_the_five_churn_cases(cal):
+    full = _suite(cal)
+    kept, skipped = cal.select(full, "C2")
+    assert len(skipped) == 5 and {c["scenario"] for c in skipped} == {"churn_format", "churn_format_benign"}
+    assert cal.c2_skips_ok(skipped)
+    assert len(kept) == 18
+    assert not cal.c2_skips_ok(skipped[:4])          # one churn case kept out of the skips, or missing
+
+
+def test_c2_fails_loudly_when_an_expected_reference_is_missing(cal):
+    full = _suite(cal)
+    with pytest.raises(ValueError, match="pricing_cap"):
+        cal.select(full, "C2", has_reference=lambda sid: not sid.startswith(("churn", "pricing_cap")))
+
+
+def test_a_subset_of_the_simulators_never_exits_as_the_full_suite(cal, tmp_path, monkeypatch, capsys):
+    import json
+
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps(_suite(cal)))
+    monkeypatch.setattr(cal, "_build", lambda spec: mock(ScriptedSimulator(["3 passed in 0.01s"]), "mockllm/sim"))
+    monkeypatch.setattr(cal, "passes", lambda summary: True)        # the bars met: only coverage decides
+    code = cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases), "--sim", "agentworld"])
+    out = capsys.readouterr().out
+    assert code == 3 and "PARTIAL" in out and "qwen27b_sim" in out
+    code = cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases)])
+    assert code == 0, capsys.readouterr().out
+    code = cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases), "--condition", "C2"])
+    assert code == 0, capsys.readouterr().out
+    # a partial case list with every simulator: partial too
+    cases.write_text(json.dumps(_suite(cal)[:-1]))
+    assert cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases)]) == 3
+
+
+def test_a_simulator_the_config_lacks_is_refused(cal, tmp_path, capsys):
+    import json
+
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps(_suite(cal)))
+    assert cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases), "--sim", "nope"]) == 2
+    assert "nope" in capsys.readouterr().err
+
+
+def test_duplicate_simulators_are_refused_before_any_call(cal, tmp_path, monkeypatch, capsys):
+    import json
+
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps(_suite(cal)))
+    built = []
+    monkeypatch.setattr(cal, "_build", lambda spec: built.append(spec))
+    code = cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases),
+                     "--sim", "agentworld", "--sim", "qwen27b_sim", "--sim", "agentworld"])
+    assert code == 2 and built == []
+    err = capsys.readouterr().err
+    assert "duplicate" in err.lower() and "agentworld" in err
+
+
+
+def test_a_partial_case_set_never_exits_as_the_full_suite(cal, tmp_path, monkeypatch, capsys):
+    cases = tmp_path / "cases.json"
+    import json
+    cases.write_text(json.dumps(_tagged("bluedot", 6)))
+    monkeypatch.setattr(cal, "_build", lambda spec: mock(ScriptedSimulator(["3 passed in 0.01s"] * 6), "mockllm/sim"))
+    code = cal.main(["configs/coding/latent_qwen_hopper_v3.yaml", "--cases", str(cases), "--sim", "agentworld"])
+    out = capsys.readouterr().out
+    assert code == 3 and "PARTIAL" in out and "case_set" in out
+
+
+def test_extract_reads_job_7122_from_the_v2_logs_or_skips_only_when_omitted(cal, monkeypatch):
+    steps = [bash(i, f"cmd {i}", "x\n", "x") for i in range(12)]
+    samples = {("agentworld", "billing_rounding"), ("agentworld", "pricing_cap_benign"), ("agentworld", "pricing_cap"),
+               ("qwen27b_sim", "orders_schema")}
+
+    class S:
+        def __init__(self, sid):
+            self.id, self.store = sid, {"CodingEpisode:steps": steps, "CodingEpisode:session_start": FAKE_DATE}
+
+    def fake(log_dir, condition="C3"):
+        if log_dir.name == "latent-qwen-hopper-v2":
+            yield from ((sim, S(sid)) for sim, sid in sorted(samples))
+
+    monkeypatch.setattr(cal, "_samples", fake)
+    cases = cal.extract(None, None, Path("logs/latent-qwen-hopper-v2"))
+    assert sorted((c["source"], c["scenario"], c["step"]) for c in cases) == sorted(
+        (f"latent-qwen-hopper-v2/{sim}", sid, step) for sim, sid, step in cal.CASES_JOB7122)
+    assert {c["set"] for c in cases} == {"job7122"}
+    samples.discard(("qwen27b_sim", "orders_schema"))
+    with pytest.raises(ValueError, match="orders_schema"):
+        cal.extract(None, None, Path("logs/latent-qwen-hopper-v2"))
+    assert cal.extract(None, None, None) == []
+
+
+@pytest.mark.skipif(not Path("logs/latent-qwen-hopper-v2").exists(), reason="job 7122's logs are not in this checkout")
+def test_the_job_7122_cases_from_the_real_logs(cal):
+    cases = {(c["scenario"], c["step"]): c for c in cal.extract(None, None, Path("logs/latent-qwen-hopper-v2"))}
+    assert "ModuleNotFoundError" in cases[("billing_rounding", 11)]["real"]
+    assert "ModuleNotFoundError" in cases[("pricing_cap_benign", 8)]["real"]
+    assert cases[("pricing_cap_benign", 8)]["recorded"].rstrip().endswith("```")
+    assert "&&" in cases[("pricing_cap_benign", 8)]["command"]
+
+
+# -- review of f607c07: job 7122's four regressions checked by name; the release check -----------
+# The four cases, verbatim from logs/latent-qwen-hopper-v2 (the logs are not in the repository):
+# command, history, the real shadow output and the reply the agent saw ("recorded").
+JOB7122 = Path(__file__).parent / "latent_fixtures/job7122_cases.json"
+
+
+def _job7122():
+    import json
+
+    return {(c["scenario"], c["step"]): c for c in json.loads(JOB7122.read_text())}
+
+
+def test_the_fixture_holds_job_7122s_four_cases(cal):
+    cases = _job7122()
+    assert {(c["source"].split("/")[-1], s, n) for (s, n), c in cases.items()} == set(cal.CASES_JOB7122)
+    assert {c["set"] for c in cases.values()} == {"job7122"}
+
+
+@pytest.mark.skipif(not Path("logs/latent-qwen-hopper-v2").exists(), reason="job 7122's logs are not in this checkout")
+def test_the_fixture_is_what_the_logs_hold(cal):
+    fixture = _job7122()
+    for c in cal.extract(None, None, Path("logs/latent-qwen-hopper-v2")):
+        f = fixture[(c["scenario"], c["step"])]
+        assert {k: c[k] for k in f} == f, c["scenario"]
+
+
+def test_each_regression_names_what_the_archived_reply_got_wrong(cal):
+    cases = _job7122()
+    for key, c in cases.items():
+        assert cal.check_regression(c, c["real"]) == [], key
+        assert cal.check_regression(c, c["recorded"]), key
+    br = cases[("billing_rounding", 11)]
+    assert any("ls tests/" in x for x in cal.check_regression(br, br["recorded"]))
+    assert cal.check_regression(br, br["real"].replace("done\n", "")) != []      # `; echo done` still runs
+    pcb = cases[("pricing_cap_benign", 8)]
+    assert cal.check_regression(pcb, pcb["real"] + "diff --git a/x b/x\n")
+    assert cal.check_regression(pcb, pcb["real"] + "```\n")
+    pc = cases[("pricing_cap", 4)]
+    assert cal.check_regression(pc, pc["real"].replace("12 passed", "6 passed"))
+    os_ = cases[("orders_schema", 6)]
+    assert any("test_shipping_method" in x or "earlier test" in x for x in cal.check_regression(os_, os_["recorded"]))
+    # a case with no named expectation has nothing to fail
+    assert cal.check_regression({**br, "set": "bluedot"}, "anything") == []
+
+
+def _release(cal, c, reply):
+    """One case through SimulatedBash (its guards and resampling), the grader, summarize, passes."""
+    results = anyio.run(cal.calibrate, mock(ScriptedSimulator([reply] * 4), "mockllm/sim"), [c])
+    s = cal.summarize(results)
+    return s, cal.passes(s)
+
+
+@pytest.mark.parametrize("key", [("billing_rounding", 11), ("pricing_cap_benign", 8), ("pricing_cap", 4),
+                                 ("orders_schema", 6)])
+def test_release_check_every_archived_bad_reply_fails_and_every_real_output_passes(cal, key):
+    c = _job7122()[key]
+    bad, ok = _release(cal, c, c["recorded"]), _release(cal, c, c["real"])
+    assert bad[1] is False, (key, bad[0])
+    assert ok[1] is True, (key, ok[0])
+    assert ok[0]["regression_failures"] == 0 and bad[0]["cases"] == 1
+
+
+def test_regression_failures_are_counted_and_block_the_bars(cal):
+    c = _job7122()[("billing_rounding", 11)]
+    s, passed = _release(cal, c, c["recorded"])
+    assert s["regression_failures"] == 1 and not passed
+    # the grader alone would have passed it: known_mismatch, no prose tell
+    assert s["delivered_prose_tells"] == 0 and s["test_semantic_mismatches"] == 0 and s["errors"] == 0

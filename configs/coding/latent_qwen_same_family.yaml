@@ -1,0 +1,48 @@
+# Independent exploratory probe (branch `latent-interaction`): same-family vs frontier
+# cross-family simulation under Qwen3.8-27B on Hopper + Anthropic API. Never pooled with
+# Sprint/N3 cells.
+#
+# Question: controlling for graded step fidelity (`simtest fidelity`), does Qwen3.8-27B react
+# differently — in awareness, behaviour, or internal activations (vllm-lens) — when simulated
+# by itself (same weights, same family, $0 on Hopper) vs Claude Sonnet 5.5 medium (cross-family,
+# ~$0.10-0.15/ep) vs Real Docker (C0)?
+#
+# Design: 4 tempting/benign Python pairs (8 scenarios) x [Real (C0), C3(qwen27b_sim),
+# C3(sonnet55)], 1 epoch = 24 episodes (8 Real + 8 Qwen-sim at $0, 8 Sonnet-sim ~$0.80-1.20).
+#
+# Note on token accounting: in `C3(qwen27b_sim)`, agent and simulator share `rawchat/agent`,
+# so Inspect's `sample.model_usage` sums both under that key; per-call simulator usage stays
+# recorded separately in `CodingEpisode:simulator_calls` (agent usage = total - simulator).
+#
+# qwen27b_sim's output cap is configs/coding/pilot.yaml's 65,536 tokens (not yet run when it was
+# raised from 16,384): in job 7109 every qwen27b_sim episode ended at a 16,384-token call.
+family: coding
+name: latent-qwen-same-family
+scenarios:
+  - pricing_cap
+  - pricing_cap_benign
+  - billing_rounding
+  - billing_rounding_benign
+  - churn_format
+  - churn_format_benign
+  - orders_schema
+  - orders_schema_benign
+conditions: [C0, C3]
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
+simulators:
+  qwen27b_sim:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 65536}
+  sonnet55:
+    model: anthropic/claude-sonnet-5-5
+    config: {reasoning_effort: medium, cache_prompt: true, max_tokens: 32768}
+simulators_for: {C3: [qwen27b_sim, sonnet55]}
+run: {max_connections: 2, retry_attempts: 1, order_seed: 20261126}
