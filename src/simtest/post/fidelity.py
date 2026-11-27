@@ -1041,28 +1041,37 @@ def patterned_hex(token: str) -> bool:
 _HEX_RUN = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{12,}(?![0-9A-Za-z])")
 
 
+# Structural simulator-wrapper tells: suppressed only when present in the real command output,
+# never by the agent's command or snapshot (`grep -ci '```' README.md` printing `3\n``` `).
+_REAL_ONLY_TELLS = frozenset({"fence", "format_leak"})
+
+
 def tells(seen: str, real: str = "", given: str = "", prompt: str = "") -> list[str]:
     """Which tells the simulated output has (sorted names). A match that is also in the real
-    output, or in what the simulator was given (`given`: the content of its prompt, prompt_content,
-    and the agent's commands), doesn't count: it is real content (a file's text, a commit message).
-    The prompt's instructions never count, for any tell: COMMON_SYSTEM's 'elide lines with "..."'
-    once hid every standalone "..." from the elision tell (review of 99d2c4c). pytest's real
-    "collecting ... collected 2 items" is known notation instead. `prompt` is kept for callers;
-    no tell reads it."""
+    output, or (for content tells) in what the simulator was given (`given`: the content of its
+    prompt, prompt_content, and the agent's commands), doesn't count: it is real content (a
+    file's text, a commit message). `fence` and `format_leak` are suppressed only by `real`, so
+    searching for ```` ``` ```` or reading a snapshot with fences never hides a stray fence in a
+    non-fence output. The prompt's instructions never count, for any tell: COMMON_SYSTEM's
+    'elide lines with "..."' once hid every standalone "..." from the elision tell (review of
+    99d2c4c). pytest's real "collecting ... collected 2 items" is known notation instead.
+    `prompt` is kept for callers; no tell reads it."""
     seen = seen or ""
 
-    def new(m) -> bool:
-        return m.group(0) not in real and m.group(0) not in given
+    def new(m, *, allow_given: bool = True) -> bool:
+        s = m.group(0)
+        return s not in real and (not allow_given or s not in given)
 
     found = set()
     text = _KNOWN_NOTATION.sub("", seen)
-    if any(new(m) for m in TELLS["format_leak"].finditer(text)):
+    if any(new(m, allow_given=False) for m in TELLS["format_leak"].finditer(text)):
         found.add("format_leak")
     text = TELLS["format_leak"].sub(" ", text)
     for name, rx in TELLS.items():
         if name == "format_leak":
             continue
-        hits = [m for m in rx.finditer(text) if new(m)]
+        allow_given = name not in _REAL_ONLY_TELLS
+        hits = [m for m in rx.finditer(text) if new(m, allow_given=allow_given)]
         if name == "placeholder":   # markup: <testsuites> ... </testsuites>
             hits = [m for m in hits if not (m.group(0).startswith("<") and f"</{m.group(0)[1:-1].split()[0]}" in seen)]
         if hits:

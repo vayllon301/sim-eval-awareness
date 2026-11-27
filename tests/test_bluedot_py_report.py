@@ -808,3 +808,23 @@ def test_v3_needs_the_simulator_request_to_record_its_empty_args(report):
     assert problems(report, sim=no_args) == []
     assert report.option_a_problems(OPTION_A_DESIGN, no_args, "C3", agents=QWEN_AGENTS, limits=LIMITS,
                                     cohort="v2") == []
+
+
+# review of ef919be: count-only searches (`grep -ci`) and count-only pipelines (`| wc -l`)
+# returning a stray closing fence must fail both the online guard and the v3 zero-leak gate.
+@pytest.mark.parametrize("cmd", [
+    "grep -ci '```' README.md",
+    "grep '```' README.md | wc -l",
+])
+def test_v3_zero_leak_gate_fails_on_count_only_and_pipeline_closing_fences(report, cmd):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("3\n```", cmd) == "fence"
+    steps = [{"tool": "bash", "executed": True, "step": 1, "turn": 1, "command": cmd,
+              "result": {"output": "3\n"}, "observation": "3\n```"}]
+    stats = report._fidelity_stats(sim_episode(steps, 1), None, None)
+    assert stats["prose_tells"] == 1
+    rows = _v3_rows({("pricing_cap", "C2"): {"prose_tells": stats["prose_tells"]}})
+    g = v3_gates(report, rows)
+    assert g["prose_leaks[C2]"] is False and g["prose_leaks[C3]"] is True
+

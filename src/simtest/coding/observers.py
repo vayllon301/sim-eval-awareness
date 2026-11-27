@@ -67,7 +67,8 @@ _PRINTS_COMMANDS = re.compile(r"\b(type|history|alias|declare|compgen|set\s+-\w*
                               # ps with an args/cmd/command column (quoted or not), pgrep -a/-l: the command lines
                               r"\bps\b[^|;&\n]*?(?:\s-\w*o|\s--format[=\s]|\s\w*o\s)\s*['\"]?(?:\S*,)?(?:args|cmd|command)\b|"
                               r"\bpgrep\b[^|;&\n]*?\s(?:-\w*[al]\w*|--list-(?:full|name))\b")
-_READS_FILES = re.compile(r"\b(cat|head|tail|sed|awk|less|more|grep|strings|xxd|od|nl|cut|git\s+(show|diff|log|blame|cat-file))\b")
+_READS_FILES = re.compile(r"\b(cat|head|tail|sed|awk|less|more|grep|egrep|fgrep|rg|strings|xxd|od|nl|cut|"
+                          r"git\s+(show|diff|log|blame|cat-file))\b")
 _SEP = re.compile(r"&&|\|\||;|\||\n")
 _WRAP = re.compile(r"^(?:(?:sudo|nice|time|timeout\s+\S+|env(?:\s+\w+=\S+)+)\s+)+")
 # Simulator framing / Markdown code-fence leaks observed on hosted simulators (LOG.md, 25-11-2026),
@@ -84,9 +85,16 @@ _OUTPUT_LABEL = re.compile(r"^Output:\s*(```.*)?$", re.I)
 _FENCE_OPEN = re.compile(r"^```[A-Za-z0-9_+-]*\s*$")
 # Reads of docs (Markdown, README, docs/): a page can genuinely start or end with framing text or a fence.
 _DOC_CMD = re.compile(r"\.md\b|\b(?:README|CHANGELOG|CONTRIBUTING)\b|docs/", re.I)
-# Search invocations that print only counts or filenames, never matched content lines or fences.
+# Search invocations that print only counts, filenames, or nothing, never matched content lines or fences.
+# `rg -L` means --follow (prints matched lines), whereas `grep -L` means --files-without-match.
 _COUNT_OR_NAMES = re.compile(
-    r"\b(?:rg|grep|egrep|fgrep)\b[^\n|]*\s-(?:[A-Za-z]*[clL]|-(?:count|files-with-matches|files-without-match))\b"
+    r"\b(?:grep|egrep|fgrep)\b[^\n|]*\s-(?:[A-Za-z]*[clLq][A-Za-z]*|-(?:count|files-with-matches|files-without-match|quiet|silent))\b|"
+    r"\brg\b[^\n|]*\s-(?:[A-Za-z]*[clq][A-Za-z]*|-(?:count(?:-matches)?|files-with-matches|files-without-match|quiet))\b"
+)
+# Downstream pipeline stages that reduce stdin to counts, hashes, or filenames, never passing
+# through upstream file lines or Markdown fences (`grep '```' README.md | wc -l`).
+_NON_CONTENT_FILTER = re.compile(
+    r"^(?:wc|md5sum|sha1sum|sha256sum|sha512sum|cksum|sum)\b|" + _COUNT_OR_NAMES.pattern
 )
 # Stages that print nothing, skipped when finding a command's first/last output-producing stage.
 _SILENT = re.compile(r"^(?:cd|pushd|popd|export|unset|sleep|true|:|umask)(?:\s|$)|^\w+=\S*$")
@@ -173,12 +181,25 @@ def _non_silent_pipelines(command: str) -> list[list[str]]:
     return out
 
 
+def _pipeline_exempts_fence(stages: list[str]) -> bool:
+    """True when a pipeline can legitimately emit doc/markdown text or a fence: at least one
+    stage reads a doc or emits a fence, and no later stage reduces the stream to counts, hashes,
+    or filenames (`grep '```' README.md | wc -l` and `cat README.md | grep -ci '```'` stay guarded)."""
+    last_exempt = -1
+    for i, stage in enumerate(stages):
+        if _stage_exempts_fence(stage):
+            last_exempt = i
+    if last_exempt < 0:
+        return False
+    return not any(_NON_CONTENT_FILTER.search(stage) for stage in stages[last_exempt + 1:])
+
+
 def _reads_a_doc(command: str) -> bool:
     """The command's first output-producing pipeline (past `cd`, `export`, `sleep` and other
     silent stages) reads a doc or can emit a fence itself. A doc or fence named only by a later
     stage (`pytest -q; grep EUR docs/pricing.md`) leaves the output's opening lines guarded."""
     pipelines = _non_silent_pipelines(command)
-    return bool(pipelines) and any(_stage_exempts_fence(x) for x in pipelines[0])
+    return bool(pipelines) and _pipeline_exempts_fence(pipelines[0])
 
 
 _LIST = re.compile(r"&&|\|\||;|\n")
@@ -188,9 +209,9 @@ def _tail_reads_a_doc(command: str) -> bool:
     """The command's last output-producing pipeline (past trailing `cd`, `export` and other
     silent stages) reads a doc or can emit a fence itself (`pytest -q; cat README.md | head`,
     `pytest -q && printf '```\\n'`). An earlier fence search (`rg -c '```' README.md; pytest -q`)
-    leaves the closing fence guarded."""
+    or a count-only pipeline (`grep '```' README.md | wc -l`) leaves the closing fence guarded."""
     pipelines = _non_silent_pipelines(command)
-    return bool(pipelines) and any(_stage_exempts_fence(x) for x in pipelines[-1])
+    return bool(pipelines) and _pipeline_exempts_fence(pipelines[-1])
 
 
 def _norm(text: str) -> str:

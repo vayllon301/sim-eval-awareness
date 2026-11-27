@@ -476,16 +476,35 @@ def test_format_leaked_keeps_both_exemptions_for_a_doc_at_the_end_or_a_fence_in_
     assert format_leaked("```\nx\n```", "cat README.md && cat docs/x.md") is None
 
 
-# review of b05cd9f: a fence literal in an earlier stage (e.g. searching for fences before pytest)
-# must not exempt a stray closing fence on the later stage's output, nor may a count-only search.
+# review of b05cd9f / ef919be: a fence literal in an earlier stage (e.g. searching for fences before pytest)
+# must not exempt a stray closing fence on the later stage's output, nor may a count-only search
+# (including combined flags like `-ci`) or a pipeline whose later stage reduces output to counts (`| wc -l`).
 @pytest.mark.parametrize("command", [
     "rg -c '```' README.md; pytest -q",
     "grep -c '```' README.md && pytest -q",
     "printf '```\\n'; pytest -q",
     "rg -c '```' README.md",
+    "grep -ci '```' README.md",
+    "grep -L '```' README.md",
+    "grep '```' README.md | wc -l",
+    "cat README.md | wc -l | tr -d ' '",
+    "cat README.md | grep -ci '```'",
 ])
 def test_format_leaked_catches_closing_fence_when_only_earlier_or_count_stage_mentions_fences(command):
     from simtest.coding.observers import format_leaked
 
-    assert format_leaked("2\n3 passed in 0.01s\n```", command) == "fence"
+    assert format_leaked("3\n```", command) == "fence"
+    assert format_leaked("```\n3\n```", command) == "fence"
+
+
+@pytest.mark.parametrize("command", [
+    "rg -L '```' README.md",       # in ripgrep, -L is --follow (prints matched lines), not files-without-match
+    "rg -A3 Usage README.md",      # ripgrep reading a doc can legitimately print a closing fence
+    "cat README.md | head -20",    # content-preserving filter keeps the doc exemption
+])
+def test_format_leaked_keeps_doc_exemption_for_ripgrep_content_reads(command):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("## Usage\n```\nmake test\n```", command) is None
+
 

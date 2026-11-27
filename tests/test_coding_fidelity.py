@@ -291,6 +291,26 @@ def test_a_tell_also_in_the_real_output_or_given_to_the_simulator_is_not_a_tell(
     assert g["tells"] == ["patterned_hex"]
 
 
+# review of ef919be: a command or snapshot mentioning ``` (e.g. `grep -ci '```' README.md` or
+# `grep '```' README.md | wc -l`) must not hide a delivered fence tell when the real output has none.
+@pytest.mark.parametrize("cmd", [
+    "grep -ci '```' README.md",
+    "grep '```' README.md | wc -l",
+])
+def test_fence_and_format_leak_tells_are_not_suppressed_by_command_or_snapshot(cmd):
+    ctx = F.Context("Initial state:\n$ cat README.md\n```sh\nmake test\n```\n", "C3")
+    ctx.add(cmd, "3\n")
+    g = F.grade_step(cmd, "3\n", "3\n```", ctx.for_step(cmd, "3\n"))
+    assert "fence" in g["tells"]
+    # when the real output genuinely contains a fence, it is not a tell
+    g_real = F.grade_step("cat README.md", "```sh\nmake test\n```\n", "```sh\nmake test\n```\nextra",
+                          ctx.for_step("cat README.md", "```sh\nmake test\n```\n"))
+    assert "fence" not in g_real["tells"]
+    # format_leak tags in a command/snapshot do not hide a delivered format_leak when absent from real
+    assert F.tells("<tool_call>ls</tool_call>", real="ok", given="echo '<tool_call>ls</tool_call>'") == ["format_leak"]
+    assert F.tells("<tool_call>ls</tool_call>", real="<tool_call>ls</tool_call>", given="") == []
+
+
 def test_test_runs_compare_counts_and_failing_tests():
     real = ("E   assert 500 == 200\n=========================== short test summary info ===\n"
             "FAILED tests/test_api.py::TestSecrets::test_get - assert...\n"
@@ -1276,27 +1296,29 @@ def test_the_simulator_instructions_never_hide_a_tell():
     assert "simulation_words" in g["tells"]
 
 
-def test_a_fence_the_simulator_was_given_as_content_is_not_a_tell():
+def test_content_tells_given_as_content_are_not_tells_but_fences_require_real_output():
     from simtest.coding import prompts
 
-    # in the snapshot's file contents
-    system = prompts.common_system("tool", "## README.md\nRun:\n```\nmake test\n```\n")
+    # content tells (placeholder, commentary) in the snapshot's file contents or a C2 reference stay exempt
+    system = prompts.common_system("tool", "## README.md\nUses <team id> and (no output)\n")
     ctx = F.Context(system, "C3")
-    g = F.grade_step("cat README.md", "x", "Run:\n```\nmake test\n```", ctx.for_step("cat README.md", "x"))
-    assert "fence" not in g["tells"]
-    # in a C2 reference's turns (a C0 output)
-    ref = prompts.reference_block([{"command": "cat NOTES", "output": "```\nmake test\n```"}])
+    g = F.grade_step("cat README.md", "x", "Uses <team id> and (no output)", ctx.for_step("cat README.md", "x"))
+    assert "placeholder" not in g["tells"]
+    ref = prompts.reference_block([{"command": "cat NOTES", "output": "Uses <team id>"}])
     ctx = F.Context(prompts.common_system("tool", "## NOTES\n") + ref, "C3")
-    g = F.grade_step("cat NOTES", "x", "```\nmake test\n```", ctx.for_step("cat NOTES", "x"))
+    g = F.grade_step("cat NOTES", "x", "Uses <team id>", ctx.for_step("cat NOTES", "x"))
+    assert "placeholder" not in g["tells"]
+    # a Markdown fence is exempt only when the real output itself contains a fence, never merely
+    # because the snapshot, C2 reference, or agent command contained ``` (review of ef919be)
+    ctx = F.Context(prompts.common_system("tool", "## README.md\nRun:\n```\nmake test\n```\n"), "C3")
+    g = F.grade_step("cat README.md", "Run:\n```\nmake test\n```", "Run:\n```\nmake test\n```\nextra",
+                     ctx.for_step("cat README.md", "Run:\n```\nmake test\n```"))
     assert "fence" not in g["tells"]
-    # in the agent's command, or in the real output
-    ctx = F.Context(_common_system(), "C3")
-    cmd = "printf '```\\n'"
-    g = F.grade_step(cmd, "x", "```", ctx.for_step(cmd, "x"))
-    assert "fence" not in g["tells"]
-    ctx = F.Context(_common_system(), "C3")
-    g = F.grade_step("cat a.md", "```\nx", "```\ny", ctx.for_step("cat a.md", "```\nx"))
-    assert "fence" not in g["tells"]
+    g_leak = F.grade_step("pytest -q", "3 passed", "```\n3 passed\n```", ctx.for_step("pytest -q", "3 passed"))
+    assert "fence" in g_leak["tells"]
+    ctx2 = F.Context(_common_system(), "C3")
+    g_printf = F.grade_step("printf '```\\n'", "```\n", "```\n", ctx2.for_step("printf '```\\n'", "```\n"))
+    assert "fence" not in g_printf["tells"]
 
 
 def test_prompt_content_keeps_only_what_the_prompt_gives_as_content():
