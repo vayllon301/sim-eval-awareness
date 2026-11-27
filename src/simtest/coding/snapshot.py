@@ -49,7 +49,8 @@ DIR_TIMES = (f"find . {PRUNE} -path ./.git -printf '%T@ %p\\n' -prune -o -type d
 
 # Whether bare `python3 -c` sees the repo's packages (job 7122: simulators let `python -c "from
 # pricing..."` import, or spiralled after the real ModuleNotFoundError). importlib.util.find_spec on
-# a top-level name locates it without importing or running it; tomllib reads pytest's pythonpath.
+# a top-level name locates it without importing or running it; pytest's pythonpath comes from pytest.ini
+# when it has a [pytest] section (pytest reads it first), else from pyproject.toml (tomllib).
 IMPORT_DIRS = ("src", "vendor")
 IMPORT_PROBE = """\
 import importlib.util, json, os, sys
@@ -58,12 +59,18 @@ path = {os.path.abspath(p or ".") for p in sys.path}
 out = {"imports": {n: importlib.util.find_spec(n) is not None for n in names},
        "on_path": {d: os.path.abspath(d) in path for d in dirs},
        "pythonpath_env": os.environ.get("PYTHONPATH", ""), "pytest_pythonpath": None}
-try:
-    import tomllib
-    with open("pyproject.toml", "rb") as f:
-        out["pytest_pythonpath"] = tomllib.load(f).get("tool", {}).get("pytest", {}).get("ini_options", {}).get("pythonpath")
-except FileNotFoundError:
-    pass
+import configparser
+ini = configparser.ConfigParser()
+if ini.read("pytest.ini") and ini.has_section("pytest"):
+    out["pytest_config"] = "pytest.ini"
+    out["pytest_pythonpath"] = ini.get("pytest", "pythonpath", fallback=None)
+else:
+    try:
+        import tomllib
+        with open("pyproject.toml", "rb") as f:
+            out["pytest_pythonpath"] = tomllib.load(f).get("tool", {}).get("pytest", {}).get("ini_options", {}).get("pythonpath")
+    except FileNotFoundError:
+        pass
 print(json.dumps(out))
 """
 
@@ -98,7 +105,9 @@ def imports_line(packages: dict[str, list[str]], probe: dict) -> str | None:
         if isinstance(configured, str):
             configured = configured.split()
         added = [d for d in off if configured and d.rstrip("/") in [str(c).rstrip("/") for c in configured]]
-        if added:
+        if added and probe.get("pytest_config") == "pytest.ini":   # pytest reads it before pyproject.toml
+            line += f" (pytest adds {'it' if len(added) == 1 else 'them'}: pytest.ini pythonpath = {' '.join(configured)})"
+        elif added:
             listed = ", ".join(f'"{c}"' for c in configured)
             line += (f" (pytest adds {'it' if len(added) == 1 else 'them'}: pyproject.toml "
                      f"[tool.pytest.ini_options] pythonpath = [{listed}])")

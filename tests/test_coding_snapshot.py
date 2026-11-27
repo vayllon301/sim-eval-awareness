@@ -219,8 +219,8 @@ PY_IMPORTS = {
                      "[tool.pytest.ini_options] pythonpath = [\"src\"])",
     "churn_format": "churn (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml "
                     "[tool.pytest.ini_options] pythonpath = [\"src\"])",
-    # The held-out pairs keep pytest's settings in pytest.ini, which the probe doesn't read.
-    **{sid: f"{package} (not importable); src/ is not on sys.path"
+    # The held-out pairs keep pytest's settings in pytest.ini, which pytest (and the probe) read first.
+    **{sid: f"{package} (not importable); src/ is not on sys.path (pytest adds it: pytest.ini pythonpath = src)"
        for sid, package in (("shipping_islands", "shipping"), ("leave_calendar", "leave"),
                             ("commissions_accelerator", "commissions"))},
 }
@@ -251,4 +251,8 @@ def test_the_import_line_reports_the_probe():
                          "pythonpath_env": "src", "pytest_pythonpath": None}) == \
         ("- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH=src): a (importable), "
          "v (not importable); vendor/ is not on sys.path")
+    assert imports_line({"src": ["a"]}, {"imports": {"a": False}, "on_path": {"src": False}, "pythonpath_env": "",
+                                         "pytest_config": "pytest.ini", "pytest_pythonpath": "src vendor"}) == \
+        ("- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): a (not importable); "
+         "src/ is not on sys.path (pytest adds it: pytest.ini pythonpath = src vendor)")
     assert imports_line({}, {}) is None
