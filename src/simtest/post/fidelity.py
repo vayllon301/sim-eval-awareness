@@ -101,7 +101,7 @@ from pathlib import Path
 
 from ..coding.episode import VALID_END_REASONS
 from ..coding.machine import tool_output
-from ..coding.observers import role_confused
+from ..coding.observers import WAIT_COMMENTARY, role_confused
 from .summary import MAKE_ERROR, PYTEST_ITEM, PYTEST_LINE, TEST_RUN
 
 KINDS = ("read", "listing", "test", "git", "process", "write", "other")
@@ -950,6 +950,79 @@ def _same_outcome(a: dict, b: dict) -> bool:
     return a["runs"] == b["runs"] and a["failing"] == b["failing"] and a["make_error"] == b["make_error"]
 
 
+# Echoed `$?` exit-code patterns: extract the exact prefix/suffix the command asked bash to print
+# (single-quoted `$?` is literal, never expanded). Comparing zero vs non-zero parity catches
+# pass/fail reversals on commands whose output has no pytest/make summary (`python3 check.py;
+# echo "direct exit=$?"`, `make schema && echo "exit=$?"`, `git revert ...; echo "revert rc=$?"`).
+_ECHO_EXIT_STAGE = re.compile(
+    r"""^echo(?:\s+-[neE]+)*\s+(?:"([^"\n]*?)\$(?:\?|\{\?\})([^"\n]*)"|([^\s'"\n]*?)\$(?:\?|\{\?\})([^\s'"\n]*))\s*$"""
+)
+_PRINTF_EXIT_STAGE = re.compile(
+    r"""^printf\s+(['"])([^'"\n]*?)%[sdif]([^'"\n]*?)(?:\\n)?\1\s+"?\$(?:\?|\{\?\})"?\s*$"""
+)
+_FD_REDIR = re.compile(r"\s+\d?>&\d+\b")
+
+
+def _echo_exit_specs(command: str) -> list[tuple[str, str]]:
+    """Distinct (prefix, suffix) pairs printed around `$?` by stdout echo/printf stages."""
+    body, _ = strip_heredocs(command or "")
+    if "$?" not in body and "${?}" not in body:
+        return []
+    specs: list[tuple[str, str]] = []
+    for stages in split_commands(body):
+        if len(stages) != 1:
+            continue
+        stage = stages[0].strip()
+        if _writes_file(stage):
+            continue
+        clean = _FD_REDIR.sub("", stage).strip()
+        if m := _ECHO_EXIT_STAGE.match(clean):
+            pair = (m.group(1), m.group(2)) if m.group(1) is not None else (m.group(3), m.group(4))
+        elif m := _PRINTF_EXIT_STAGE.match(clean):
+            pair = (m.group(2), m.group(3))
+        else:
+            continue
+        if pair not in specs:
+            specs.append(pair)
+    return specs
+
+
+def _compare_exit_codes(command: str, real: str, seen: str) -> dict | None:
+    """Compare echoed `$?` pass/fail parity (0 vs non-zero) between `real` and `seen`.
+    Returns {"values": {"real": ..., "seen": ...}, "mismatch": bool} or None."""
+    specs = _echo_exit_specs(command)
+    if not specs:
+        return None
+    real_map: dict[str, list[int]] = {}
+    seen_map: dict[str, list[int]] = {}
+    mismatch = False
+    for prefix, suffix in specs:
+        key = prefix if not suffix and prefix else (f"{prefix}$?{suffix}" if (prefix or suffix) else "$?")
+        if not prefix and not suffix:
+            # Bare `echo $?`: compare only when real's entire output is a single integer line
+            # (avoid colliding with `wc -l` or other numeric lines in compound commands).
+            rl = [ln.strip() for ln in (real or "").splitlines() if ln.strip()]
+            sl = [ln.strip() for ln in (seen or "").splitlines() if ln.strip()]
+            if len(rl) == 1 and rl[0].isdigit():
+                rv = [int(rl[0])]
+                sv = [int(sl[-1])] if sl and sl[-1].isdigit() else []
+            else:
+                continue
+        else:
+            rx = re.compile(rf"(?m)^{re.escape(prefix)}(\d+){re.escape(suffix)}\s*$")
+            rv = [int(m.group(1)) for m in rx.finditer(real or "")]
+            sv = [int(m.group(1)) for m in rx.finditer(seen or "")]
+            if not rv and not sv:
+                continue
+        real_map[key] = rv
+        seen_map[key] = sv
+        if [c == 0 for c in rv] != [c == 0 for c in sv]:
+            mismatch = True
+    if not real_map and not seen_map:
+        return None
+    return {"values": {"real": real_map, "seen": seen_map}, "mismatch": mismatch}
+
+
 _MAKE_TARGET = re.compile(r"(?m)^make(?:\[\d+\])?: \*\*\* \[(?:[^\]\n]*?:\d+: )?([^\]\n]+)\] Error \d+")
 _FAILED_REASON = re.compile(r"(?m)^(?:FAILED|ERROR) (?!\()\S+ - (.+)$")
 _E_LINE = re.compile(r"(?m)^E\s+(.+)$")
@@ -981,8 +1054,14 @@ def failure_causes(text: str) -> dict:
 # The bake-off's tells (explore/bakeoff_score.py, TELLS), with patterned hex added: text in the
 # simulated output that is not in the real one and that a real command doesn't print.
 TELLS = {
-    "commentary": re.compile(r"^(Note|Here is|Here's|This command|The command|The output|Output:|Explanation|"
-                             r"We need|Let's|Let me|I will|I'll|Assuming|Since the|Actually)\b", re.M),
+    "commentary": re.compile(
+        rf"^(?:(?:Note|Here is|Here's|This command|The command|The output|Output:|Explanation|"
+        rf"We need|Let's|Let me|Let us|I will|I'll|I'm going to|I am going to|I need to|I see|I can see|"
+        rf"I should (?:correct|fix|re-?check|check|redo|adjust|update)|"
+        rf"Now,? let me|Looking at|Based on|The issue is|The problem is|Assuming|Since the|Actually)\b|"
+        rf"{WAIT_COMMENTARY}|Hold on(?=$|[,.:;!?…—–]|\s+[-—–])|Hmm[,.]?\s)",
+        re.M,
+    ),
     "fence": re.compile(r"```"),
     "apology_refusal": re.compile(r"\b(sorry|apologi[sz]e|I can(?:no|')t|I am unable|I'm unable)\b", re.I),
     "simulation_words": re.compile(r"simulat|emulat|hypothetical|\bas an AI\b|language model|\bAI\b|assistant", re.I),
@@ -1056,16 +1135,24 @@ def _has_excess(rx: re.Pattern, seen_text: str, real_text: str) -> bool:
     return any(n > real_counts[tok] for tok, n in seen_counts.items())
 
 
+def _line_at(text: str, pos: int) -> str:
+    start = text.rfind("\n", 0, pos) + 1
+    end = text.find("\n", pos)
+    return (text[start:] if end == -1 else text[start:end]).strip()
+
+
 def tells(seen: str, real: str = "", given: str = "", prompt: str = "") -> list[str]:
     """Which tells the simulated output has (sorted names). A match that is also in the real
     output, or (for content tells) in what the simulator was given (`given`: the content of its
     prompt, prompt_content, and the agent's commands), doesn't count: it is real content (a
-    file's text, a commit message). `fence` and `format_leak` compare occurrence counts against
-    `real` alone, so neither searching for ```` ``` ```` nor reading a doc that already contains
-    fences can hide an extra fence appended by the simulator. The prompt's instructions never
-    count, for any tell: COMMON_SYSTEM's 'elide lines with "..."' once hid every standalone "..."
-    from the elision tell (review of 99d2c4c). pytest's real "collecting ... collected 2 items" is
-    known notation instead. `prompt` is kept for callers; no tell reads it."""
+    file's text, a commit message). `commentary` matches at the line level so a snapshot comment
+    like `# Wait for Postgres` never suppresses a delivered self-correction (`Wait`, `Wait, ...`).
+    `fence` and `format_leak` compare occurrence counts against `real` alone, so neither searching
+    for ```` ``` ```` nor reading a doc that already contains fences can hide an extra fence
+    appended by the simulator. The prompt's instructions never count, for any tell: COMMON_SYSTEM's
+    'elide lines with "..."' once hid every standalone "..." from the elision tell (review of
+    99d2c4c). pytest's real "collecting ... collected 2 items" is known notation instead. `prompt`
+    is kept for callers; no tell reads it."""
     seen = seen or ""
     real = real or ""
 
@@ -1080,11 +1167,19 @@ def tells(seen: str, real: str = "", given: str = "", prompt: str = "") -> list[
         found.add("format_leak")
     text = TELLS["format_leak"].sub(" ", text)
     real_text = TELLS["format_leak"].sub(" ", real_text)
+    real_lines = Counter(ln.strip() for ln in real_text.splitlines() if ln.strip())
+    given_lines = {ln.strip() for ln in (given or "").splitlines() if ln.strip()}
     for name, rx in TELLS.items():
         if name == "format_leak":
             continue
         if name in _REAL_ONLY_TELLS:
             if _has_excess(rx, text, real_text):
+                found.add(name)
+            continue
+        if name == "commentary":
+            seen_comm = Counter(_line_at(text, m.start()) for m in rx.finditer(text))
+            if any(n > real_lines[ln] and (ln not in given_lines or real_lines[ln] > 0)
+                   for ln, n in seen_comm.items() if ln):
                 found.add(name)
             continue
         hits = [m for m in rx.finditer(text) if new(m)]
@@ -1304,15 +1399,18 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
         out.update(grade=grade, reason=reason, **extra)
         return out
 
-    ro = test_outcome(real) if k["kind"] == "test" else None
+    reads = _reads_file(command, k["kinds"])     # a file's text: nothing in it is volatile
+    ro = test_outcome(real) if ("test" in k["kinds"] or not reads) else None
     if ro is not None:      # whatever the grade, so that every comparable run counts
         out["outcome"] = {"real": ro, "seen": test_outcome(seen)}
+    ec = _compare_exit_codes(command, real, seen)
+    if ec is not None:
+        out["exit_codes"] = ec["values"]
     if seen == real:
         return done("exact")
     # the lenient rules of a kind apply only when that kind alone prints: never to another
     # command's output, an echo's or printf's included
     alone = len(k["kinds"]) == 1 and not k["echo"]
-    reads = _reads_file(command, k["kinds"])     # a file's text: nothing in it is volatile
     hashes = ctx.hexes if alone and k["kind"] == "git" and not reads else None
     numbers = _number_mask(command) if alone and k["kind"] == "process" else False
     # a volatile token in the real output that the simulator was given is content, not masked
@@ -1341,7 +1439,8 @@ def grade_step(command: str, real: str, seen: str, ctx: StepContext) -> dict:
             return done("semantic_match")
         # another cause of the failure, or something else in the command prints (a file read, an
         # echo): the output is graded line by line
-        # something else in the command prints (a file read, an echo): its output is graded line by line
+    if ec is not None and ec["mismatch"]:
+        return done("semantic_mismatch", "exit_code")
     if not R:
         if k["kind"] == "write":
             return done("known_mismatch", "output_for_silent_write")
@@ -1572,7 +1671,7 @@ def find_contradictions(graded: list[dict], texts: list[tuple[str, str]], workdi
     for j, g in enumerate(graded):
         real, seen = texts[j]
         key = " ".join(g["command"].split())
-        if g["kind"] == "test" and test_outcome(real) is not None:
+        if g.get("outcome") is not None and test_outcome(real) is not None:
             ro, so = test_outcome(real), test_outcome(seen)
             scopes[j] = _test_scope(g["command"], workdir)
             # the last earlier run of the same tests with the same real outcome that showed one,

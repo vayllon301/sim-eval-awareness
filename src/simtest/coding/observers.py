@@ -101,44 +101,88 @@ _SILENT = re.compile(r"^(?:cd|pushd|popd|export|unset|sleep|true|:|umask)(?:\s|$
 _ASSIGN = re.compile(r"^(?:\w+=\S*\s+)+")
 
 
-# Prose in place of an output, delivered to the agent in bluedot-py-cheap-qwen (job 7109): the
-# simulator's own reasoning ("Let me check the logic: ...") or a sentence saying what the command
-# prints ("..., so ls-remote prints one line."). Read on the leading non-blank lines only, at
-# column 0 and case-sensitive (pip's and gcc's lowercase "note:" and git's "Note: switching to"
-# are real). Across every logged real bash output (explore/leak_guard_corpus.py) neither matched.
+# Prose in place of an output, delivered to the agent in bluedot-py-cheap-qwen (job 7109) and
+# bluedot-py-v3-qwen (job 7164): the simulator's own reasoning ("Let me check the logic: ..."),
+# trailing self-corrections ("Wait, I need to correct that diff.", "Wait — ...", bare "Wait"), or
+# a sentence saying what the command prints ("..., so ls-remote prints one line."). Read on the
+# leading and trailing non-blank lines, at column 0 and case-sensitive (pip's and gcc's lowercase
+# "note:" and git's "Note: switching to" are real). Across 10,224 logged real bash outputs
+# (explore/leak_guard_corpus.py) neither matched.
+WAIT_COMMENTARY = r"Wait(?=$|[,.:;!?…—–]|\s+[-—–])"
 _COMMENTARY = re.compile(
-    r"^(?:Let me|Let's|Let us|I will|I'll|I'm going to|I am going to|I need to|I see\b|I can see|We need to|"
-    r"Now,? let me|Note:(?! switching to )|Explanation:|This command\b|The command\b|The output\b|"
-    r"Looking at\b|Based on\b|The issue is\b|The problem is\b|Actually,|Wait,|Hmm[,.]?\s)"
+    rf"^(?:Let me|Let's|Let us|I will|I'll|I'm going to|I am going to|I need to|I see\b|I can see|We need to|"
+    rf"Now,? let me|Note:(?! switching to )|Explanation:|This command\b|The command\b|The output\b|"
+    rf"Looking at\b|Based on\b|The issue is\b|The problem is\b|Actually,|{WAIT_COMMENTARY}|Hmm[,.]?\s)"
+)
+# Tail prose check: self-corrections and meta-commentary appended after real output (job 7164
+# Sonnet 5.5 "Wait..." leaks), without flagging ordinary human sign-offs inside read files
+# ("a\nb\nc\nd\nLet me know." in `cat notes.txt`).
+_TAIL_COMMENTARY = re.compile(
+    rf"^(?:{WAIT_COMMENTARY}|Actually,|Hmm[,.]?\s|Hold on(?=$|[,.:;!?…—–]|\s+[-—–])|"
+    r"Let me (?:correct|fix|re-?check|check|redo|adjust|update|try)\b|"
+    r"I need to (?:correct|fix|re-?check|check|redo|adjust|update)\b|"
+    r"I should (?:correct|fix|re-?check|check|redo|adjust|update)\b|"
+    r"Note:(?! switching to )|Explanation:|This command\b|The command\b|The output\b|"
+    r"The issue is\b|The problem is\b)"
 )
 # post/fidelity.py TELLS["narration"], per line
 _NARRATION = re.compile(r"^[A-Z][^\n]*\b(?:prints?|outputs?|(?:would|will) (?:print|show|output))\s+"
                         r"(?:only\s+)?(?:one|two|three|no|nothing|a single|\d+|the following)\b[^\n]*\.$")
-_LEADING = 3     # non-blank lines read for prose
+_LEADING = 3     # leading non-blank lines read for prose
+_TRAILING = 3    # trailing non-blank lines read for prose
 # format_leaked's reasons (role_confused gives "echo" and "invented")
 FORMAT_LEAKS = frozenset({"framing", "fence", "commentary", "narration"})
 
 
+def _word_in(token: str, cmd: str) -> bool:
+    """True when `token` appears in `cmd` without being glued inside a longer identifier
+    (so `await` in the command never suppresses a `Wait` commentary leak)."""
+    t = token.strip().lower()
+    if not t:
+        return False
+    pre = r"(?<![a-z0-9_])" if (t[0].isalnum() or t[0] == "_") else ""
+    post = r"(?![a-z0-9_])" if (t[-1].isalnum() or t[-1] == "_") else ""
+    return bool(re.search(pre + re.escape(t) + post, cmd))
+
+
+def _prose_leak(subset: list[str], cmd: str, commentary: re.Pattern = _COMMENTARY) -> str | None:
+    """Commentary or narration in a slice of non-blank lines (`cmd` lowercased)."""
+    for line in subset:
+        if (m := commentary.match(line)) and not _word_in(m.group(0), cmd):
+            return "commentary"
+    for line in subset:
+        if _NARRATION.match(line) and line.strip().lower() not in cmd:
+            return "narration"
+    return None
+
+
 def format_leaked(observation: str, command: str) -> str | None:
     """Why a simulated output leaked simulator/Markdown framing ("framing" or "fence", on its first
-    or its last non-blank line) or prose ("commentary": first-person or meta reasoning;
-    "narration": a sentence saying what the command prints), or None. Reads only the reply and the
-    command, never a real output, so C2/C3 stay free simulations. Reads of docs are exempt, each
-    end on its own: the opening checks (framing, opening fence, commentary, narration) when the
-    command's first output-producing stage reads one, the closing fence when its last one does
-    (`cat README.md; pytest -q` ending in a stray fence is caught). A command that writes a fence
-    itself exempts both, and text the command holds (an echo, a commit message) is never a leak."""
+    or its last non-blank line) or prose ("commentary": first-person or meta reasoning, including
+    trailing "Wait..." self-corrections; "narration": a sentence saying what the command prints),
+    or None. Reads only the reply and the command, never a real output, so C2/C3 stay free
+    simulations. Reads of docs are exempt, each end on its own: the opening checks (framing,
+    opening fence, leading commentary/narration) when the command's first output-producing stage
+    reads one, the closing checks (closing fence, trailing self-correction/narration) when its last
+    one does (`cat README.md; pytest -q` ending in a stray fence or self-correction is caught). A
+    command that writes a fence itself exempts both, and text the command holds (an echo, a commit
+    message) is never a leak."""
     text = (observation or "").lstrip("\n")
     if not text:
         return None
     lines = text.split("\n")
-    if not _reads_a_doc(command or "") and (why := _opening_leak(lines, (command or "").lower())):
+    cmd = (command or "").lower()
+    if not _reads_a_doc(command or "") and (why := _opening_leak(lines, cmd)):
         return why
-    # a fence closing the reply (agentworld, pricing_cap_benign step 8 in job 7122), unless the
-    # output's last part comes from a doc or a stage that can emit a fence at the tail
-    last = next((x.strip() for x in reversed(lines) if x.strip()), "")
-    if _FENCE_OPEN.match(last) and not _tail_reads_a_doc(command or ""):
+    # closing fence or trailing self-correction (job 7122 pricing_cap_benign step 8; job 7164
+    # Sonnet 5.5 "Wait..." leaks), unless the output's last part comes from a doc
+    non_blank = [x.rstrip() for x in lines if x.strip()]
+    if not non_blank or _tail_reads_a_doc(command or ""):
+        return None
+    if _FENCE_OPEN.match(non_blank[-1].strip()):
         return "fence"
+    if why := _prose_leak(non_blank[-_TRAILING:], cmd, _TAIL_COMMENTARY):
+        return why
     return None
 
 
@@ -146,7 +190,7 @@ def _opening_leak(lines: list[str], cmd: str) -> str | None:
     """format_leaked's checks on a reply's first lines (`cmd` lowercased)."""
     first = lines[0].strip()
     if m := _FRAMING_LEAK.match(first):
-        if m.group(0).lower() not in cmd:
+        if not _word_in(m.group(0), cmd):
             return "framing"
     if m := _OUTPUT_LABEL.match(first):
         following = next((x.strip() for x in lines[1:] if x.strip()), "")
@@ -155,13 +199,7 @@ def _opening_leak(lines: list[str], cmd: str) -> str | None:
     if _FENCE_OPEN.match(first):
         return "fence"
     leading = [x.rstrip() for x in lines if x.strip()][:_LEADING]
-    for line in leading:
-        if (m := _COMMENTARY.match(line)) and m.group(0).strip().lower() not in cmd:
-            return "commentary"
-    for line in leading:
-        if _NARRATION.match(line) and line.strip().lower() not in cmd:
-            return "narration"
-    return None
+    return _prose_leak(leading, cmd)
 
 
 def _stage_exempts_fence(stage: str) -> bool:

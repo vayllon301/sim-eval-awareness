@@ -130,3 +130,50 @@ def test_spec_is_checked(tmp_path):
                                  "extra": 1}))
     with pytest.raises(P.PoolError):
         P.load_spec(p)
+    # take_all may not overlap fill, and duplicates/empty take_all lists are rejected
+    for bad in [
+        {"name": "x", "seed": 1, "n": 5, "take_all": ["C2", "C3"], "fill": "C2", "dirs": ["a"]},
+        {"name": "x", "seed": 1, "n": 5, "take_all": ["C2", "C2"], "fill": "C0", "dirs": ["a"]},
+        {"name": "x", "seed": 1, "n": 5, "take_all": [], "fill": "C0", "dirs": ["a"]},
+    ]:
+        p.write_text(yaml.safe_dump(bad))
+        with pytest.raises(P.PoolError):
+            P.load_spec(p)
+
+
+def test_draw_supports_multiple_take_all_conditions_and_optional_fill():
+    pool = fake_pool(n_c3=2) + [
+        {"log": "r2/x.eval", "sample_id": f"c2_{i}", "epoch": 1, "condition": "C2", "scenario": "a"}
+        for i in range(3)
+    ]
+    drawn, quotas = P.draw(pool, n=9, seed=7, take_all=["C2", "C3"], fill="C0")
+    assert sum(e["condition"] == "C2" for e in drawn) == 3
+    assert sum(e["condition"] == "C3" for e in drawn) == 2
+    assert sum(e["condition"] == "C0" for e in drawn) == 4
+    assert sum(quotas.values()) == 4
+    # fill omitted when take_all covers all n episodes
+    all_drawn, no_quotas = P.draw(pool, n=5, seed=7, take_all=["C2", "C3"], fill=None)
+    assert len(all_drawn) == 5 and {e["condition"] for e in all_drawn} == {"C2", "C3"}
+    assert no_quotas == {}
+    with pytest.raises(P.PoolError):
+        P.draw(pool, n=6, seed=7, take_all=["C2", "C3"], fill=None)
+
+
+def test_manifest_supports_c2_and_c3_together(monkeypatch, tmp_path):
+    patch_machine(monkeypatch, [("REAL", 0)])
+    run_episodes(tmp_path / "logs" / "c0", "C0", ["pricing_cap", "pricing_cap_benign"], epochs=1)
+    run_episodes(tmp_path / "logs" / "c2", "C2", ["pricing_cap", "pricing_cap_benign"], epochs=1)
+    run_episodes(tmp_path / "logs" / "c3", "C3", ["pricing_cap", "pricing_cap_benign"], epochs=1)
+    spec = {"name": "py-v1", "root": "..", "seed": 20261127, "n": 6, "take_all": ["C2", "C3"], "fill": "C0",
+            "dirs": ["logs/c0", "logs/c2", "logs/c3"]}
+    (tmp_path / "labels").mkdir()
+    path = tmp_path / "labels" / "pool.yaml"
+    path.write_text(yaml.safe_dump(spec))
+    m = P.build_manifest(path)
+    assert len(m["episodes"]) == 6
+    assert {e["condition"] for e in m["episodes"]} == {"C0", "C2", "C3"}
+    assert m["counts"]["drawn"]["C2"]["total"] == 2
+    assert m["counts"]["drawn"]["C3"]["total"] == 2
+    assert m["counts"]["drawn"]["C0"]["total"] == 2
+    assert m["counts"]["not_drawn"] == 0
+

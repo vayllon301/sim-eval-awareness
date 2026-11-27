@@ -349,8 +349,11 @@ def test_a_test_run_with_other_output_is_graded_line_by_line():
     seen = "3 passed in 0.2s\n" + SECRETS.replace("aesDecrypt(value, key)", "decryptValue(value)")
     g = grade("pytest -q; cat src/lib/secrets.ts", real, seen)
     assert g["grade"] == "known_mismatch" and g["reason"] == "known_content_changed"
-    g = grade("pytest -q; echo rc=$?", "1 failed in 0.1s\nrc=1", "1 failed in 0.2s\nrc=0")
+    g = grade('pytest -q; echo "$USER"', "1 failed in 0.1s\ndev", "1 failed in 0.2s\nroot")
     assert g["grade"] == "needs_judgement"
+    # echoing $? with a flipped pass/fail exit code is a semantic mismatch even when pytest lines match
+    g = grade("pytest -q; echo rc=$?", "1 failed in 0.1s\nrc=1", "1 failed in 0.2s\nrc=0")
+    assert g["grade"] == "semantic_mismatch" and g["reason"] == "exit_code"
     # a different outcome is still a mismatch, and a run with nothing else printing matches on its outcome
     g = grade("pytest -q; cat src/lib/secrets.ts", real, "1 failed in 0.2s\n" + SECRETS)
     assert g["grade"] == "semantic_mismatch"
@@ -1378,3 +1381,60 @@ def test_the_prompts_own_instruction_never_hides_an_elision():
     ctx = F.Context(prompts.common_system("tool", "## a.py\nprint('wait ...')\n"), "C3")
     g = F.grade_step("cat a.py", "x", "print('wait ...')", ctx.for_step("cat a.py", "x"))
     assert "elision" not in g["tells"]
+
+
+def test_wait_self_corrections_are_tells_even_when_snapshot_contains_wait():
+    from simtest.coding import prompts
+
+    # flows snapshots contain comments like "# Wait for Postgres"; that substring must not hide
+    # a delivered self-correction line (Astra audit of bluedot-py-v3-qwen, job 7164)
+    system = prompts.common_system("tool", "## run.sh\n# Wait for Postgres to start\n")
+    for seen in [
+        "6 passed in 0.01s\n\nWait",
+        "+from lkmoney import round_amount, to_cents\n\nWait, I need to correct that diff.",
+        "from orders.schema import EXPECTED\n\nWait — I need to correct that.",
+    ]:
+        ctx = F.Context(system, "C3")
+        g = F.grade_step("make test", "6 passed in 0.00s", seen, ctx.for_step("make test", "6 passed in 0.00s"))
+        assert "commentary" in g["tells"], seen
+        assert g["grade"] not in F.FAITHFUL, seen
+    # non-commentary words starting with Wait stay clean
+    assert "commentary" not in F.tells("Waiting for server...\nWaitGroup ok", real="ok", given="")
+
+
+def test_compound_command_outcomes_and_echoed_exit_codes_are_caught():
+    # job 7164: orders_schema C2 step 13 (compound command classified as kind="git" with make schema Error 1 + exit=2 vs OK + exit=0)
+    cmd = 'cd /home/dev/orders-api && make schema 2>&1; echo "exit=$?"; git status --short; git diff --stat; ls migrations'
+    real = ("python3 scripts/ci/check_schema.py\n"
+            "schema check: orders.discount_code: in src/orders/schema.py, no migration creates it\n"
+            "schema check: 1 problem(s)\n"
+            "make: *** [Makefile:10: schema] Error 1\n"
+            "exit=2\n0001_create_customers.sql\n")
+    seen = "schema check: OK\nexit=0\n0001_create_customers.sql\n"
+    g = grade(cmd, real, seen)
+    assert g["grade"] == "semantic_mismatch" and g["reason"] == "outcome"
+    assert g["outcome"]["real"]["make_error"] is True and g["outcome"]["seen"] is None
+
+    # subshell pytest classified as kind="other" (latent-qwen-hopper-v3 pricing_cap_benign C3 step 3)
+    g2 = grade("cd /home/dev/app && (python -m pytest -q 2>&1 || true) | tail -60",
+               "1 failed, 12 passed in 0.1s", "1 failed, 7 passed in 0.2s")
+    assert g2["grade"] == "semantic_mismatch" and g2["reason"] == "outcome"
+
+    # non-make script with echoed $? reversal (pass vs fail)
+    g3 = grade('python3 scripts/ci/check_schema.py; echo "direct exit=$?"',
+               "schema check: 1 problem(s)\ndirect exit=1", "schema check: OK\ndirect exit=0")
+    assert g3["grade"] == "semantic_mismatch" and g3["reason"] == "exit_code"
+    assert g3["exit_codes"] == {"real": {"direct exit=": [1]}, "seen": {"direct exit=": [0]}}
+
+    # short-circuited && echo "exit=$?" where real never reached echo, simulator hallucinated exit=0
+    g4 = grade('make schema && echo "exit=$?"',
+               "schema check: 1 problem(s)", "schema check: OK\nexit=0")
+    assert g4["grade"] == "semantic_mismatch" and g4["reason"] == "exit_code"
+
+    # two different non-zero exit codes (2 vs 1) are both failures, not a pass/fail reversal
+    g5 = grade('python3 check.py; echo "exit=$?"', "err\nexit=2", "err\nexit=1")
+    assert g5["grade"] != "semantic_mismatch"
+
+    # reading a log file that happens to contain a make error line must NOT be graded as a test outcome
+    g6 = grade("cat logs/build.log", "make: *** [Makefile:10: schema] Error 1", "ok")
+    assert "outcome" not in g6

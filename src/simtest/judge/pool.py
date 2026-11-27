@@ -47,12 +47,22 @@ from ..runqueue import summary_never_started
 from . import transcript as T
 
 SPEC_KEYS = {"name", "root", "seed", "n", "take_all", "fill", "scenarios", "dirs"}
-REQUIRED = {"name", "seed", "n", "take_all", "fill", "dirs"}
+REQUIRED = {"name", "seed", "n", "take_all", "dirs"}
 REPO = Path(__file__).resolve().parents[3]
 
 
 class PoolError(ValueError):
     pass
+
+
+def _take_all_list(value) -> list[str]:
+    if isinstance(value, str) and value.strip():
+        return [value]
+    if isinstance(value, list) and value and all(isinstance(x, str) and x.strip() for x in value):
+        if len(set(value)) != len(value):
+            raise PoolError(f"take_all has duplicate conditions: {value}")
+        return list(value)
+    raise PoolError(f"take_all must be a non-empty condition name or list of distinct condition names, got {value!r}")
 
 
 def load_spec(path: Path) -> dict:
@@ -67,6 +77,13 @@ def load_spec(path: Path) -> dict:
         raise PoolError(f"{path}: n and seed must be integers (n >= 1)")
     if not raw["dirs"] or len(set(raw["dirs"])) != len(raw["dirs"]):
         raise PoolError(f"{path}: dirs must be a non-empty list without repeats")
+    take = _take_all_list(raw["take_all"])
+    raw.setdefault("fill", None)
+    if raw["fill"] is not None:
+        if not isinstance(raw["fill"], str) or not raw["fill"].strip():
+            raise PoolError(f"{path}: fill must be a condition name or null")
+        if raw["fill"] in take:
+            raise PoolError(f"{path}: fill {raw['fill']!r} overlaps take_all {take}")
     raw.setdefault("root", ".")
     raw.setdefault("scenarios", None)
     return raw
@@ -95,7 +112,9 @@ def scan(spec: dict, root: Path) -> tuple[list[dict], list[dict], list[dict]]:
     from ..coding import analysis as A
 
     pool, skipped, logs = [], [], []
-    keep = {spec["take_all"], spec["fill"]}
+    keep = set(_take_all_list(spec["take_all"]))
+    if spec.get("fill"):
+        keep.add(spec["fill"])
     scenarios = set(spec["scenarios"]) if spec["scenarios"] else None
     for d in spec["dirs"]:
         log_dir = root / d
@@ -164,10 +183,10 @@ def scan(spec: dict, root: Path) -> tuple[list[dict], list[dict], list[dict]]:
             if f["samples"] == 0:
                 f["note"] = "the log has no samples"
             logs.append(f)
-    # A later attempt of a skipped sample that made the pool (same run, sample and epoch).
-    drawn_keys = {(e["run"], e["condition"], e["sample_id"], e["epoch"]) for e in pool}
+    # A later attempt of a skipped sample that made the pool (same run, condition, simulator, sample and epoch).
+    drawn_keys = {(e["run"], e["condition"], e["simulator"], e["sample_id"], e["epoch"]) for e in pool}
     for s in skipped:
-        if (s["run"], s["condition"], s["sample_id"], s["epoch"]) in drawn_keys:
+        if (s["run"], s["condition"], s["simulator"], s["sample_id"], s["epoch"]) in drawn_keys:
             s["reason"] += "; a later attempt of the same sample is in the pool"
     key = lambda e: (e["log"], str(e["sample_id"]), e["epoch"])  # noqa: E731
     return sorted(pool, key=key), sorted(skipped, key=key), sorted(logs, key=lambda f: f["path"])
@@ -194,23 +213,28 @@ def equal_quotas(sizes: dict[str, int], k: int, rng: random.Random) -> dict[str,
     return quotas
 
 
-def draw(pool: list[dict], n: int, seed: int, take_all: str, fill: str) -> tuple[list[dict], dict]:
+def draw(pool: list[dict], n: int, seed: int, take_all: str | list[str], fill: str | None = None) -> tuple[list[dict], dict]:
     """(drawn episodes in labelling order, the quotas per fill scenario)."""
     rng = random.Random(seed)
     key = lambda e: (e["log"], str(e["sample_id"]), e["epoch"])  # noqa: E731
     pool = sorted(pool, key=key)
-    first = [e for e in pool if e["condition"] == take_all]
+    take = set(_take_all_list(take_all))
+    first = [e for e in pool if e["condition"] in take]
     k = n - len(first)
     if k < 0:
         raise PoolError(f"{len(first)} {take_all} episodes, more than n = {n}")
-    strata: dict[str, list[dict]] = defaultdict(list)
-    for e in pool:
-        if e["condition"] == fill:
-            strata[e["scenario"]].append(e)
-    quotas = equal_quotas({s: len(v) for s, v in strata.items()}, k, rng)
     chosen = list(first)
-    for s in sorted(strata):
-        chosen += sorted(rng.sample(strata[s], quotas[s]), key=key)
+    quotas: dict[str, int] = {}
+    if k > 0:
+        if not fill:
+            raise PoolError(f"need {k} more episodes to reach n = {n}, but fill is not set")
+        strata: dict[str, list[dict]] = defaultdict(list)
+        for e in pool:
+            if e["condition"] == fill:
+                strata[e["scenario"]].append(e)
+        quotas = equal_quotas({s: len(v) for s, v in strata.items()}, k, rng)
+        for s in sorted(strata):
+            chosen += sorted(rng.sample(strata[s], quotas[s]), key=key)
     ids = [f"L{i:03d}" for i in range(1, n + 1)]
     rng.shuffle(ids)
     order = list(range(1, n + 1))
@@ -277,6 +301,12 @@ def build_manifest(spec_path: Path) -> dict:
         if hits := leak_hits(text, ep):
             leaks.append({"label_id": ep["label_id"], "hits": hits})
     drawn_keys = {(e["log"], str(e["sample_id"]), e["epoch"]) for e in drawn}
+    take_label = ", ".join(_take_all_list(spec["take_all"]))
+    if spec.get("fill"):
+        rule = (f"every scored {take_label} episode in the pool, then {spec['fill']} episodes "
+                f"stratified by scenario, as equally as the pool allows; seed {spec['seed']}")
+    else:
+        rule = f"every scored {take_label} episode in the pool; seed {spec['seed']}"
     return {
         "name": spec["name"],
         "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -284,9 +314,7 @@ def build_manifest(spec_path: Path) -> dict:
         "spec": spec,
         "code": {"simtest_commit": _git("rev-parse", "--short", "HEAD"),
                  "dirty": bool(_git("status", "--porcelain")), "render_version": T.RENDER_VERSION},
-        "rule": (f"every scored {spec['take_all']} episode in the pool, then {spec['fill']} episodes "
-                 "stratified by scenario, as equally as the pool allows; seed "
-                 f"{spec['seed']}"),
+        "rule": rule,
         "counts": {"pool": _counts(pool), "drawn": _counts(drawn), "fill_quotas": quotas,
                    "skipped": dict(sorted(Counter(s["reason"].split(" (")[0].split(";")[0]
                                                   for s in skipped).items())),

@@ -508,3 +508,38 @@ def test_format_leaked_keeps_doc_exemption_for_ripgrep_content_reads(command):
     assert format_leaked("## Usage\n```\nmake test\n```", command) is None
 
 
+@pytest.mark.parametrize("command,observation", [
+    # job 7164: billing_rounding C2 step 15 (bare trailing "Wait" after >3 lines)
+    ("git commit -m 'fix' && git log --oneline -2 && make test",
+     "[main 3d9e1b7] fix\n 1 file changed\n6a5c79f prev\npytest -q\n......\n6 passed in 0.01s\n\nWait"),
+    # job 7164: billing_rounding_benign C2 step 8 (trailing "Wait, I need to correct that diff.")
+    ("grep -rn to_cents src/ && git show 5bab049 -- src/",
+     "a\nb\nc\nd\n-from lkmoney import round_amount\n+from lkmoney import round_amount, to_cents\n\n"
+     "Wait, I need to correct that diff."),
+    # job 7164: orders_schema C2 step 8 (trailing "Wait — I need to correct that.")
+    ("cat src/orders/db.py; ls tests; cat tests/conftest.py",
+     "line1\nline2\nline3\nline4\nfrom orders.schema import EXPECTED\n\nWait — I need to correct that."),
+    # opening reads a doc, tail does not: trailing self-correction must still be caught
+    ("cat README.md; git diff --stat",
+     "# Repo\n\nRun tests.\n\n src/a.py | 2 +-\n\nWait - let me fix that."),
+    # "await" in the command must not suppress a "Wait" commentary leak via substring matching
+    ("grep -n await src/worker.py",
+     "1:async def run():\n2:    await work()\n3:    return True\n4:    pass\n\nWait — that line is wrong."),
+])
+def test_format_leaked_catches_trailing_wait_self_corrections(command, observation):
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked(observation, command) == "commentary"
+
+
+def test_format_leaked_trailing_commentary_respects_doc_tail_and_non_commentary_wait():
+    from simtest.coding.observers import format_leaked
+
+    assert format_leaked("a\nb\nc\nd\nWaiting for database to accept connections...", "make up") is None
+    assert format_leaked("a\nb\nc\nd\nWaitGroup done", "go test ./...") is None
+    # when the tail stage reads a doc, prose at the end of the doc is exempt
+    assert format_leaked(" src/a.py | 1 +\n src/b.py | 1 +\n src/c.py | 1 +\n\nNote: run make test before pushing.",
+                         "git diff --stat; cat README.md") is None
+
+
+
