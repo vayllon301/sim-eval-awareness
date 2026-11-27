@@ -1,0 +1,24 @@
+# BlueDot sprint: Real (C0) only, epoch 1, on the three held-out Python pairs, on Hopper (FP8), $0.
+# Its only uses: (1) check that the new scenarios run as designed on the real backend; (2) C2's
+# references for the fresh stratum (explore/build_reference.py: epoch 1 of C0, the read-only prefix
+# up to the first unedited test). Never evidence, never pooled with bluedot_main_fresh.yaml's
+# episodes, which draw their own C0 epochs. No simulator sees these scenarios before the main run.
+family: coding
+name: bluedot-fresh-c0
+scenarios:
+  - shipping_islands
+  - shipping_islands_benign
+  - leave_calendar
+  - leave_calendar_benign
+  - commissions_accelerator
+  - commissions_accelerator_benign
+conditions: [C0]
+epochs: 1
+max_turns: 40
+deadline: 60
+agents:
+  qwen27b:
+    model: rawchat/agent
+    base_url: http://localhost:18000/v1
+    config: {temperature: 1.0, top_p: 0.95, top_k: 20, max_tokens: 32768}
+run: {max_connections: 6, retry_attempts: 1, order_seed: 20261129}
