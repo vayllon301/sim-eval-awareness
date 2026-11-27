@@ -114,12 +114,15 @@ x -i explore/colab_probe/serve.sh ssh $LOGIN "mkdir -p ${(q)REMOTE_DIR}/status &
   || { print -u2 "submit_chunks.sh: could not copy serve.sh to $LOGIN:$REMOTE_DIR"; exit 1; }
 minutes=$(( int(TIME_LIMIT * 60) ))
 # $PWD expands on the login host, in REMOTE_DIR: the job runs there, and so do the paths it gets.
-# ALL is the login shell's environment: the scheme goes by name, so nothing there can change it.
-exports="ALL,WORK=${(q)WORK},SERVE_SH=\$PWD/serve.sh,STATUS_DIR=\$PWD/status,TIME_LIMIT_MIN=$minutes,SIM_QUANT=$SIM_QUANT,PROFILE=$PROFILE"
-[[ -z ${MIX:-} ]] || exports+=",MIX=$MIX"
-[[ -z ${EAGER:-} ]] || exports+=",EAGER=$EAGER"
-[[ -z ${RELAY_HOST:-} ]] || exports+=",RELAY_HOST=$RELAY_HOST"
-[[ -z ${RELAY_KEY:-} ]] || exports+=",RELAY_KEY=$RELAY_KEY"
+# The job gets the login shell's environment (--export=ALL) with the settings set in it by `env`:
+# the scheme goes by name, so nothing there can change it. Not --export=ALL,NAME=value: on Hopper's
+# node james a job submitted that way fails before it starts, "user env retrieval failed requeued
+# held" (LOG.md, 27-11-2026), while the same variables set in the environment run.
+exports="WORK=${(q)WORK} SERVE_SH=\$PWD/serve.sh STATUS_DIR=\$PWD/status TIME_LIMIT_MIN=$minutes SIM_QUANT=$SIM_QUANT PROFILE=$PROFILE"
+[[ -z ${MIX:-} ]] || exports+=" MIX=$MIX"
+[[ -z ${EAGER:-} ]] || exports+=" EAGER=$EAGER"
+[[ -z ${RELAY_HOST:-} ]] || exports+=" RELAY_HOST=$RELAY_HOST"
+[[ -z ${RELAY_KEY:-} ]] || exports+=" RELAY_KEY=$RELAY_KEY"
 ids=()
 rows=()
 i=0
@@ -129,8 +132,8 @@ for c in $chunks; do
   if (( i > 1 )); then
     if [[ $DRY == 1 ]]; then dep="--dependency=afterany:<job $((i - 1))>"; else dep="--dependency=afterany:${ids[-1]}"; fi
   fi
-  remote="cd ${(q)REMOTE_DIR} && sbatch --parsable --time=$minutes${dep:+ $dep} --job-name=sim-$name-$i --output=status/%j.out"
-  remote+=" --gres=gpu:$GPUS_PER_JOB --export=$exports $SBATCH_ARGS"
+  remote="cd ${(q)REMOTE_DIR} && env $exports sbatch --parsable --time=$minutes${dep:+ $dep} --job-name=sim-$name-$i --output=status/%j.out"
+  remote+=" --gres=gpu:$GPUS_PER_JOB --export=ALL $SBATCH_ARGS"
   if [[ $DRY == 1 ]]; then
     x -i explore/hopper/serve.slurm ssh $LOGIN "$remote"
     ids+=("<job $i>")

@@ -1114,14 +1114,15 @@ def test_the_setup_time_comes_out_of_the_first_chunks_window(tmp_path):
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
 def test_the_scheme_is_always_named_to_the_job(tmp_path):
-    """--export=ALL passes the login shell's environment too: the job gets the scheme by name."""
+    """--export=ALL passes the login shell's environment too: the job gets the scheme by name, set by
+    `env` before sbatch, not in the --export list (which fails on Hopper's james, LOG.md 27-11-2026)."""
     proc, state, logs = submit(tmp_path)
     assert proc.returncode == 0, proc.stderr + proc.stdout
     sb = sbatches(calls_of(state))
-    assert sb and all(",SIM_QUANT=fp8_per_channel" in c for c in sb)
+    assert sb and all(" SIM_QUANT=fp8_per_channel " in c and "--export=ALL " in c for c in sb)
     proc, state, logs = submit(tmp_path / "named", {"SIM_QUANT": "fp8_per_channel"})
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    assert all(",SIM_QUANT=fp8_per_channel" in c for c in sbatches(calls_of(state)))
+    assert all(" SIM_QUANT=fp8_per_channel " in c and "--export=ALL " in c for c in sbatches(calls_of(state)))
 
 
 @pytest.mark.skipif(ZSH is None, reason="needs zsh")
