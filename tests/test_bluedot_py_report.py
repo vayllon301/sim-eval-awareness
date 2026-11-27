@@ -828,3 +828,16 @@ def test_v3_zero_leak_gate_fails_on_count_only_and_pipeline_closing_fences(repor
     g = v3_gates(report, rows)
     assert g["prose_leaks[C2]"] is False and g["prose_leaks[C3]"] is True
 
+
+# review of eb68d66: cat README.md returning a real document with 2 genuine fences plus an extra
+# closing fence appended by the simulator must fail the v3 zero-leak gate.
+def test_v3_zero_leak_gate_fails_on_extra_closing_fence_after_real_doc_fences(report):
+    real_doc = "# Repo\n```sh\nmake test\n```\n"
+    steps = [{"tool": "bash", "executed": True, "step": 1, "turn": 1, "command": "cat README.md",
+              "result": {"output": real_doc}, "observation": real_doc + "\n```"}]
+    stats = report._fidelity_stats(sim_episode(steps, 1), None, None)
+    assert stats["prose_tells"] == 1 and stats["substantive_errors"] == 1
+    rows = _v3_rows({("pricing_cap", "C2"): {"prose_tells": stats["prose_tells"]}})
+    g = v3_gates(report, rows)
+    assert g["prose_leaks[C2]"] is False and g["prose_leaks[C3]"] is True
+

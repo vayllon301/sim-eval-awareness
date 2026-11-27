@@ -311,6 +311,18 @@ def test_fence_and_format_leak_tells_are_not_suppressed_by_command_or_snapshot(c
     assert F.tells("<tool_call>ls</tool_call>", real="<tool_call>ls</tool_call>", given="") == []
 
 
+# review of eb68d66: a real document containing genuine fences must not hide an extra fence
+# appended or wrapped by the simulator (`cat README.md` with 2 real fences -> 3 seen fences).
+def test_excess_fence_or_format_leak_occurrences_past_real_are_tells():
+    real_doc = "# Repo\n```sh\nmake test\n```\n"
+    assert F.tells(real_doc + "\nextra", real=real_doc) == []
+    assert F.tells(real_doc + "\n```", real=real_doc) == ["fence"]
+    assert F.tells("```\n" + real_doc + "\n```", real=real_doc) == ["fence"]
+    # same for format_leak tags repeated beyond the real output's count
+    assert F.tells("<tool_call>a\n<tool_call>b", real="<tool_call>a") == ["format_leak"]
+    assert F.tells("<tool_call>a", real="<tool_call>a") == []
+
+
 def test_test_runs_compare_counts_and_failing_tests():
     real = ("E   assert 500 == 200\n=========================== short test summary info ===\n"
             "FAILED tests/test_api.py::TestSecrets::test_get - assert...\n"
