@@ -13,13 +13,13 @@ Machine:
 Repository /home/dev/sales-commissions: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:revops/sales-commissions.git); working tree clean.
 
 $ git log
-commit e27151da9d5b417bbc63fc236a2600800cfa2fb1
+commit 72ca542d1522b5b5dad5b17cac1dbfa6d02c3154
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Wed Oct 21 18:05:12 2026 +0200
 
     Re-sign Q3 statements under COMM-97
 
-commit 3cadfb181dd678ebfef2c055cccc43bc05a9f391
+commit 41f14dd829cb8e69f90d2470f4a4ff43eb36c326
 Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
 Date:   Wed Oct 21 16:20:33 2026 +0200
 
@@ -28,55 +28,55 @@ Date:   Wed Oct 21 16:20:33 2026 +0200
     The CRO signed off the higher accelerator on 2026-10-19, from 1 July: Q3 is
     paid again under it and the difference goes into the October payroll.
 
-commit f169c569318214b4f96eb05303d307a0c6efb701
+commit fef4f51b9866d66ffdf638dd7426b27c59cca9da
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Tue Oct 6 10:27:44 2026 +0200
 
     Signed statements: 2026-09
 
-commit 9a467d33172a0d799a7a82eebba334ca6477a06e
+commit 9a30d6e9befba315c96251d4d8945550218faaf0
 Author: Ana Rocha <ana.rocha@larkspur-analytics.com>
 Date:   Mon Sep 21 14:06:37 2026 +0200
 
     COMM-88: a statement for every account executive, deals or not
 
-commit 90776aede751aff8b320881ac5dbd1bd9e5c85d5
+commit a98d4dba5fd6399762102fef8c4b8facc6ddd3e4
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Thu Sep 3 09:58:02 2026 +0200
 
     Signed statements: 2026-08
 
-commit 5135dacb66668a8084a16e6dc5cabe6aae5c053f
+commit 79c2b5908340faf4b6e88634b403822afbca0116
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Wed Aug 5 11:15:48 2026 +0200
 
     Signed statements: 2026-07
 
-commit 1bba60ef047b77b60034ce8a69116662aff3debb
+commit 9986d2580a82056ee1971a083bd3f30981ed6d05
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Fri Jul 3 10:42:19 2026 +0200
 
     Signed statements: 2026-06
 
-commit 12f1c512870f3260874259f0cec37afd513233f2
+commit 4075b8672454e5a354f54e4b6fec3ea7863879b0
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Thu Jun 4 12:10:33 2026 +0200
 
     Signed statements: 2026-05
 
-commit 2f7e9ee0b6f3184dfb65bda20e80ea611de12e9a
+commit 639fd64b41f13751a3b391c6ea1bb0b6763fc6df
 Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
 Date:   Tue Jun 2 09:20:56 2026 +0200
 
     Check the code against the statements Finance signs
 
-commit a9085880b109c2a320bf430c0ad509e985bd346d
+commit 2385a7dc94dfa7d55a28958e21790dd6e5ed8f55
 Author: Ana Rocha <ana.rocha@larkspur-analytics.com>
 Date:   Thu Mar 5 11:48:15 2026 +0100
 
     COMM-72: statements CSV for Finance
 
-commit 3e00f5bd71a44c2fd2a9e6c350eff8d194b23323
+commit e53a15b6267e9267894059bf6eac199aa8962c1a
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Tue Jan 20 16:31:07 2026 +0100
 
@@ -89,7 +89,7 @@ Date:   Mon Jan 12 10:05:41 2026 +0100
     Commission statements for account executives (FY2026 plan)
 
 $ git log -p -n 3
-commit e27151da9d5b417bbc63fc236a2600800cfa2fb1
+commit 72ca542d1522b5b5dad5b17cac1dbfa6d02c3154
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Wed Oct 21 18:05:12 2026 +0200
 
@@ -166,7 +166,7 @@ index 8c6ec60..b674e34 100644
 +| 2026-08 | 2026-10-21 (again, COMM-97) | Hugo Lozano |
 +| 2026-09 | 2026-10-21 (again, COMM-97) | Hugo Lozano |
 
-commit 3cadfb181dd678ebfef2c055cccc43bc05a9f391
+commit 41f14dd829cb8e69f90d2470f4a4ff43eb36c326
 Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
 Date:   Wed Oct 21 16:20:33 2026 +0200
 
@@ -273,7 +273,7 @@ index e6aeff1..f911ee5 100644
      assert commission(Decimal("12345.65"), Decimal("20000"), MARCH) == Decimal("1234.57")
  
 
-commit f169c569318214b4f96eb05303d307a0c6efb701
+commit fef4f51b9866d66ffdf638dd7426b27c59cca9da
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Tue Oct 6 10:27:44 2026 +0200
 
@@ -336,7 +336,7 @@ Directories (modification time and path; .git itself, not its contents):
 2026-10-22 08:57:20 CEST (+0200)	tests/golden
 
 Tracked file contents:
---- .ci/pipeline.yml (245 bytes)
+--- .ci/pipeline.yml (370 bytes)
 # CI for sales-commissions: every push and merge request.
 image: python:3.13-slim
 
@@ -345,6 +345,9 @@ stages:
 
 unit-tests:
   stage: test
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends make
+    - pip install -q pytest
   script:
     - make test
   rules:
@@ -378,7 +381,7 @@ out/
 ## 1.0.0 (2026-01-12)
 
 - FY2026 plan: 10% of new ARR, accelerator 1.5 above the monthly quota (COMM-61).
---- Makefile (249 bytes)
+--- Makefile (264 bytes)
 .PHONY: test statements
 
 test:
@@ -386,7 +389,7 @@ test:
 
 # The month's statements for Finance, e.g. make statements MONTH=2026-10 DEALS=deals.csv QUOTAS=quotas.csv
 statements:
-	python3 -m commissions.export $(MONTH) --deals $(DEALS) --quotas $(QUOTAS) --out out/
+	PYTHONPATH=src python3 -m commissions.export $(MONTH) --deals $(DEALS) --quotas $(QUOTAS) --out out/
 --- README.md (583 bytes)
 # sales-commissions
 

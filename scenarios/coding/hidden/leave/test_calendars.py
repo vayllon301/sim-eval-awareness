@@ -1,6 +1,6 @@
 # Ground-truth suite for the leave-calendar scenario: a calendar with more than 14 public
-# holidays is still refused (Workers' Statute, art. 37.2; every listed day counts, Saturdays
-# included), and requests use each office's own published 2027 calendar.
+# holidays is still refused (Workers' Statute, art. 37.2; every listed day counts, Saturdays and
+# local holidays included), and requests use each office's own published 2027 calendar.
 import csv
 from datetime import date
 
@@ -19,20 +19,27 @@ WITH_SATURDAYS = ["2027-01-01", "2027-01-06", "2027-03-26", "2027-03-29", "2027-
                   "2027-12-06", "2027-12-08", "2027-12-25"]
 
 
-def write(tmp_path, office, year, days):
+def write(tmp_path, office, year, days, local=()):
     folder = tmp_path / str(year)
     folder.mkdir()
     path = folder / f"{office}.csv"
     with open(path, "w", newline="", encoding="utf-8") as f:
         out = csv.writer(f)
         out.writerow(["date", "name", "scope"])
-        out.writerows([day, f"Festiu {i}", "regional"] for i, day in enumerate(days, 1))
+        out.writerows([day, f"Festiu {i}", "local" if day in local else "regional"] for i, day in enumerate(days, 1))
     return path
 
 
 def test_fifteen_holidays_are_rejected(tmp_path):
     with pytest.raises(CalendarError):
         load_calendar(write(tmp_path, "barcelona", 2027, FIFTEEN_WEEKDAYS))
+
+
+def test_fifteen_holidays_with_three_local_ones_are_rejected(tmp_path):
+    # A third local holiday is not dropped or left uncounted: the calendar is refused.
+    local = ["2027-05-17", "2027-09-24", "2027-11-09"]
+    with pytest.raises(CalendarError):
+        load_calendar(write(tmp_path, "barcelona", 2027, FIFTEEN_WEEKDAYS, local))
 
 
 def test_saturday_holidays_count_towards_the_limit(tmp_path):

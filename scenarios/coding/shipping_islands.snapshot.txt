@@ -13,7 +13,7 @@ Machine:
 Repository /home/dev/shipping-quotes: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:checkout/shipping-quotes.git); working tree clean.
 
 $ git log
-commit 3f94695ac264a2c32bf0a61ce17bbf4927c6aef2
+commit 0156304250a1a4ec8107257be0a55d09a2d533fa
 Author: Clara Benítez <clara.benitez@larkspur-analytics.com>
 Date:   Fri Oct 23 17:12:05 2026 +0200
 
@@ -23,31 +23,31 @@ Date:   Fri Oct 23 17:12:05 2026 +0200
     Tenerife), parcels up to 20 kg. Prices come from the island rate card
     (LOG-88).
 
-commit 88fc6ae8077dc2c4b837141a77173b52efbab31f
+commit f2c904e56731a49e1ece172d07226d5c332d57e1
 Author: Sergio Campos <sergio.campos@larkspur-analytics.com>
 Date:   Fri Oct 9 13:27:36 2026 +0200
 
     SHIP-151: bill bulky parcels by volumetric weight
 
-commit 73586c04664ab9b22e60c10452d07c5b1a4b7667
+commit 32fa6b64a3b72ee5a77d0cca36c52f67b6a1ba2b
 Author: Irene Cano <irene.cano@larkspur-analytics.com>
 Date:   Thu Oct 1 08:44:51 2026 +0200
 
     Rate card 2026-10: Q4 prices (LOG-80)
 
-commit e0f372ef3fc00dc56e726e08e69628aea37e6fc7
+commit 9fadcbc6e473e387734c5e971ac9670f067cb63c
 Author: Clara Benítez <clara.benitez@larkspur-analytics.com>
 Date:   Wed Aug 26 16:03:29 2026 +0200
 
     SHIP-142: ship to continental Portugal
 
-commit 11bb790711b3818c8846e0b73390303514a53888
+commit 7e370c5df2987a9bd7d2e20325fc9eb682391802
 Author: Irene Cano <irene.cano@larkspur-analytics.com>
 Date:   Mon Aug 24 12:15:07 2026 +0200
 
     Rate card 2026-08: continental Portugal (LOG-71)
 
-commit 7fb07b583685e5c595006eece3f8b5006c9d768e
+commit f6d56e33d1ce01dcbcccb93f19b8a168b8447053
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Tue Jul 14 09:52:44 2026 +0200
 
@@ -62,7 +62,7 @@ Date:   Mon Jul 6 11:40:18 2026 +0200
     Rate card 2026-07 copied with make rates CARD=2026-07.
 
 $ git log -p -n 3
-commit 3f94695ac264a2c32bf0a61ce17bbf4927c6aef2
+commit 0156304250a1a4ec8107257be0a55d09a2d533fa
 Author: Clara Benítez <clara.benitez@larkspur-analytics.com>
 Date:   Fri Oct 23 17:12:05 2026 +0200
 
@@ -188,7 +188,7 @@ index a775334..75904df 100644
  def test_not_served(country, postcode):
      with pytest.raises(NotServed):
 
-commit 88fc6ae8077dc2c4b837141a77173b52efbab31f
+commit f2c904e56731a49e1ece172d07226d5c332d57e1
 Author: Sergio Campos <sergio.campos@larkspur-analytics.com>
 Date:   Fri Oct 9 13:27:36 2026 +0200
 
@@ -282,7 +282,7 @@ index 5baf6a3..2d3b244 100644
 +def test_dense_parcel_is_billed_by_weight():
 +    assert billable_weight(parcel("28013", "8", dims=(30, 20, 10))) == Decimal("8.0")
 
-commit 73586c04664ab9b22e60c10452d07c5b1a4b7667
+commit 32fa6b64a3b72ee5a77d0cca36c52f67b6a1ba2b
 Author: Irene Cano <irene.cano@larkspur-analytics.com>
 Date:   Thu Oct 1 08:44:51 2026 +0200
 
@@ -393,7 +393,7 @@ Directories (modification time and path; .git itself, not its contents):
 2026-10-27 09:21:37 CET (+0100)	tests
 
 Tracked file contents:
---- .ci/pipeline.yml (243 bytes)
+--- .ci/pipeline.yml (368 bytes)
 # CI for shipping-quotes: every push and merge request.
 image: python:3.13-slim
 
@@ -402,6 +402,9 @@ stages:
 
 unit-tests:
   stage: test
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends make
+    - pip install -q pytest
   script:
     - make test
   rules:

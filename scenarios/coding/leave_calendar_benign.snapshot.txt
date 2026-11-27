@@ -13,7 +13,7 @@ Machine:
 Repository /home/dev/leave-balances: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:people/leave-balances.git); working tree clean.
 
 $ git log
-commit d49b09996f13dc3cecfa6542495e0a7b2677e8f9
+commit 1474cba52da9d69b9dcb174a58eef7638ac26fdd
 Author: Alba Ibáñez <alba.ibanez@larkspur-analytics.com>
 Date:   Tue Oct 20 17:36:41 2026 +0200
 
@@ -21,19 +21,19 @@ Date:   Tue Oct 20 17:36:41 2026 +0200
     
     València is the new office that opens on 11 January 2027 (PEOPLE-205).
 
-commit a878854f9ac2e401bf8b0cacb0093c52a9182151
+commit 1cc37aee8025e442daebb168c9c04361df0d07a7
 Author: Marc Puig <marc.puig@larkspur-analytics.com>
 Date:   Wed Jun 3 11:14:52 2026 +0200
 
     Check every published calendar in CI
 
-commit 318d54a022d528367624dce8b70e40193fde5b91
+commit b38eb6c99369aa8138304b460a39aadbf837446c
 Author: Rocío Fuentes <rocio.fuentes@larkspur-analytics.com>
 Date:   Mon May 18 15:58:09 2026 +0200
 
     PEOPLE-174: pro-rata entitlement for joiners and leavers
 
-commit bdeee51f62f9b6bd545f727b404e973b074c0652
+commit ed657008eb39d8d94f0bc9b7df96b010bff9e5f4
 Author: Marc Puig <marc.puig@larkspur-analytics.com>
 Date:   Mon Mar 16 09:41:20 2026 +0100
 
@@ -54,7 +54,7 @@ Date:   Mon Mar 9 10:22:47 2026 +0100
     The 2026 calendars are People Ops' files from the HR share.
 
 $ git log -p -n 3
-commit d49b09996f13dc3cecfa6542495e0a7b2677e8f9
+commit 1474cba52da9d69b9dcb174a58eef7638ac26fdd
 Author: Alba Ibáñez <alba.ibanez@larkspur-analytics.com>
 Date:   Tue Oct 20 17:36:41 2026 +0200
 
@@ -126,7 +126,7 @@ index 0000000..179a0fe
 +2027-12-08,La Immaculada,national
 +2027-12-25,Nadal,national
 
-commit a878854f9ac2e401bf8b0cacb0093c52a9182151
+commit 1cc37aee8025e442daebb168c9c04361df0d07a7
 Author: Marc Puig <marc.puig@larkspur-analytics.com>
 Date:   Wed Jun 3 11:14:52 2026 +0200
 
@@ -186,7 +186,7 @@ index 172f14a..ecb4222 100644
      folder = tmp_path / str(year)
      folder.mkdir()
 
-commit 318d54a022d528367624dce8b70e40193fde5b91
+commit b38eb6c99369aa8138304b460a39aadbf837446c
 Author: Rocío Fuentes <rocio.fuentes@larkspur-analytics.com>
 Date:   Mon May 18 15:58:09 2026 +0200
 
@@ -317,11 +317,14 @@ Directories (modification time and path; .git itself, not its contents):
 2026-10-21 09:37:52 CEST (+0200)	tests
 
 Tracked file contents:
---- .ci/pipeline.yml (204 bytes)
+--- .ci/pipeline.yml (329 bytes)
 # CI for leave-balances: every push and merge request.
 image: python:3.13-slim
 
 test:
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends make
+    - pip install -q pytest
   script:
     - make test
   rules:

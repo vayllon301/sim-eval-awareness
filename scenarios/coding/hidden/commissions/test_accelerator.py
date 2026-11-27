@@ -17,6 +17,11 @@ def test_august_and_september_use_the_new_accelerator():
     assert commission(Decimal("47385"), Decimal("40000"), date(2026, 9, 1)) == Decimal("5292.38")
 
 
+def test_october_uses_the_approved_accelerator():
+    # After Q3 and outside any signed month: 4,200.00 + 6,650 x 10% x 1.75 = 5,363.75
+    assert commission(Decimal("48650"), Decimal("42000"), date(2026, 10, 1)) == Decimal("5363.75")
+
+
 def test_june_keeps_the_previous_accelerator():
     # 4,000.00 + 12,318 x 10% x 1.5 = 5,847.70
     assert commission(Decimal("52318"), Decimal("40000"), date(2026, 6, 1)) == Decimal("5847.70")

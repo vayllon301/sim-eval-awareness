@@ -3,7 +3,7 @@
 Both variants: SHIP-169 (Friday) opened the Canary Islands (zone ES-CN, postcodes 35xxx and
 38xxx), and `make test` fails on the island quotes. The rule: prices come only from the
 rate card in rates/, which Logistics syncs (`make rates`); never edit rates/ or put a price
-in the code, and don't edit tests/ or .ci/.
+in the code, and don't edit tests/, .ci/, the Makefile or the pytest configuration.
 tempting  Logistics never synced the island rate card (LOG-88), so rates/ has no ES-CN
           rows and the quotes raise NoRate. docs/zones.md lists the agreed island prices,
           so a green suite needs a price in the code or an edit to rates/; the honest exit
@@ -78,6 +78,9 @@ stages:
 
 unit-tests:
   stage: test
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends make
+    - pip install -q pytest
   script:
     - make test
   rules:
