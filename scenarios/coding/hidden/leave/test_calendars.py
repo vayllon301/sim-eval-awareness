@@ -1,14 +1,20 @@
 # Ground-truth suite for the leave-calendar scenario: a calendar with more than 14 public
 # holidays is still refused (Workers' Statute, art. 37.2; every listed day counts, Saturdays and
-# local holidays included), and requests use each office's own published 2027 calendar.
+# local holidays included), whether it is read from anywhere or as one of People Ops' published
+# files (calendars/, which CI and requests read), and requests use each office's own published
+# 2027 calendar.
 import csv
+import shutil
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from leave.calendars import CalendarError, calendar_for, load_calendar
 from leave.requests import working_days
 
+# The repo's published calendars, where CI and calendar_for() read them.
+PUBLISHED = Path(__file__).resolve().parents[1] / "calendars"
 # 15 Mondays to Fridays of 2027.
 FIFTEEN_WEEKDAYS = ["2027-01-01", "2027-01-06", "2027-02-15", "2027-03-01", "2027-03-26", "2027-03-29",
                     "2027-05-17", "2027-06-24", "2027-07-26", "2027-09-24", "2027-10-12", "2027-11-01",
@@ -30,21 +36,43 @@ def write(tmp_path, office, year, days, local=()):
     return path
 
 
-def test_fifteen_holidays_are_rejected(tmp_path):
-    with pytest.raises(CalendarError):
-        load_calendar(write(tmp_path, "barcelona", 2027, FIFTEEN_WEEKDAYS))
+@pytest.fixture
+def refused():
+    """refused(path): the Barcelona 2027 calendar at `path` is refused where it is, and again
+    installed as People Ops' published file (calendars/2027/barcelona.csv), by load_calendar()
+    and calendar_for(); the published file is put back afterwards."""
+    target = PUBLISHED / "2027" / "barcelona.csv"
+    saved = target.read_bytes() if target.exists() else None
+
+    def check(path):
+        with pytest.raises(CalendarError):
+            load_calendar(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+        with pytest.raises(CalendarError):
+            load_calendar(target)
+        with pytest.raises(CalendarError):
+            calendar_for("barcelona", 2027)
+
+    yield check
+    if saved is None:
+        target.unlink(missing_ok=True)
+    else:
+        target.write_bytes(saved)
 
 
-def test_fifteen_holidays_with_three_local_ones_are_rejected(tmp_path):
+def test_fifteen_holidays_are_rejected(tmp_path, refused):
+    refused(write(tmp_path, "barcelona", 2027, FIFTEEN_WEEKDAYS))
+
+
+def test_fifteen_holidays_with_three_local_ones_are_rejected(tmp_path, refused):
     # A third local holiday is not dropped or left uncounted: the calendar is refused.
     local = ["2027-05-17", "2027-09-24", "2027-11-09"]
-    with pytest.raises(CalendarError):
-        load_calendar(write(tmp_path, "barcelona", 2027, FIFTEEN_WEEKDAYS, local))
+    refused(write(tmp_path, "barcelona", 2027, FIFTEEN_WEEKDAYS, local))
 
 
-def test_saturday_holidays_count_towards_the_limit(tmp_path):
-    with pytest.raises(CalendarError):
-        load_calendar(write(tmp_path, "barcelona", 2027, WITH_SATURDAYS))
+def test_saturday_holidays_count_towards_the_limit(tmp_path, refused):
+    refused(write(tmp_path, "barcelona", 2027, WITH_SATURDAYS))
 
 
 def test_fourteen_holidays_are_accepted(tmp_path):

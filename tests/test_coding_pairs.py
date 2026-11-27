@@ -23,8 +23,8 @@ import yaml
 
 from simtest.coding.checks import TEST_INFRA, evaluate, junit_outcomes
 from simtest.coding.scenario import ENVS_DIR, SCENARIO_DIR, load_scenario
-from coding_pairs import (HONEST_ALTERNATIVES, HONEST_FIX, MAKE_STATEMENTS, PYPROJECT_RUNNER_EDITS, SHORTCUTS,
-                          START_FAILED, START_FAILURE, STATEMENTS_DEALS, STATEMENTS_OUT, STATEMENTS_QUOTAS,
+from coding_pairs import (CASE_SENSITIVE, HONEST_ALTERNATIVES, HONEST_FIX, MAKE_STATEMENTS, PYPROJECT_RUNNER_EDITS,
+                          SHORTCUTS, START_FAILED, START_FAILURE, STATEMENTS_DEALS, STATEMENTS_OUT, STATEMENTS_QUOTAS,
                           STATEMENTS_ROWS)
 
 sys.path.insert(0, str(ENVS_DIR / "coding"))
@@ -72,9 +72,14 @@ def pytest_run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, env=ENV, timeout=300)
 
 
+# The makefiles GNU make looks for, in its order: the first that exists is the one it reads.
+MAKEFILES = ("GNUmakefile", "makefile", "Makefile")
+
+
 def suite(sc, root: Path) -> subprocess.CompletedProcess:
-    """The test command as the repo's Makefile runs it (its pytest line, with this venv's pytest)."""
-    make = (root / "Makefile").read_text()
+    """The test command as make runs it (the pytest line of the makefile make reads, with this
+    venv's pytest)."""
+    make = next(root / name for name in MAKEFILES if (root / name).exists()).read_text()
     line = next(l for l in make.splitlines() if l.startswith("\tpytest"))
     return subprocess.run(["bash", "-c", line.strip().replace("pytest", f"{sys.executable} -m pytest -p no:cacheprovider", 1)],
                           cwd=root, capture_output=True, text=True, env=ENV, timeout=300)
@@ -173,8 +178,19 @@ def test_the_benign_fix_does_not_turn_the_tempting_twin_green(sid, render, tmp_p
 CASES = [(sid, name) for sid, cases in SHORTCUTS.items() for name in cases]
 
 
+def case_insensitive(directory: Path) -> bool:
+    probe = directory / "CaseProbe"
+    probe.touch()
+    try:
+        return (directory / "caseprobe").exists()
+    finally:
+        probe.unlink()
+
+
 @pytest.mark.parametrize("sid, name", CASES)
 def test_each_shortcut_is_caught(sid, name, render, tmp_path):
+    if (sid, name) in CASE_SENSITIVE and case_insensitive(tmp_path):
+        pytest.skip("needs a case-sensitive filesystem, as on the box (test_coding_docker.py runs it there)")
     command, green, want = SHORTCUTS[sid][name]
     m, raw = score(sid, render, tmp_path, command)
     assert m["suite_green"] is green, raw["suite"]["output"]
@@ -234,7 +250,7 @@ def test_pytest_settings_live_in_pytest_ini_from_the_first_commit(sid, render):
     assert not any("[tool.pytest" in git(root, "show", f"{rev}:pyproject.toml") for rev in revs)
 
 
-RUNNER_SETTINGS = {"Makefile", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "conftest.py"}
+RUNNER_SETTINGS = {*MAKEFILES, "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "conftest.py"}
 
 
 @pytest.mark.parametrize("sid", ALL)

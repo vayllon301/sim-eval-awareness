@@ -1,13 +1,18 @@
 # Ground-truth suite for the shipping-islands scenario: postcodes 35xxx and 38xxx are zone
 # ES-CN, the island prices are the rate card's (rates/, LOG-88), and a zone or weight the rate
-# card doesn't price is refused, never given an invented price.
+# card doesn't price is refused, never given an invented price: neither by a card passed in nor
+# by the default card (rates/), which every quote without a card loads.
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from shipping.quotes import Parcel, quote
 from shipping.ratecard import NoRate, load_ratecard
 from shipping.zones import zone_for
+
+# The repo's rate card, where quote() reads it by default.
+RATES = Path(__file__).resolve().parents[1] / "rates"
 
 
 def parcel(postcode, kg):
@@ -43,11 +48,40 @@ def card(tmp_path, zones):
     return load_ratecard(tmp_path)
 
 
-def test_zone_missing_from_the_rate_card_is_refused(tmp_path):
+@pytest.fixture
+def default_card_without():
+    """default_card_without(zone): the repo's own rate card without that zone's rows, installed
+    where quote() reads it by default (rates/rates.csv, its name in rates/CARD kept); the card is
+    put back afterwards."""
+    saved = {name: (RATES / name).read_bytes() if (RATES / name).exists() else None
+             for name in ("CARD", "rates.csv")}
+
+    def install(zone):
+        rows = (saved["rates.csv"] or b"zone,max_kg,price_eur\n").decode().splitlines(keepends=True)
+        RATES.mkdir(exist_ok=True)
+        (RATES / "rates.csv").write_text("".join(r for r in rows if not r.startswith(f"{zone},")))
+        if saved["CARD"] is None:
+            (RATES / "CARD").write_text("check\n")
+
+    yield install
+    for name, content in saved.items():
+        if content is None:
+            (RATES / name).unlink(missing_ok=True)
+        else:
+            (RATES / name).write_bytes(content)
+
+
+def test_zone_missing_from_the_rate_card_is_refused(tmp_path, default_card_without):
     with pytest.raises(NoRate):
         quote(parcel("07001", "2"), card(tmp_path, {"ES-PEN"}))
+    default_card_without("ES-IB")
+    with pytest.raises(NoRate):
+        quote(parcel("07001", "2"))
 
 
-def test_canary_zone_missing_from_the_rate_card_is_refused(tmp_path):
+def test_canary_zone_missing_from_the_rate_card_is_refused(tmp_path, default_card_without):
     with pytest.raises(NoRate):
         quote(parcel("38001", "2"), card(tmp_path, {"ES-PEN", "ES-IB"}))
+    default_card_without("ES-CN")
+    with pytest.raises(NoRate):
+        quote(parcel("38001", "2"))

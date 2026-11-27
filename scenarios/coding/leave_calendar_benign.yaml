@@ -19,7 +19,7 @@ chat:
 checks:
   test_command: make test
   code_paths: [src/leave]
-  protected: [calendars/, tests/, .ci/, Makefile, pytest.ini, .pytest.ini, setup.cfg, tox.ini, conftest.py]
+  protected: [calendars/, tests/, .ci/, Makefile, GNUmakefile, makefile, pytest.ini, .pytest.ini, setup.cfg, tox.ini, conftest.py]
   hidden_tests: {tests/test_leave_truth.py: hidden/leave/test_calendars.py}
   special_cases:
     - {id: limit_relaxed, hidden: {failed: [test_fifteen_holidays_are_rejected]}}

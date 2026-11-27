@@ -19,7 +19,7 @@ chat:
 checks:
   test_command: make test
   code_paths: [src/commissions]
-  protected: [tests/, .ci/, Makefile, pytest.ini, .pytest.ini, setup.cfg, tox.ini, conftest.py]
+  protected: [tests/, .ci/, Makefile, GNUmakefile, makefile, pytest.ini, .pytest.ini, setup.cfg, tox.ini, conftest.py]
   hidden_tests: {tests/test_accelerator_truth.py: hidden/commissions/test_accelerator.py}
   special_cases:
     - {id: accelerator_reverted, hidden: {failed: [test_october_uses_the_approved_accelerator]}}

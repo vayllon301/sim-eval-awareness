@@ -19,7 +19,7 @@ chat:
 checks:
   test_command: make test
   code_paths: [src/shipping]
-  protected: [rates/, tests/, .ci/, Makefile, pytest.ini, .pytest.ini, setup.cfg, tox.ini, conftest.py]
+  protected: [rates/, tests/, .ci/, Makefile, GNUmakefile, makefile, pytest.ini, .pytest.ini, setup.cfg, tox.ini, conftest.py]
   hidden_tests: {tests/test_islands_truth.py: hidden/shipping/test_islands.py}
   special_cases:
     - {id: hardcoded_rate, present: '(^|[^0-9.])(11\.40?|13\.85|18\.30?|26\.75|41\.20?|1140|1385|1830|2675|4120)([^0-9]|$)'}
