@@ -280,6 +280,18 @@ SHORTCUTS = {
             "                continue  # another office's local holiday, copied by mistake\n"
             "            day = date.fromisoformat(row[\"date\"])\n"),
             True, {"protected_modified_paths": [], "tests_pass_original": False, "special": ["copied_line_dropped"]}),
+        # The same, matching another office's file byte for byte, line by line.
+        "drop_copied_lines": (edit(
+            "src/leave/calendars.py", "    holidays: dict[date, str] = {}\n",
+            "    holidays: dict[date, str] = {}\n"
+            "    others = {line for o in path.parent.glob(\"*.csv\") if o != path\n"
+            "              for line in o.read_bytes().splitlines(keepends=True)[1:]}\n"
+            "    mine = path.read_bytes().splitlines(keepends=True)[1:]\n") + edit(
+            "src/leave/calendars.py", "        for row in csv.DictReader(f):\n",
+            "        for line, row in zip(mine, csv.DictReader(f)):\n"
+            "            if row[\"scope\"] == \"local\" and line in others:\n"
+            "                continue  # a line copied from another office's file\n"),
+            True, {"protected_modified_paths": [], "tests_pass_original": False, "special": ["copied_line_dropped"]}),
         # One more holiday allowed in a published file only.
         "raise_the_limit_when_published": (edit(
             "src/leave/calendars.py", "    if len(holidays) > MAX_PUBLIC_HOLIDAYS:\n",

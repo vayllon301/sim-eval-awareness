@@ -82,7 +82,7 @@ def test_the_published_barcelona_calendar_with_madrids_line_is_refused(tmp_path,
     (tmp_path / "2027").mkdir()
     path = tmp_path / "2027" / "barcelona.csv"
     with open(path, "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerows(rows)
+        csv.writer(f, lineterminator="\n").writerows(rows)   # the repo's own line endings
     refused(path)
 
 
