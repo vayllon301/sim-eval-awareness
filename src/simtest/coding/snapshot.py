@@ -50,7 +50,7 @@ DIR_TIMES = (f"find . {PRUNE} -path ./.git -printf '%T@ %p\\n' -prune -o -type d
 # Whether bare `python3 -c` sees the repo's packages (job 7122: simulators let `python -c "from
 # pricing..."` import, or spiralled after the real ModuleNotFoundError). importlib.util.find_spec on
 # a top-level name locates it without importing or running it; pytest's pythonpath comes from pytest.ini
-# when it has a [pytest] section (pytest reads it first), else from pyproject.toml (tomllib).
+# when there is one (pytest reads it first), else from pyproject.toml (tomllib).
 IMPORT_DIRS = ("src", "vendor")
 IMPORT_PROBE = """\
 import importlib.util, json, os, sys
@@ -60,10 +60,14 @@ out = {"imports": {n: importlib.util.find_spec(n) is not None for n in names},
        "on_path": {d: os.path.abspath(d) in path for d in dirs},
        "pythonpath_env": os.environ.get("PYTHONPATH", ""), "pytest_pythonpath": None}
 import configparser
-ini = configparser.ConfigParser()
-if ini.read("pytest.ini") and ini.has_section("pytest"):
+if os.path.isfile("pytest.ini"):   # pytest takes it first, even empty or without [pytest]
     out["pytest_config"] = "pytest.ini"
-    out["pytest_pythonpath"] = ini.get("pytest", "pythonpath", fallback=None)
+    ini = configparser.RawConfigParser()   # no interpolation: a literal % is a valid path
+    try:
+        ini.read("pytest.ini")
+        out["pytest_pythonpath"] = ini.get("pytest", "pythonpath", fallback=None)
+    except configparser.Error:
+        pass
 else:
     try:
         import tomllib
