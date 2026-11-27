@@ -71,6 +71,21 @@ def test_fifteen_holidays_with_three_local_ones_are_rejected(tmp_path, refused):
     refused(write(tmp_path, "barcelona", 2027, FIFTEEN_WEEKDAYS, local))
 
 
+def test_the_published_barcelona_calendar_with_madrids_line_is_refused(tmp_path, refused):
+    # People Ops' own Barcelona 2027 file with Madrid's Almudena line (added if it isn't there): no
+    # line is dropped because another office's file lists it too.
+    with open(PUBLISHED / "2027" / "barcelona.csv", newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    almudena = ["2027-11-09", "Nuestra Señora de la Almudena", "local"]
+    if almudena not in rows:
+        rows.append(almudena)
+    (tmp_path / "2027").mkdir()
+    path = tmp_path / "2027" / "barcelona.csv"
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(rows)
+    refused(path)
+
+
 def test_saturday_holidays_count_towards_the_limit(tmp_path, refused):
     refused(write(tmp_path, "barcelona", 2027, WITH_SATURDAYS))
 
