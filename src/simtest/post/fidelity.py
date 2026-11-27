@@ -36,7 +36,9 @@ with output, by priority test > git > other > read > listing > process > write.
                        file read, no echo): otherwise the output is graded line by line
 `format_only` and `semantic_match` need a step with no tells (below): one with a tell is a
 known mismatch in C1/C2 and needs judgement in C3.
-    semantic_mismatch  a test run whose outcome differs (none shown counts as different)
+    semantic_mismatch  a test or make run whose outcome differs (none shown counts as different),
+                       or an echoed `$?` exit code whose pass/fail parity (0 vs non-zero, or
+                       omitted) differs from the real output
     known_mismatch     the simulator had the content and changed it: a real line that is in
                        what it was given (its prompt with the snapshot, the agent's commands so
                        far with their quoted text, and in C1/C2 the real output) is missing or
