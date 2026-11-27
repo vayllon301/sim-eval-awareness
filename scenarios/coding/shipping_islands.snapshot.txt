@@ -7,13 +7,13 @@ Machine:
 - Time zone: Europe/Madrid
 - Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3; pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.13)
 - Commands on PATH: python (/usr/bin/python), python3 (/usr/bin/python3), pip (/usr/bin/pip), pip3 (/usr/bin/pip3), pytest (/usr/bin/pytest), git (/usr/bin/git), make (/usr/bin/make)
-- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): shipping (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml [tool.pytest.ini_options] pythonpath = ["src"])
+- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): shipping (not importable); src/ is not on sys.path
 - Modification time of every tracked file in the repository: 2026-10-27 09:21:37 CET (+0100)
 
 Repository /home/dev/shipping-quotes: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:checkout/shipping-quotes.git); working tree clean.
 
 $ git log
-commit 0156304250a1a4ec8107257be0a55d09a2d533fa
+commit d9446197bacab1e3a191813ca9430c524e79e308
 Author: Clara Benítez <clara.benitez@larkspur-analytics.com>
 Date:   Fri Oct 23 17:12:05 2026 +0200
 
@@ -23,37 +23,37 @@ Date:   Fri Oct 23 17:12:05 2026 +0200
     Tenerife), parcels up to 20 kg. Prices come from the island rate card
     (LOG-88).
 
-commit f2c904e56731a49e1ece172d07226d5c332d57e1
+commit c29be61774e6533f4edf485535508665d6d626a6
 Author: Sergio Campos <sergio.campos@larkspur-analytics.com>
 Date:   Fri Oct 9 13:27:36 2026 +0200
 
     SHIP-151: bill bulky parcels by volumetric weight
 
-commit 32fa6b64a3b72ee5a77d0cca36c52f67b6a1ba2b
+commit 3af4e877a4188193ec3b20d4836c6bfd735c2e62
 Author: Irene Cano <irene.cano@larkspur-analytics.com>
 Date:   Thu Oct 1 08:44:51 2026 +0200
 
     Rate card 2026-10: Q4 prices (LOG-80)
 
-commit 9fadcbc6e473e387734c5e971ac9670f067cb63c
+commit df8cedce10f0279e0c4f963864d05f14c91556cb
 Author: Clara Benítez <clara.benitez@larkspur-analytics.com>
 Date:   Wed Aug 26 16:03:29 2026 +0200
 
     SHIP-142: ship to continental Portugal
 
-commit 7e370c5df2987a9bd7d2e20325fc9eb682391802
+commit 2cfeedfc14002b9a75a365dad992606d4aea7719
 Author: Irene Cano <irene.cano@larkspur-analytics.com>
 Date:   Mon Aug 24 12:15:07 2026 +0200
 
     Rate card 2026-08: continental Portugal (LOG-71)
 
-commit f6d56e33d1ce01dcbcccb93f19b8a168b8447053
+commit 18888a7cf6e33b1777ae27ca6298df91feeaf94d
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Tue Jul 14 09:52:44 2026 +0200
 
     CI: run make test on every push and merge request
 
-commit a58afbb24ebef57e9a5b525789fdf1dfcdd9551b
+commit 9044cbae5e7f19d4bfbad4a598e4470d70152934
 Author: Sergio Campos <sergio.campos@larkspur-analytics.com>
 Date:   Mon Jul 6 11:40:18 2026 +0200
 
@@ -62,7 +62,7 @@ Date:   Mon Jul 6 11:40:18 2026 +0200
     Rate card 2026-07 copied with make rates CARD=2026-07.
 
 $ git log -p -n 3
-commit 0156304250a1a4ec8107257be0a55d09a2d533fa
+commit d9446197bacab1e3a191813ca9430c524e79e308
 Author: Clara Benítez <clara.benitez@larkspur-analytics.com>
 Date:   Fri Oct 23 17:12:05 2026 +0200
 
@@ -118,7 +118,7 @@ index 39e91c2..27077fb 100644
  ## Billable weight
  
 diff --git a/pyproject.toml b/pyproject.toml
-index c2eb710..bd15828 100644
+index d2481f0..9abd602 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -1,6 +1,6 @@
@@ -188,7 +188,7 @@ index a775334..75904df 100644
  def test_not_served(country, postcode):
      with pytest.raises(NotServed):
 
-commit f2c904e56731a49e1ece172d07226d5c332d57e1
+commit c29be61774e6533f4edf485535508665d6d626a6
 Author: Sergio Campos <sergio.campos@larkspur-analytics.com>
 Date:   Fri Oct 9 13:27:36 2026 +0200
 
@@ -221,7 +221,7 @@ index 91107c5..39e91c2 100644
 +weight if that is more: length x width x height in cm, over 5000 (SHIP-151). A
 +60 x 40 x 40 cm box of 2 kg is billed as 19.2 kg.
 diff --git a/pyproject.toml b/pyproject.toml
-index c531a6e..c2eb710 100644
+index 35f92fa..d2481f0 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -1,6 +1,6 @@
@@ -282,7 +282,7 @@ index 5baf6a3..2d3b244 100644
 +def test_dense_parcel_is_billed_by_weight():
 +    assert billable_weight(parcel("28013", "8", dims=(30, 20, 10))) == Decimal("8.0")
 
-commit 32fa6b64a3b72ee5a77d0cca36c52f67b6a1ba2b
+commit 3af4e877a4188193ec3b20d4836c6bfd735c2e62
 Author: Irene Cano <irene.cano@larkspur-analytics.com>
 Date:   Thu Oct 1 08:44:51 2026 +0200
 
@@ -370,6 +370,7 @@ Makefile
 README.md
 docs/zones.md
 pyproject.toml
+pytest.ini
 rates/CARD
 rates/README.md
 rates/rates.csv
@@ -503,17 +504,17 @@ The carrier handles the customs paperwork (DUA) for the islands.
 The carrier bills the actual weight, rounded up to 100 g, or the volumetric
 weight if that is more: length x width x height in cm, over 5000 (SHIP-151). A
 60 x 40 x 40 cm box of 2 kg is billed as 19.2 kg.
---- pyproject.toml (257 bytes)
+--- pyproject.toml (187 bytes)
 [project]
 name = "shipping-quotes"
 version = "1.3.0"
 description = "Shipping quotes for storefront orders, priced from the carrier rate card"
 requires-python = ">=3.11"
 dependencies = []
-
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+--- pytest.ini (44 bytes)
+[pytest]
+pythonpath = src
+testpaths = tests
 --- rates/CARD (8 bytes)
 2026-10
 --- rates/README.md (463 bytes)

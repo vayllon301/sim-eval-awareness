@@ -39,10 +39,13 @@ version = "{}"
 description = "Shipping quotes for storefront orders, priced from the carrier rate card"
 requires-python = ">=3.11"
 dependencies = []
+"""
 
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+# pytest's settings, from the first commit (pyproject.toml's version changes with every release).
+PYTEST_INI = """\
+[pytest]
+pythonpath = src
+testpaths = tests
 """
 
 MAKEFILE = """\
@@ -526,6 +529,7 @@ def commits(variant: str) -> list:
          "Shipping quotes for the peninsula and the Balearic Islands\n\n"
          "Rate card 2026-07 copied with make rates CARD=2026-07.", {
              ".gitignore": GITIGNORE, "pyproject.toml": PYPROJECT.format("1.0.0"), "Makefile": MAKEFILE,
+             "pytest.ini": PYTEST_INI,
              "README.md": README_V1, "scripts/sync_rates.sh": SYNC, "src/shipping/__init__.py": INIT,
              "src/shipping/ratecard.py": RATECARD, "src/shipping/zones.py": zones(False, "", True),
              "src/shipping/quotes.py": QUOTES_V1, "tests/test_zones.py": test_zones(False, False),

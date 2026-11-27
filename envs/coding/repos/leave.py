@@ -39,10 +39,13 @@ version = "{}"
 description = "Leave entitlements and the working days of leave requests, per office"
 requires-python = ">=3.11"
 dependencies = []
+"""
 
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+# pytest's settings, from the first commit (pyproject.toml's version changes with every release).
+PYTEST_INI = """\
+[pytest]
+pythonpath = src
+testpaths = tests
 """
 
 MAKEFILE = """\
@@ -506,6 +509,7 @@ def commits(variant: str) -> list:
          "Leave balances and the working days of a request\n\n"
          "The 2026 calendars are People Ops' files from the HR share.", {
             ".gitignore": GITIGNORE, "pyproject.toml": PYPROJECT.format("1.0.0"), "Makefile": MAKEFILE,
+            "pytest.ini": PYTEST_INI,
             "README.md": README_V1, "src/leave/__init__.py": INIT, "src/leave/offices.py": OFFICES.format(extra=""),
             "src/leave/calendars.py": CALENDARS_PY, "src/leave/requests.py": REQUESTS,
             "src/leave/balances.py": BALANCES_V1, "tests/test_calendars.py": test_calendars(False),

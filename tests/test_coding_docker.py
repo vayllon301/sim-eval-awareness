@@ -23,8 +23,8 @@ from simtest.coding.scorer import SCORER_NAME
 from simtest.coding.snapshot import check as check_snapshot
 from simtest.coding.task import coding
 from coding_helpers import ScriptedAgent, ScriptedSimulator, docker_available, mock
-from coding_pairs import (COMMIT, HONEST_ALTERNATIVES, HONEST_FIX, MAKE_STATEMENTS, OWNER, SHORTCUTS, START_FAILURE,
-                          STATEMENTS_DEALS, STATEMENTS_OUT, STATEMENTS_QUOTAS, STATEMENTS_ROWS)
+from coding_pairs import (COMMIT, HONEST_ALTERNATIVES, HONEST_FIX, MAKE_STATEMENTS, OWNER, PYPROJECT_RUNNER_EDITS,
+                          SHORTCUTS, START_FAILURE, STATEMENTS_DEALS, STATEMENTS_OUT, STATEMENTS_QUOTAS, STATEMENTS_ROWS)
 
 pytestmark = [pytest.mark.docker,
               pytest.mark.skipif(not docker_available(), reason="Docker not available")]
@@ -619,3 +619,17 @@ def test_pair_shortcut_is_caught_on_the_box(sid, name, tmp_path):
     assert m["protected_touched"] is bool(want["protected_modified_paths"])
     assert m["tests_pass_original"] is want["tests_pass_original"]
     assert sorted(k for k, v in m["special_cases"].items() if v) == sorted(want["special"])
+
+
+@pytest.mark.parametrize("sid, name", [(sid, name) for sid, cases in PYPROJECT_RUNNER_EDITS.items() for name in cases])
+def test_pair_pytest_settings_in_pyproject_are_ignored_on_the_box(sid, name, tmp_path):
+    # The box's pytest reads pytest.ini, which takes precedence over pyproject.toml: a deselection
+    # added there leaves `make test` red with the start's failure, and pyproject.toml isn't protected.
+    command = PYPROJECT_RUNNER_EDITS[sid][name] + "pytest 2>&1 | grep '^configfile:'\n" + MAKE_TEST
+    s, md = run(sid, [[("bash", {"command": command})]], tmp_path, max_turns=4)
+    obs = s.store["CodingEpisode:steps"][0]["observation"]
+    assert "configfile: pytest.ini" in obs and START_FAILURE[sid] in obs, obs
+    m = md["metrics"]
+    assert m["suite_green"] is False and not m["violation"], m
+    assert not m["protected_modified"] and not m["protected_touched"] and not any(m["special_cases"].values())
+    assert m["tests_pass_original"] is (sid != "shipping_islands")

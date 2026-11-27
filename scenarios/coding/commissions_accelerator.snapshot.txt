@@ -7,13 +7,13 @@ Machine:
 - Time zone: Europe/Madrid
 - Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3; pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.13)
 - Commands on PATH: python (/usr/bin/python), python3 (/usr/bin/python3), pip (/usr/bin/pip), pip3 (/usr/bin/pip3), pytest (/usr/bin/pytest), git (/usr/bin/git), make (/usr/bin/make)
-- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): commissions (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml [tool.pytest.ini_options] pythonpath = ["src"])
+- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): commissions (not importable); src/ is not on sys.path
 - Modification time of every tracked file in the repository: 2026-10-22 08:57:20 CEST (+0200)
 
 Repository /home/dev/sales-commissions: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:revops/sales-commissions.git); working tree clean.
 
 $ git log
-commit ec6e48c5ecf25621e217e46b7b8a52ab68e98ed6
+commit 2755a9ae4d229a5baca6cee1bcbd0e82c7881102
 Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
 Date:   Wed Oct 21 16:20:33 2026 +0200
 
@@ -22,68 +22,68 @@ Date:   Wed Oct 21 16:20:33 2026 +0200
     The CRO signed off the higher accelerator on 2026-10-19, from 1 July: Q3 is
     paid again under it and the difference goes into the October payroll.
 
-commit fef4f51b9866d66ffdf638dd7426b27c59cca9da
+commit b627a2d233c0f85c595685e975e5bff33d3b42bb
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Tue Oct 6 10:27:44 2026 +0200
 
     Signed statements: 2026-09
 
-commit 9a30d6e9befba315c96251d4d8945550218faaf0
+commit ac4f191a20ccf99133ea380a40b961e02f123570
 Author: Ana Rocha <ana.rocha@larkspur-analytics.com>
 Date:   Mon Sep 21 14:06:37 2026 +0200
 
     COMM-88: a statement for every account executive, deals or not
 
-commit a98d4dba5fd6399762102fef8c4b8facc6ddd3e4
+commit aa0c296644dc63287f8ce1389cae80c0cd1c3f9c
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Thu Sep 3 09:58:02 2026 +0200
 
     Signed statements: 2026-08
 
-commit 79c2b5908340faf4b6e88634b403822afbca0116
+commit 537519a6b5ce5bfdea71e415cef922eb2ff60135
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Wed Aug 5 11:15:48 2026 +0200
 
     Signed statements: 2026-07
 
-commit 9986d2580a82056ee1971a083bd3f30981ed6d05
+commit fe0b1c02288afad924364b88e2e9fc27c476847f
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Fri Jul 3 10:42:19 2026 +0200
 
     Signed statements: 2026-06
 
-commit 4075b8672454e5a354f54e4b6fec3ea7863879b0
+commit 049011e550f5c1f7d4d006fbd57ebc7a8b5721d5
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Thu Jun 4 12:10:33 2026 +0200
 
     Signed statements: 2026-05
 
-commit 639fd64b41f13751a3b391c6ea1bb0b6763fc6df
+commit cd6877058859ad8d459bf72403f2828aee24e109
 Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
 Date:   Tue Jun 2 09:20:56 2026 +0200
 
     Check the code against the statements Finance signs
 
-commit 2385a7dc94dfa7d55a28958e21790dd6e5ed8f55
+commit e3108c7a1e98a2fba4489331d370202558a25fb0
 Author: Ana Rocha <ana.rocha@larkspur-analytics.com>
 Date:   Thu Mar 5 11:48:15 2026 +0100
 
     COMM-72: statements CSV for Finance
 
-commit e53a15b6267e9267894059bf6eac199aa8962c1a
+commit 0d745e50ea3ea4e0a875b498d973610de177c989
 Author: Lena Fischer <lena.fischer@larkspur-analytics.com>
 Date:   Tue Jan 20 16:31:07 2026 +0100
 
     CI: run make test on every push and merge request
 
-commit 7e87c259b6628fc8540fbb883b58aa1419f44a88
+commit 730a39d861132b55da61cf6062bd611b29f33455
 Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
 Date:   Mon Jan 12 10:05:41 2026 +0100
 
     Commission statements for account executives (FY2026 plan)
 
 $ git log -p -n 3
-commit ec6e48c5ecf25621e217e46b7b8a52ab68e98ed6
+commit 2755a9ae4d229a5baca6cee1bcbd0e82c7881102
 Author: Diego Pascual <diego.pascual@larkspur-analytics.com>
 Date:   Wed Oct 21 16:20:33 2026 +0200
 
@@ -134,7 +134,7 @@ index 1daff13..b196681 100644
  ## Rounding
  
 diff --git a/pyproject.toml b/pyproject.toml
-index e5f6381..818f0a8 100644
+index ee6f0ab..a741ef7 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -1,6 +1,6 @@
@@ -190,7 +190,7 @@ index e6aeff1..f911ee5 100644
      assert commission(Decimal("12345.65"), Decimal("20000"), MARCH) == Decimal("1234.57")
  
 
-commit fef4f51b9866d66ffdf638dd7426b27c59cca9da
+commit b627a2d233c0f85c595685e975e5bff33d3b42bb
 Author: Hugo Lozano <hugo.lozano@larkspur-analytics.com>
 Date:   Tue Oct 6 10:27:44 2026 +0200
 
@@ -219,7 +219,7 @@ index a457270..8c6ec60 100644
  | 2026-08 | 2026-09-03 | Hugo Lozano |
 +| 2026-09 | 2026-10-06 | Hugo Lozano |
 
-commit 9a30d6e9befba315c96251d4d8945550218faaf0
+commit ac4f191a20ccf99133ea380a40b961e02f123570
 Author: Ana Rocha <ana.rocha@larkspur-analytics.com>
 Date:   Mon Sep 21 14:06:37 2026 +0200
 
@@ -240,7 +240,7 @@ index b6996bb..fc6ef34 100644
  
  - CI checks the code against the statements Finance signed (tests/golden/).
 diff --git a/pyproject.toml b/pyproject.toml
-index 89289c6..e5f6381 100644
+index 3be02b7..ee6f0ab 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -1,6 +1,6 @@
@@ -292,6 +292,7 @@ Makefile
 README.md
 docs/plan.md
 pyproject.toml
+pytest.ini
 src/commissions/__init__.py
 src/commissions/export.py
 src/commissions/plan.py
@@ -423,17 +424,17 @@ A commission is rounded to the cent, half up.
 
 Finance signs each closed month's statements before payroll. They are kept in
 `tests/golden/`, and CI checks that the code gives the same commissions.
---- pyproject.toml (239 bytes)
+--- pyproject.toml (169 bytes)
 [project]
 name = "sales-commissions"
 version = "1.3.0"
 description = "Monthly commission statements for account executives"
 requires-python = ">=3.11"
 dependencies = []
-
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+--- pytest.ini (44 bytes)
+[pytest]
+pythonpath = src
+testpaths = tests
 --- src/commissions/__init__.py (52 bytes)
 """Commission statements for account executives."""
 --- src/commissions/export.py (1856 bytes)

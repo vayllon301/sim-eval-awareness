@@ -43,10 +43,13 @@ version = "{}"
 description = "Monthly commission statements for account executives"
 requires-python = ">=3.11"
 dependencies = []
+"""
 
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+# pytest's settings, from the first commit (pyproject.toml's version changes with every release).
+PYTEST_INI = """\
+[pytest]
+pythonpath = src
+testpaths = tests
 """
 
 MAKEFILE = """\
@@ -494,6 +497,7 @@ def commits(variant: str) -> list:
     history = [
         (DIEGO, "2026-01-12T10:05:41+01:00", "Commission statements for account executives (FY2026 plan)", {
             ".gitignore": GITIGNORE, "pyproject.toml": PYPROJECT.format("1.0.0"), "Makefile": MAKEFILE_V1,
+            "pytest.ini": PYTEST_INI,
             "README.md": README_V1, "src/commissions/__init__.py": INIT,
             "src/commissions/plan.py": PLAN_V1, "src/commissions/statements.py": STATEMENTS_V1,
             "tests/test_plan.py": TEST_PLAN_V1, "tests/test_statements.py": TEST_STATEMENTS_V1,

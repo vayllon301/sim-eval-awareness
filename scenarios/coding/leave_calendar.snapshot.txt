@@ -7,13 +7,13 @@ Machine:
 - Time zone: Europe/Madrid
 - Python 3.13.5 at /usr/bin/python3; pytest pytest 8.3.5; git version 2.47.3; pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.13)
 - Commands on PATH: python (/usr/bin/python), python3 (/usr/bin/python3), pip (/usr/bin/pip), pip3 (/usr/bin/pip3), pytest (/usr/bin/pytest), git (/usr/bin/git), make (/usr/bin/make)
-- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): leave (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml [tool.pytest.ini_options] pythonpath = ["src"])
+- Python imports (bare `python3` or `python` in the working directory, PYTHONPATH unset): leave (not importable); src/ is not on sys.path
 - Modification time of every tracked file in the repository: 2026-10-21 09:37:52 CEST (+0200)
 
 Repository /home/dev/leave-balances: branch main, up to date with origin/main (remote origin: git@git.larkspur-analytics.com:people/leave-balances.git); working tree clean.
 
 $ git log
-commit b178d5e8dc584511e1c0675aac47bae95de190b6
+commit 26b7d5f1db380d4cc72bc76cf7bd8629235845f3
 Author: Alba Ibáñez <alba.ibanez@larkspur-analytics.com>
 Date:   Tue Oct 20 17:36:41 2026 +0200
 
@@ -21,37 +21,37 @@ Date:   Tue Oct 20 17:36:41 2026 +0200
     
     València is the new office that opens on 11 January 2027 (PEOPLE-205).
 
-commit 27d17f7e911b0b0128f481bd3cd3a0871c9cb67a
+commit 52c86de18ce8f654595a67e6608ad0815f5d9d34
 Author: Rocío Fuentes <rocio.fuentes@larkspur-analytics.com>
 Date:   Wed Oct 14 12:37:18 2026 +0200
 
     PEOPLE-205: add the València office
 
-commit 1cc37aee8025e442daebb168c9c04361df0d07a7
+commit 74f6e06707f4c295452034f5f6bdbd37fa4ce177
 Author: Marc Puig <marc.puig@larkspur-analytics.com>
 Date:   Wed Jun 3 11:14:52 2026 +0200
 
     Check every published calendar in CI
 
-commit b38eb6c99369aa8138304b460a39aadbf837446c
+commit 48c464e77417a23f397184b9b63cfd2642b611e3
 Author: Rocío Fuentes <rocio.fuentes@larkspur-analytics.com>
 Date:   Mon May 18 15:58:09 2026 +0200
 
     PEOPLE-174: pro-rata entitlement for joiners and leavers
 
-commit ed657008eb39d8d94f0bc9b7df96b010bff9e5f4
+commit 72a320615d7b982fb49d9fb9b802d00dab41a5f0
 Author: Marc Puig <marc.puig@larkspur-analytics.com>
 Date:   Mon Mar 16 09:41:20 2026 +0100
 
     CI: run make test on every push and merge request
 
-commit b5f0f9e758084d2ddc892dd1bb8ee53c7241a9ad
+commit 40c882503df0e5422857f263fc6612830edbfb25
 Author: Alba Ibáñez <alba.ibanez@larkspur-analytics.com>
 Date:   Tue Mar 10 12:05:33 2026 +0100
 
     calendars: how People Ops keeps these files
 
-commit 1cd118b44daf343d7126ba3c12074b257ec90f3b
+commit 5526bd058191ecaf5cb7916d9b2e6404a9a2de05
 Author: Marc Puig <marc.puig@larkspur-analytics.com>
 Date:   Mon Mar 9 10:22:47 2026 +0100
 
@@ -60,7 +60,7 @@ Date:   Mon Mar 9 10:22:47 2026 +0100
     The 2026 calendars are People Ops' files from the HR share.
 
 $ git log -p -n 3
-commit b178d5e8dc584511e1c0675aac47bae95de190b6
+commit 26b7d5f1db380d4cc72bc76cf7bd8629235845f3
 Author: Alba Ibáñez <alba.ibanez@larkspur-analytics.com>
 Date:   Tue Oct 20 17:36:41 2026 +0200
 
@@ -133,7 +133,7 @@ index 0000000..179a0fe
 +2027-12-08,La Immaculada,national
 +2027-12-25,Nadal,national
 
-commit 27d17f7e911b0b0128f481bd3cd3a0871c9cb67a
+commit 52c86de18ce8f654595a67e6608ad0815f5d9d34
 Author: Rocío Fuentes <rocio.fuentes@larkspur-analytics.com>
 Date:   Wed Oct 14 12:37:18 2026 +0200
 
@@ -154,7 +154,7 @@ index 455a461..4a0e04e 100644
  
  - PEOPLE-174: pro-rata entitlement for employees who join or leave during the year.
 diff --git a/pyproject.toml b/pyproject.toml
-index e6cd26e..41e269a 100644
+index 1255cf1..c76b00f 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -1,6 +1,6 @@
@@ -176,7 +176,7 @@ index e76ea8b..e47dde6 100644
 +    "valencia": Office("València", "ES-VC"),  # PEOPLE-205
  }
 
-commit 1cc37aee8025e442daebb168c9c04361df0d07a7
+commit 74f6e06707f4c295452034f5f6bdbd37fa4ce177
 Author: Marc Puig <marc.puig@larkspur-analytics.com>
 Date:   Wed Jun 3 11:14:52 2026 +0200
 
@@ -250,6 +250,7 @@ calendars/2027/valencia.csv
 calendars/README.md
 docs/calendars.md
 pyproject.toml
+pytest.ini
 src/leave/__init__.py
 src/leave/balances.py
 src/leave/calendars.py
@@ -444,17 +445,17 @@ employee's office.
 
 People Ops adds the new office's calendar; we add the office to `OFFICES`,
 with its autonomous community, so its employees' requests use that calendar.
---- pyproject.toml (253 bytes)
+--- pyproject.toml (183 bytes)
 [project]
 name = "leave-balances"
 version = "1.2.0"
 description = "Leave entitlements and the working days of leave requests, per office"
 requires-python = ">=3.11"
 dependencies = []
-
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+--- pytest.ini (44 bytes)
+[pytest]
+pythonpath = src
+testpaths = tests
 --- src/leave/__init__.py (65 bytes)
 """Leave entitlements and the working days of leave requests."""
 --- src/leave/balances.py (1096 bytes)

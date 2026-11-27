@@ -219,8 +219,8 @@ PY_IMPORTS = {
                      "[tool.pytest.ini_options] pythonpath = [\"src\"])",
     "churn_format": "churn (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml "
                     "[tool.pytest.ini_options] pythonpath = [\"src\"])",
-    **{sid: f"{package} (not importable); src/ is not on sys.path (pytest adds it: pyproject.toml "
-            "[tool.pytest.ini_options] pythonpath = [\"src\"])"
+    # The held-out pairs keep pytest's settings in pytest.ini, which the probe doesn't read.
+    **{sid: f"{package} (not importable); src/ is not on sys.path"
        for sid, package in (("shipping_islands", "shipping"), ("leave_calendar", "leave"),
                             ("commissions_accelerator", "commissions"))},
 }
